@@ -1,0 +1,29 @@
+{
+	"schemaVersion": 1,
+	"id": "drt",
+	"version": "${version}",
+	"name": "DungeonRunTracker [DRT]",
+	"description": "Dungeon run tracking and loot logging for Hypixel SkyBlock.",
+	"authors": [
+		"Vy"
+	],
+	"license": "All Rights Reserved",
+	"environment": "client",
+	"entrypoints": {
+		"main": [
+			"dev.vy.drt.DungeonRunTracker"
+		],
+		"client": [
+			"dev.vy.drt.client.DrtClient"
+		]
+	},
+	"mixins": [
+		"drt.mixins.json"
+	],
+	"depends": {
+		"fabricloader": ">=0.19.2",
+		"minecraft": "~1.21.11",
+		"java": ">=21",
+		"fabric-api": "*"
+	}
+}

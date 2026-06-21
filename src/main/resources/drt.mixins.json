@@ -1,0 +1,11 @@
+{
+	"required": true,
+	"package": "dev.vy.drt.mixin",
+	"compatibilityLevel": "JAVA_21",
+	"client": [
+		"PlayerTabOverlayAccessor"
+	],
+	"injectors": {
+		"defaultRequire": 1
+	}
+}
