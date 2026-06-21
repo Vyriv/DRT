@@ -30,14 +30,6 @@ You can also click the profit line on the HUD to open the loot history screen di
 2. Install [Fabric API](https://modrinth.com/mod/fabric-api)
 3. Drop `DungeonRunTracker-1.0.0.jar` into your `mods/` folder
 
-## Building
-
-```bash
-./gradlew build
-```
-
-Output: `build/libs/DungeonRunTracker-1.0.0.jar`
-
 ## Requirements
 
 - Minecraft 1.21.11
