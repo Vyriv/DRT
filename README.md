@@ -12,7 +12,7 @@ A Hypixel SkyBlock mod that tracks dungeon runs and loot.
 - **Loot logging** - automatically records every dungeon chest opening, including cost, items, and profit
 - **Loot history screen** - browse all past runs filtered by floor, sort by item value, and search loot entries
 - **Live pricing** - item prices fetched from the auction house in real time, with fallback to BIN data
-- **Skull textures** - item icons resolved from the NEU repo for accurate in-game appearance
+- **Skull textures** - item icons resolved from the NEU-repo for accurate in-game appearance
 - **Draggable HUD** - reposition the tracker anywhere on screen with `/drt move`
 
 ## Commands
