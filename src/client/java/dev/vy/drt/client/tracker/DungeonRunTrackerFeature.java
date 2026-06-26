@@ -148,6 +148,7 @@ public final class DungeonRunTrackerFeature {
 
 	private int refreshCountdown;
 	private boolean insideDungeon;
+	private boolean inDungeonHub;
 	private DungeonFloor currentFloor = DungeonFloor.UNKNOWN;
 	private long dungeonSignalUntilMillis;
 	private long awaitingExtraStatsUntilMillis;
@@ -273,7 +274,7 @@ public final class DungeonRunTrackerFeature {
 	private static final int C_RESET    = 0xFFFF4455;
 
 	public void render(Minecraft client, GuiGraphics guiGraphics, int mouseX, int mouseY) {
-		if (!enabled || client == null || client.player == null) return;
+		if (!isTrackerVisible(client)) return;
 
 		String floorTag = selectedFloor == null ? "All" : selectedFloor.name();
 		long lifetimeProfit = selectedFloor == null
@@ -535,7 +536,7 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	public boolean handleScreenMouseClick(Minecraft client, double mouseX, double mouseY, int button) {
-		if (!enabled || button != 0) return false;
+		if (!isTrackerVisible(client) || button != 0) return false;
 		int mx = (int) mouseX;
 		int my = (int) mouseY;
 		if (isHoveringFloorLabel(client, mx, my)) { cycleSelectedFloor(); return true; }
@@ -708,6 +709,7 @@ public final class DungeonRunTrackerFeature {
 			finishCurrentRunTiming(now);
 			lastLevelIdentity = currentLevel;
 			resetDungeonRuntimeState();
+			inDungeonHub = false;
 		}
 
 		if (refreshCountdown > 0) {
@@ -719,6 +721,7 @@ public final class DungeonRunTrackerFeature {
 		List<String> scoreboardLines = readScoreboardLines(client);
 		List<String> tabLines = TabReader.readNormalizedLines(client);
 		boolean wasDungeon = insideDungeon;
+		inDungeonHub = isDungeonHub(scoreboardLines) || isDungeonHub(tabLines);
 		insideDungeon = isDungeon(scoreboardLines) || isDungeonTab(tabLines) || now <= dungeonSignalUntilMillis;
 
 		if (!insideDungeon) {
@@ -866,14 +869,22 @@ public final class DungeonRunTrackerFeature {
 		int mouseX = (int) Math.round(client.mouseHandler.xpos() * guiScaleX);
 		int mouseY = (int) Math.round(client.mouseHandler.ypos() * guiScaleY);
 
-		if (enabled && leftMouseDown && !leftMouseDownLastTick && client.screen != null) {
+		if (!isTrackerVisible(client)) {
+			if (!leftMouseDown && dragging && positionDirty) saveHudPosition();
+			dragging = false;
+			positionDirty = false;
+			leftMouseDownLastTick = leftMouseDown;
+			return;
+		}
+
+		if (leftMouseDown && !leftMouseDownLastTick && client.screen != null) {
 			if (isHoveringFloorLabel(client, mouseX, mouseY)) { cycleSelectedFloor(); leftMouseDownLastTick = true; return; }
 			if (isHoveringRunsHrPart(client, mouseX, mouseY)) { toggleRunsPerHrPause(); leftMouseDownLastTick = true; return; }
 			if (isHoveringProfitLine(client, mouseX, mouseY)) { lootScreenPending = true; leftMouseDownLastTick = true; return; }
 			if (isHoveringResetButton(client, mouseX, mouseY)) { resetSelectedFloor(); leftMouseDownLastTick = true; return; }
 		}
 
-		if (!enabled || !(client.screen instanceof AbstractContainerScreen<?>)) {
+		if (!(client.screen instanceof AbstractContainerScreen<?>)) {
 			if (!leftMouseDown && dragging && positionDirty) saveHudPosition();
 			dragging = false;
 			positionDirty = false;
@@ -911,6 +922,10 @@ public final class DungeonRunTrackerFeature {
 		int width = getDisplayWidth(client);
 		int height = getDisplayHeight(client);
 		return mouseX >= hudX - 3 && mouseX <= hudX + width + 3 && mouseY >= hudY - 2 && mouseY <= hudY + height + 2;
+	}
+
+	private boolean isTrackerVisible(Minecraft client) {
+		return enabled && client != null && client.player != null && (insideDungeon || inDungeonHub);
 	}
 
 	private boolean isHoveringRunsLine(Minecraft client, int mouseX, int mouseY) {
@@ -969,9 +984,20 @@ public final class DungeonRunTrackerFeature {
 		return false;
 	}
 
+	private boolean isDungeonHub(List<String> lines) {
+		for (String line : lines) {
+			if (isDungeonHubLine(line)) return true;
+		}
+		return false;
+	}
+
+	private boolean isDungeonHubLine(String line) {
+		return line.contains("DUNGEON HUB") || line.contains("DUNGEON_HUB");
+	}
+
 	private boolean isDungeonTab(List<String> lines) {
 		for (String line : lines) {
-			if (line.startsWith("AREA:") && line.contains("DUNGEON")) return true;
+			if (line.startsWith("AREA:") && !isDungeonHubLine(line) && (line.contains("DUNGEON") || line.contains("CATACOMBS"))) return true;
 			if (line.contains("DUNGEON STATS") || line.contains("PUZZLES:")
 				|| line.contains("SECRETS FOUND") || line.contains("COMPLETED ROOMS:")
 				|| line.contains("OPENED ROOMS:") || line.contains("TEAM DEATHS:")
@@ -1037,7 +1063,7 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private boolean isDungeonEntryMessage(String cleaned) {
-		return cleaned.startsWith("STARTING IN ")
+		return (cleaned.startsWith("STARTING IN ") && (insideDungeon || inDungeonHub))
 			|| cleaned.contains(" THE CATACOMBS ")
 			|| cleaned.contains(" CATACOMBS (F")
 			|| cleaned.contains(" CATACOMBS (M")
@@ -1071,6 +1097,7 @@ public final class DungeonRunTrackerFeature {
 		refreshCountdown = 0;
 		flushPendingLootRecord();
 		resetDungeonRuntimeState();
+		inDungeonHub = false;
 		dungeonSignalUntilMillis = 0L;
 		lastLevelIdentity = null;
 		clearLootWindow();
@@ -1467,8 +1494,11 @@ public final class DungeonRunTrackerFeature {
 		aliases.put("WITHER CATALYST", "WITHER_CATALYST");
 		aliases.put("NECRON'S HANDLE", "NECRON_HANDLE");
 		aliases.put("SCARF'S STUDIES", "SCARF_STUDIES");
+		aliases.put("SHADOW WARP", "SHADOW_WARP_SCROLL");
 		aliases.put("SHADOW WARP SCROLL", "SHADOW_WARP_SCROLL");
+		aliases.put("WITHER SHIELD", "WITHER_SHIELD_SCROLL");
 		aliases.put("WITHER SHIELD SCROLL", "WITHER_SHIELD_SCROLL");
+		aliases.put("IMPLOSION", "IMPLOSION_SCROLL");
 		aliases.put("IMPLOSION SCROLL", "IMPLOSION_SCROLL");
 		aliases.put("NECROMANCER LORD HELMET", "NECROMANCER_LORD_HELMET");
 		aliases.put("NECROMANCER LORD CHESTPLATE", "NECROMANCER_LORD_CHESTPLATE");
