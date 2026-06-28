@@ -26,13 +26,13 @@ You can also click the profit line on the HUD to open the loot history screen di
 
 ## Installation
 
-1. Install [Fabric Loader](https://fabricmc.net/use/installer/) for Minecraft 1.21.11
+1. Install [Fabric Loader](https://fabricmc.net/use/installer/) for Minecraft 26.1.2
 2. Install [Fabric API](https://modrinth.com/mod/fabric-api)
-3. Drop `DungeonRunTracker-1.0.1.jar` into your `mods/` folder
+3. Drop `DungeonRunTracker-1.0.1+26.1.2.jar` into your `mods/` folder
 
 ## Requirements
 
-- Minecraft 1.21.11
-- Fabric Loader 0.19.2+
+- Minecraft 26.1.2
+- Fabric Loader 0.19.3+
 - Fabric API
-- Java 21+
+- Java 25+

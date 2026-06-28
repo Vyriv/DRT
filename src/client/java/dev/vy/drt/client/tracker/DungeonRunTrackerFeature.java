@@ -21,7 +21,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
@@ -91,19 +91,30 @@ public final class DungeonRunTrackerFeature {
 	private static final String TEX_NECROMANCER_LORD_HELMET = "ewogICJ0aW1lc3RhbXAiIDogMTcyMDA0NDAxNDg2MiwKICAicHJvZmlsZUlkIiA6ICJlY2Q0ZTI4NjdkMmE0MTE2OTljYzlkMjMzYmM1YmEyMyIsCiAgInByb2ZpbGVOYW1lIiA6ICJSYXRlZEtub3QiLAogICJzaWduYXR1cmVSZXF1aXJlZCIgOiB0cnVlLAogICJ0ZXh0dXJlcyIgOiB7CiAgICAiU0tJTiIgOiB7CiAgICAgICJ1cmwiIDogImh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvN2RhZGU4YmFlNTY3YTA2NzBmYmViMDI1ZTYzNTA2YTA2ZTQwMTBlZjY2NDRmZjdiNTU2YmRmOTNkMjYwODk1NCIKICAgIH0KICB9Cn0=";
 	private static final String TEX_WITHER_HELMET = "ewogICJ0aW1lc3RhbXAiIDogMTY4OTY4MzY3MDM4NywKICAicHJvZmlsZUlkIiA6ICJkNzU2OTc4MWUyYjY0OWIyYjVlMjVlYTJhNDZkOGQxOSIsCiAgInByb2ZpbGVOYW1lIiA6ICJEckthcGRvciIsCiAgInNpZ25hdHVyZVJlcXVpcmVkIiA6IHRydWUsCiAgInRleHR1cmVzIiA6IHsKICAgICJTS0lOIiA6IHsKICAgICAgInVybCIgOiAiaHR0cDovL3RleHR1cmVzLm1pbmVjcmFmdC5uZXQvdGV4dHVyZS82OTExMjk0MDk3ODk1ODlhZTFiNDNlMWQ4MjhjMDZmYzlhMjEzYjc4MzQ4YTY4YjczMTNiZGQ0MDFkNzQ4NWNjIiwKICAgICAgIm1ldGFkYXRhIiA6IHsKICAgICAgICAibW9kZWwiIDogInNsaW0iCiAgICAgIH0KICAgIH0KICB9Cn0=";
 
-	public static void loadIconCachesFromConfig() {
-		CHEST_ICON_CACHE.putIfAbsent("WOOD CHEST",     skullFromTexture(TEX_WOOD));
-		CHEST_ICON_CACHE.putIfAbsent("GOLD CHEST",     skullFromTexture(TEX_GOLD));
-		CHEST_ICON_CACHE.putIfAbsent("DIAMOND CHEST",  skullFromTexture(TEX_DIAMOND));
-		CHEST_ICON_CACHE.putIfAbsent("EMERALD CHEST",  skullFromTexture(TEX_EMERALD));
-		CHEST_ICON_CACHE.putIfAbsent("OBSIDIAN CHEST", skullFromTexture(TEX_OBSIDIAN));
-		CHEST_ICON_CACHE.putIfAbsent("BEDROCK CHEST",  skullFromTexture(TEX_BEDROCK));
-		ITEM_ICON_CACHE.putIfAbsent("ESSENCE_WITHER",          skullFromTexture(TEX_ESSENCE_WITHER));
-		ITEM_ICON_CACHE.putIfAbsent("ESSENCE_UNDEAD",          skullFromTexture(TEX_ESSENCE_UNDEAD));
-		ITEM_ICON_CACHE.putIfAbsent("SHADOW_ASSASSIN_HELMET",  skullFromTexture(TEX_SHADOW_ASSASSIN_HELMET));
-		ITEM_ICON_CACHE.putIfAbsent("NECROMANCER_LORD_HELMET", skullFromTexture(TEX_NECROMANCER_LORD_HELMET));
-		ITEM_ICON_CACHE.putIfAbsent("WITHER_HELMET",           skullFromTexture(TEX_WITHER_HELMET));
+	public static boolean loadIconCachesFromConfig() {
+		boolean loaded = true;
+		loaded &= cacheSkull(CHEST_ICON_CACHE, "WOOD CHEST", TEX_WOOD);
+		loaded &= cacheSkull(CHEST_ICON_CACHE, "GOLD CHEST", TEX_GOLD);
+		loaded &= cacheSkull(CHEST_ICON_CACHE, "DIAMOND CHEST", TEX_DIAMOND);
+		loaded &= cacheSkull(CHEST_ICON_CACHE, "EMERALD CHEST", TEX_EMERALD);
+		loaded &= cacheSkull(CHEST_ICON_CACHE, "OBSIDIAN CHEST", TEX_OBSIDIAN);
+		loaded &= cacheSkull(CHEST_ICON_CACHE, "BEDROCK CHEST", TEX_BEDROCK);
+		loaded &= cacheSkull(ITEM_ICON_CACHE, "ESSENCE_WITHER", TEX_ESSENCE_WITHER);
+		loaded &= cacheSkull(ITEM_ICON_CACHE, "ESSENCE_UNDEAD", TEX_ESSENCE_UNDEAD);
+		loaded &= cacheSkull(ITEM_ICON_CACHE, "SHADOW_ASSASSIN_HELMET", TEX_SHADOW_ASSASSIN_HELMET);
+		loaded &= cacheSkull(ITEM_ICON_CACHE, "NECROMANCER_LORD_HELMET", TEX_NECROMANCER_LORD_HELMET);
+		loaded &= cacheSkull(ITEM_ICON_CACHE, "WITHER_HELMET", TEX_WITHER_HELMET);
+		if (!loaded) return false;
 		NeuItemResolver.preload();
+		return true;
+	}
+
+	private static boolean cacheSkull(Map<String, ItemStack> cache, String key, String texture) {
+		if (cache.containsKey(key)) return true;
+		ItemStack stack = skullFromTexture(texture);
+		if (stack.isEmpty()) return false;
+		cache.put(key, stack);
+		return true;
 	}
 
 	private static ItemStack skullFromTexture(String base64) {
@@ -123,7 +134,7 @@ public final class DungeonRunTrackerFeature {
 			return skull;
 		} catch (Exception e) {
 			DungeonRunTracker.LOGGER.warn("[DRT] skullFromTexture failed: {}", e.getMessage());
-			return new ItemStack(Items.PLAYER_HEAD);
+			return ItemStack.EMPTY;
 		}
 	}
 
@@ -273,7 +284,7 @@ public final class DungeonRunTrackerFeature {
 	private static final int C_PAUSED   = 0xFFFFAA00;
 	private static final int C_RESET    = 0xFFFF4455;
 
-	public void render(Minecraft client, GuiGraphics guiGraphics, int mouseX, int mouseY) {
+	public void extractRenderState(Minecraft client, GuiGraphicsExtractor guiGraphics, int mouseX, int mouseY) {
 		if (!isTrackerVisible(client)) return;
 
 		String floorTag = selectedFloor == null ? "All" : selectedFloor.name();
@@ -313,7 +324,7 @@ public final class DungeonRunTrackerFeature {
 		}
 	}
 
-	private void renderHudTitleLine(Minecraft client, GuiGraphics g, int x, int y, String floorTag) {
+	private void renderHudTitleLine(Minecraft client, GuiGraphicsExtractor g, int x, int y, String floorTag) {
 		int floorColor = floorTagColor(floorTag);
 		x = seg(client, g, "DRT ", x, y, C_TITLE);
 		x = seg(client, g, "[", x, y, C_BRACKET);
@@ -328,7 +339,7 @@ public final class DungeonRunTrackerFeature {
 		return C_FLOOR;
 	}
 
-	private void renderHudRunsLine(Minecraft client, GuiGraphics g, int x, int y, int totalRuns, double runsPerHr, long avgRunTimeMs) {
+	private void renderHudRunsLine(Minecraft client, GuiGraphicsExtractor g, int x, int y, int totalRuns, double runsPerHr, long avgRunTimeMs) {
 		x = seg(client, g, "Runs ", x, y, C_LABEL);
 		x = seg(client, g, String.valueOf(totalRuns), x, y, C_VALUE);
 		x = seg(client, g, " | ", x, y, C_SEP);
@@ -341,7 +352,7 @@ public final class DungeonRunTrackerFeature {
 		if (runsPerHrPaused) seg(client, g, " [paused]", x, y, C_PAUSED);
 	}
 
-	private void renderHudProfitLine(Minecraft client, GuiGraphics g, int x, int y,
+	private void renderHudProfitLine(Minecraft client, GuiGraphicsExtractor g, int x, int y,
 			long lifetime, long session, long perHr, long avgProfitPerRun) {
 		x = seg(client, g, "Profit ", x, y, C_LABEL);
 		x = seg(client, g, formatCoins(lifetime), x, y, profitColor(lifetime));
@@ -354,16 +365,16 @@ public final class DungeonRunTrackerFeature {
 		seg(client, g, "/hr", x, y, C_DIM);
 	}
 
-	private int seg(Minecraft client, GuiGraphics g, String text, int x, int y, int color) {
-		g.drawString(client.font, text, x, y, color, true);
+	private int seg(Minecraft client, GuiGraphicsExtractor g, String text, int x, int y, int color) {
+		g.text(client.font, text, x, y, color, true);
 		return x + client.font.width(text);
 	}
 
-	private void drawTooltip(Minecraft client, GuiGraphics guiGraphics, String text, int mouseX, int mouseY) {
+	private void drawTooltip(Minecraft client, GuiGraphicsExtractor guiGraphics, String text, int mouseX, int mouseY) {
 		drawTooltip(client, guiGraphics, List.of(text), mouseX, mouseY);
 	}
 
-	private void drawTooltip(Minecraft client, GuiGraphics guiGraphics, List<String> lines, int mouseX, int mouseY) {
+	private void drawTooltip(Minecraft client, GuiGraphicsExtractor guiGraphics, List<String> lines, int mouseX, int mouseY) {
 		if (lines.isEmpty()) return;
 		int pad = 4;
 		int lineH = client.font.lineHeight + 1;
@@ -377,7 +388,7 @@ public final class DungeonRunTrackerFeature {
 		guiGraphics.fill(tx - pad, ty - pad, tx + tw + pad, ty + th + pad, 0xCC000000);
 		guiGraphics.fill(tx - pad, ty - pad, tx + tw + pad, ty - pad + 1, 0xFF6666AA);
 		for (int i = 0; i < lines.size(); i++) {
-			guiGraphics.drawString(client.font, lines.get(i), tx, ty + i * lineH, 0xFFCCCCFF, true);
+			guiGraphics.text(client.font, lines.get(i), tx, ty + i * lineH, 0xFFCCCCFF, true);
 		}
 	}
 
