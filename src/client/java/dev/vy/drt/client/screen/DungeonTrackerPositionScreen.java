@@ -2,7 +2,7 @@ package dev.vy.drt.client.screen;
 
 import dev.vy.drt.client.tracker.DungeonRunTrackerFeature;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
@@ -26,11 +26,11 @@ public final class DungeonTrackerPositionScreen extends Screen {
 	}
 
 	@Override
-	public void renderBackground(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
+	public void extractBackground(GuiGraphicsExtractor guiGraphics, int mouseX, int mouseY, float partialTick) {
 	}
 
 	@Override
-	public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
+	public void extractRenderState(GuiGraphicsExtractor guiGraphics, int mouseX, int mouseY, float partialTick) {
 		guiGraphics.fill(0, 0, width, height, 0xE0000000);
 
 		if (dragging) {
@@ -38,13 +38,13 @@ public final class DungeonTrackerPositionScreen extends Screen {
 			trackerFeature.setHudPosition(client, mouseX - dragOffsetX, mouseY - dragOffsetY, false);
 		}
 
-		trackerFeature.render(Minecraft.getInstance(), guiGraphics, mouseX, mouseY);
+		trackerFeature.extractRenderState(Minecraft.getInstance(), guiGraphics, mouseX, mouseY);
 
 		String line1 = "Drag the DRT tracker to position it.";
 		String line2 = "Press Enter or Esc to save and close.";
 		int centerX = width / 2;
-		guiGraphics.drawCenteredString(font, line1, centerX, 24, 0xFFFFFFFF);
-		guiGraphics.drawCenteredString(font, line2, centerX, 38, 0xFFB6C2DF);
+		guiGraphics.centeredText(font, line1, centerX, 24, 0xFFFFFFFF);
+		guiGraphics.centeredText(font, line2, centerX, 38, 0xFFB6C2DF);
 	}
 
 	@Override

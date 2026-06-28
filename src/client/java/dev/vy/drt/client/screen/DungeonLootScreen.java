@@ -13,7 +13,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.CharacterEvent;
 import net.minecraft.client.input.KeyEvent;
@@ -101,11 +101,11 @@ public final class DungeonLootScreen extends Screen {
 	}
 
 	@Override
-	public void renderBackground(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
+	public void extractBackground(GuiGraphicsExtractor g, int mouseX, int mouseY, float partialTick) {
 	}
 
 	@Override
-	public void render(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
+	public void extractRenderState(GuiGraphicsExtractor g, int mouseX, int mouseY, float partialTick) {
 		g.fill(0, 0, width, height, 0xAA000000);
 		updateLayout();
 
@@ -212,12 +212,12 @@ public final class DungeonLootScreen extends Screen {
 		return tabBarY + TAB_H + 4;
 	}
 
-	private void drawWindow(GuiGraphics g) {
+	private void drawWindow(GuiGraphicsExtractor g) {
 		g.fill(ox, oy, ox + winW, oy + winH, 0xFF0E0E1E);
 		border(g, ox, oy, winW, winH, 0xFF3A3A60);
 	}
 
-	private void drawTabs(GuiGraphics g, int mouseX, int mouseY) {
+	private void drawTabs(GuiGraphicsExtractor g, int mouseX, int mouseY) {
 		int tabX = ox + MARGIN;
 
 		// "All" tab
@@ -235,7 +235,7 @@ public final class DungeonLootScreen extends Screen {
 		return font.width(label) + 12;
 	}
 
-	private void drawTab(GuiGraphics g, int mouseX, int mouseY, int x, int y, String label, boolean active, Runnable onClick) {
+	private void drawTab(GuiGraphicsExtractor g, int mouseX, int mouseY, int x, int y, String label, boolean active, Runnable onClick) {
 		int w = tabWidth(label);
 		boolean hovered = contains(x, y, w, TAB_H, mouseX, mouseY);
 		int bg = active ? 0xFF202A52 : hovered ? 0xFF17172A : 0xFF0F0F1D;
@@ -243,14 +243,14 @@ public final class DungeonLootScreen extends Screen {
 		g.fill(x, y, x + w, y + TAB_H, bg);
 		border(g, x, y, w, TAB_H, border);
 		int textColor = active ? TEXT_PRIMARY : hovered ? 0xFFC8CDDD : TEXT_MUTED;
-		g.drawString(font, label, x + 6, y + (TAB_H - font.lineHeight) / 2, textColor);
+		g.text(font, label, x + 6, y + (TAB_H - font.lineHeight) / 2, textColor);
 		clickTargets.add(new ClickTarget(x, y, w, TAB_H, 0, onClick));
 	}
 
-	private void drawHeader(GuiGraphics g, int contentY) {
-		g.drawString(font, "Dungeon Loot", ox + MARGIN, contentY + 3, TEXT_PRIMARY);
+	private void drawHeader(GuiGraphicsExtractor g, int contentY) {
+		g.text(font, "Dungeon Loot", ox + MARGIN, contentY + 3, TEXT_PRIMARY);
 		String subtitle = selectedTab == null ? "All Floors" : selectedTab.name();
-		g.drawString(font, subtitle, ox + MARGIN, contentY + 17, TEXT_MUTED);
+		g.text(font, subtitle, ox + MARGIN, contentY + 17, TEXT_MUTED);
 
 		RunSelection sel = currentSelection();
 		String summaryPrefix = sel.records.size() + " runs | " + buildDisplayRows().size() + " items | ";
@@ -258,20 +258,20 @@ public final class DungeonLootScreen extends Screen {
 		int totalWidth = font.width(summaryPrefix) + font.width(profitText);
 		int sx = ox + winW - MARGIN - totalWidth;
 		int sy = contentY + 10;
-		g.drawString(font, summaryPrefix, sx, sy, TEXT_SECONDARY);
-		g.drawString(font, profitText, sx + font.width(summaryPrefix), sy, profitColor(sel.totalProfitCoins));
+		g.text(font, summaryPrefix, sx, sy, TEXT_SECONDARY);
+		g.text(font, profitText, sx + font.width(summaryPrefix), sy, profitColor(sel.totalProfitCoins));
 	}
 
-	private void drawSectionLabels(GuiGraphics g, int y) {
+	private void drawSectionLabels(GuiGraphicsExtractor g, int y) {
 		String runsLabel = "All Runs (" + tabHistory.size() + ")";
-		g.drawString(font, runsLabel, listX + 2, y + 4, TEXT_SECONDARY);
+		g.text(font, runsLabel, listX + 2, y + 4, TEXT_SECONDARY);
 		String tableLabel = selectedRunIndex >= 0 && selectedRunIndex < tabHistory.size()
 			? "Loot Summary, Run #" + tabHistory.get(selectedRunIndex).runNumber
 			: "Loot Summary, All Runs";
-		g.drawString(font, tableLabel, tableX + 2, y + 4, TEXT_SECONDARY);
+		g.text(font, tableLabel, tableX + 2, y + 4, TEXT_SECONDARY);
 	}
 
-	private void drawRunList(GuiGraphics g, int mouseX, int mouseY) {
+	private void drawRunList(GuiGraphicsExtractor g, int mouseX, int mouseY) {
 		g.fill(listX, listY, listX + listW, listY + listH, PANEL_BG);
 		g.enableScissor(listX, listY, listX + listW, listY + listH);
 
@@ -293,7 +293,7 @@ public final class DungeonLootScreen extends Screen {
 		border(g, listX, listY, listW, listH, PANEL_BORDER);
 	}
 
-	private void drawRunListRow(GuiGraphics g, int mouseX, int mouseY, int index, ItemStack icon, String runLabel, String chestLabel, int chestLabelColor, String sub, int rowY) {
+	private void drawRunListRow(GuiGraphicsExtractor g, int mouseX, int mouseY, int index, ItemStack icon, String runLabel, String chestLabel, int chestLabelColor, String sub, int rowY) {
 		if (rowY + ROW_H <= listY || rowY >= listY + listH) return;
 		boolean selected = selectedRunIndex == index;
 		boolean hovered = contains(listX, rowY, listW, ROW_H, mouseX, mouseY);
@@ -307,20 +307,20 @@ public final class DungeonLootScreen extends Screen {
 
 		int textX = listX + 8;
 		if (!icon.isEmpty()) {
-			g.renderItem(icon, listX + 4, rowY + 2);
+			g.item(icon, listX + 4, rowY + 2);
 			textX = listX + 23;
 		}
 		int textY = rowY + 6;
 		int baseColor = selected ? 0xFFFFFFFF : TEXT_PRIMARY;
 		int profitX = listX + listW - 8 - font.width(sub);
-		g.drawString(font, runLabel, textX, textY, baseColor);
+		g.text(font, runLabel, textX, textY, baseColor);
 		if (chestLabel != null && !chestLabel.isBlank()) {
 			int labelX = textX + font.width(runLabel);
 			String safeChestLabel = ellipsize(chestLabel, Math.max(0, profitX - labelX - 6));
-			g.drawString(font, safeChestLabel, labelX, textY, selected ? chestLabelColor : blendColor(chestLabelColor, 0xAA));
+			g.text(font, safeChestLabel, labelX, textY, selected ? chestLabelColor : blendColor(chestLabelColor, 0xAA));
 		}
 		int subColor = sub.startsWith("-") ? 0xFFFF7A7A : 0xFF8BCF9A;
-		g.drawString(font, sub, profitX, textY, subColor);
+		g.text(font, sub, profitX, textY, subColor);
 		final int idx = index;
 		clickTargets.add(new ClickTarget(listX, rowY, listW, ROW_H, 0, () -> {
 			selectedRunIndex = idx;
@@ -329,7 +329,7 @@ public final class DungeonLootScreen extends Screen {
 		}));
 	}
 
-	private void drawLootTable(GuiGraphics g, int mouseX, int mouseY) {
+	private void drawLootTable(GuiGraphicsExtractor g, int mouseX, int mouseY) {
 		g.fill(tableX, tableY, tableX + tableW, tableY + tableH, PANEL_BG);
 		border(g, tableX, tableY, tableW, tableH, PANEL_BORDER);
 
@@ -384,16 +384,16 @@ public final class DungeonLootScreen extends Screen {
 				g.fill(tableX + 6, drawY + ROW_H - 1, tableX + tableW - 6, drawY + ROW_H, 0x1F3A3A60);
 				int nameX = itemLeft;
 				if (!icon.isEmpty()) {
-					g.renderItem(icon, itemLeft, drawY + 2);
+					g.item(icon, itemLeft, drawY + 2);
 					nameX = itemLeft + 18;
 				}
 				String truncated = ellipsize(row.label, Math.max(0, qtyRight - nameX - 18));
 				int textY = drawY + 6;
 				if (isUltimateItem(row.itemId)) {
 					Component comp = Component.literal(truncated).withStyle(Style.EMPTY.withBold(true).withColor(TextColor.fromRgb(0xFF55FF)));
-					g.drawString(font, comp, nameX, textY, 0xFFFF55FF);
+					g.text(font, comp, nameX, textY, 0xFFFF55FF);
 				} else {
-					g.drawString(font, truncated, nameX, textY, itemColor(row.itemId));
+					g.text(font, truncated, nameX, textY, itemColor(row.itemId));
 				}
 				drawRightAligned(g, Integer.toString(row.quantity), qtyRight, textY, 0xFFB6C2DF);
 				drawRightAligned(g, formatCoins(row.unitPrice), eachRight, textY, 0xFF7FB98E);
@@ -406,7 +406,7 @@ public final class DungeonLootScreen extends Screen {
 		g.disableScissor();
 	}
 
-	private void drawLootHeaderSegment(GuiGraphics g, int mouseX, int mouseY, int x, int y, int w, int h, int textX, int textY, String label, LootSortColumn column, HeaderTextAlign align) {
+	private void drawLootHeaderSegment(GuiGraphicsExtractor g, int mouseX, int mouseY, int x, int y, int w, int h, int textX, int textY, String label, LootSortColumn column, HeaderTextAlign align) {
 		boolean hovered = contains(x, y, w, h, mouseX, mouseY);
 		boolean active = lootSortColumn == column;
 		if (hovered) {
@@ -441,7 +441,7 @@ public final class DungeonLootScreen extends Screen {
 		}
 	}
 
-	private void drawFooter(GuiGraphics g, int mouseX, int mouseY) {
+	private void drawFooter(GuiGraphicsExtractor g, int mouseX, int mouseY) {
 		int footerY = oy + winH - MARGIN - FOOTER_H;
 		int buttonY = footerY + 3;
 		int buttonH = FOOTER_H - 6;
@@ -482,13 +482,13 @@ public final class DungeonLootScreen extends Screen {
 		}));
 	}
 
-	private void drawButton(GuiGraphics g, int x, int y, int w, int h, boolean hovered, String label) {
+	private void drawButton(GuiGraphicsExtractor g, int x, int y, int w, int h, boolean hovered, String label) {
 		g.fill(x, y, x + w, y + h, hovered ? 0xFF232846 : 0xFF171A2E);
 		border(g, x, y, w, h, hovered ? 0xFF5B5F92 : 0xFF3F426D);
 		drawCenteredButtonText(g, label, x, y, w, h, TEXT_PRIMARY);
 	}
 
-	private void drawClearButton(GuiGraphics g, int x, int y, int w, int h, boolean hovered, boolean confirming) {
+	private void drawClearButton(GuiGraphicsExtractor g, int x, int y, int w, int h, boolean hovered, boolean confirming) {
 		if (confirming) {
 			g.fill(x, y, x + w, y + h, hovered ? 0xFF3A3000 : 0xFF252000);
 			border(g, x, y, w, h, 0xFFAA9000);
@@ -502,15 +502,15 @@ public final class DungeonLootScreen extends Screen {
 		}
 	}
 
-	private int drawStatBlock(GuiGraphics g, int x, int y, String label, String value, int valueColor) {
+	private int drawStatBlock(GuiGraphicsExtractor g, int x, int y, String label, String value, int valueColor) {
 		int labelW = font.width(label);
 		int valueW = font.width(value);
 		int w = labelW + valueW + 18;
 		int h = FOOTER_H - 6;
 		g.fill(x, y, x + w, y + h, 0xFF141426);
 		border(g, x, y, w, h, 0xFF303052);
-		g.drawString(font, label, x + 6, y + 7, TEXT_MUTED);
-		g.drawString(font, value, x + 12 + labelW, y + 7, valueColor);
+		g.text(font, label, x + 6, y + 7, TEXT_MUTED);
+		g.text(font, value, x + 12 + labelW, y + 7, valueColor);
 		return w;
 	}
 
@@ -958,25 +958,25 @@ public final class DungeonLootScreen extends Screen {
 		return mx >= x && mx < x + w && my >= y && my < y + h;
 	}
 
-	private void drawRightAligned(GuiGraphics g, String text, int rightX, int y, int color) {
-		g.drawString(font, text, rightX - font.width(text), y, color);
+	private void drawRightAligned(GuiGraphicsExtractor g, String text, int rightX, int y, int color) {
+		g.text(font, text, rightX - font.width(text), y, color);
 	}
 
-	private void drawCenteredButtonText(GuiGraphics g, String text, int x, int y, int w, int h, int color) {
-		g.drawString(font, text, x + (w - font.width(text)) / 2, y + (h - font.lineHeight) / 2, color);
+	private void drawCenteredButtonText(GuiGraphicsExtractor g, String text, int x, int y, int w, int h, int color) {
+		g.text(font, text, x + (w - font.width(text)) / 2, y + (h - font.lineHeight) / 2, color);
 	}
 
-	private void drawHeaderText(GuiGraphics g, String text, int anchorX, int y, int color, HeaderTextAlign align) {
+	private void drawHeaderText(GuiGraphicsExtractor g, String text, int anchorX, int y, int color, HeaderTextAlign align) {
 		int drawX = switch (align) {
 			case LEFT -> anchorX;
 			case CENTER -> anchorX - font.width(text) / 2;
 		};
-		g.drawString(font, text, drawX, y, color);
+		g.text(font, text, drawX, y, color);
 	}
 
 	private int clamp(int v, int min, int max) { return Math.max(min, Math.min(max, v)); }
 
-	private void border(GuiGraphics g, int x, int y, int w, int h, int color) {
+	private void border(GuiGraphicsExtractor g, int x, int y, int w, int h, int color) {
 		g.fill(x, y, x + w, y + 1, color);
 		g.fill(x, y + h - 1, x + w, y + h, color);
 		g.fill(x, y, x + 1, y + h, color);
