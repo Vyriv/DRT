@@ -194,6 +194,9 @@ public final class DungeonRunTrackerFeature {
 	private long currentRunStartMillis;
 	private long currentRunPausedMillis;
 	private long currentRunPauseStartMillis;
+	private long currentRunUnavailablePauseStartMillis;
+	private long currentRunBossTimeMs;
+	private long lastFinishedRunTimeMs;
 	private boolean currentRunActive;
 
 	private final Map<String, Integer> gradeRunCounts = new LinkedHashMap<>();
@@ -245,12 +248,14 @@ public final class DungeonRunTrackerFeature {
 
 	public void tick(Minecraft client) {
 		if (client.player == null || client.level == null) {
+			pauseCurrentRunForUnavailable(System.currentTimeMillis());
 			clearRuntimeState();
 			leftMouseDownLastTick = false;
 			return;
 		}
 
 		long now = System.currentTimeMillis();
+		resumeCurrentRunAfterUnavailable(now);
 		if (lootCollectionUntilMillis > 0L && now > lootCollectionUntilMillis) {
 			flushPendingLootRecord();
 		} else if (lootWindowUntilMillis > 0L && now > lootWindowUntilMillis) {
@@ -573,6 +578,9 @@ public final class DungeonRunTrackerFeature {
 		currentRunStartMillis = 0L;
 		currentRunPausedMillis = 0L;
 		currentRunPauseStartMillis = 0L;
+		currentRunUnavailablePauseStartMillis = 0L;
+		currentRunBossTimeMs = 0L;
+		lastFinishedRunTimeMs = 0L;
 		currentRunActive = false;
 		runsPerHrPaused = false;
 		sessionGradeRuns.clear();
@@ -584,6 +592,9 @@ public final class DungeonRunTrackerFeature {
 		long paused = currentRunPausedMillis;
 		if (runsPerHrPaused && currentRunPauseStartMillis > 0L) {
 			paused += System.currentTimeMillis() - currentRunPauseStartMillis;
+		}
+		if (currentRunUnavailablePauseStartMillis > 0L) {
+			paused += System.currentTimeMillis() - currentRunUnavailablePauseStartMillis;
 		}
 		long currentElapsed = Math.max(0L, System.currentTimeMillis() - currentRunStartMillis - paused);
 		return Math.max(0L, elapsed + currentElapsed);
@@ -603,13 +614,19 @@ public final class DungeonRunTrackerFeature {
 		currentRunStartMillis = now;
 		currentRunPausedMillis = 0L;
 		currentRunPauseStartMillis = 0L;
+		currentRunUnavailablePauseStartMillis = 0L;
+		currentRunBossTimeMs = 0L;
+		lastFinishedRunTimeMs = 0L;
 	}
 
-	private void finishCurrentRunTiming(long now) {
-		if (!currentRunActive || currentRunStartMillis <= 0L) return;
+	private long finishCurrentRunTiming(long now) {
+		if (!currentRunActive || currentRunStartMillis <= 0L) return 0L;
 		long paused = currentRunPausedMillis;
 		if (runsPerHrPaused && currentRunPauseStartMillis > 0L) {
 			paused += now - currentRunPauseStartMillis;
+		}
+		if (currentRunUnavailablePauseStartMillis > 0L) {
+			paused += now - currentRunUnavailablePauseStartMillis;
 		}
 		long elapsed = Math.max(0L, now - currentRunStartMillis - paused);
 		sessionInRunMillis += elapsed;
@@ -617,6 +634,20 @@ public final class DungeonRunTrackerFeature {
 		currentRunStartMillis = 0L;
 		currentRunPausedMillis = 0L;
 		currentRunPauseStartMillis = 0L;
+		currentRunUnavailablePauseStartMillis = 0L;
+		lastFinishedRunTimeMs = elapsed;
+		return elapsed;
+	}
+
+	private void pauseCurrentRunForUnavailable(long now) {
+		if (!currentRunActive || runsPerHrPaused || currentRunUnavailablePauseStartMillis > 0L) return;
+		currentRunUnavailablePauseStartMillis = now;
+	}
+
+	private void resumeCurrentRunAfterUnavailable(long now) {
+		if (currentRunUnavailablePauseStartMillis <= 0L) return;
+		currentRunPausedMillis += Math.max(0L, now - currentRunUnavailablePauseStartMillis);
+		currentRunUnavailablePauseStartMillis = 0L;
 	}
 
 	private void toggleRunsPerHrPause() {
@@ -653,7 +684,7 @@ public final class DungeonRunTrackerFeature {
 		if (bossTimeMatcher.matches()) {
 			long minutes = parsePositiveInt(bossTimeMatcher.group(1), 0);
 			long seconds = parsePositiveInt(bossTimeMatcher.group(2), 0);
-			sessionTotalRunTimeMs += (minutes * 60L + seconds) * 1000L;
+			currentRunBossTimeMs = (minutes * 60L + seconds) * 1000L;
 		}
 
 		DungeonFloor lineFloor = detectFloorFromLine(cleaned);
@@ -717,7 +748,6 @@ public final class DungeonRunTrackerFeature {
 		long now = System.currentTimeMillis();
 		Object currentLevel = client.level;
 		if (lastLevelIdentity != currentLevel) {
-			finishCurrentRunTiming(now);
 			lastLevelIdentity = currentLevel;
 			resetDungeonRuntimeState();
 			inDungeonHub = false;
@@ -1114,7 +1144,6 @@ public final class DungeonRunTrackerFeature {
 		clearLootWindow();
 		dragging = false;
 		positionDirty = false;
-		clearSession();
 	}
 
 	private void resetDungeonRuntimeState() {
@@ -1164,7 +1193,11 @@ public final class DungeonRunTrackerFeature {
 			sessionActive = true;
 			sessionStartMillis = now;
 		}
-		finishCurrentRunTiming(now);
+		long wallRunTimeMs = finishCurrentRunTiming(now);
+		if (wallRunTimeMs <= 0L) wallRunTimeMs = lastFinishedRunTimeMs;
+		sessionTotalRunTimeMs += currentRunBossTimeMs > 0L ? currentRunBossTimeMs : wallRunTimeMs;
+		currentRunBossTimeMs = 0L;
+		lastFinishedRunTimeMs = 0L;
 		sessionRuns++;
 
 		startLootWindow(now, totalRunsCompleted(), floor != null ? floor : DungeonFloor.UNKNOWN);
