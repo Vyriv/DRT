@@ -47,6 +47,8 @@ public final class DungeonRunTrackerFeature {
 	private static final int REFRESH_INTERVAL_TICKS = 10;
 	private static final long EXTRA_STATS_TIMEOUT_MS = 8_000L;
 	private static final long DUNGEON_SIGNAL_GRACE_MS = 15_000L;
+	private static final long MESSAGE_DEDUP_WINDOW_MS = 2_000L;
+	private static final long RUN_COMPLETION_DEDUP_WINDOW_MS = 20_000L;
 	private static final long LOOT_WINDOW_MS = 180_000L;
 	private static final long LOOT_COLLECTION_MS = 3_000L;
 	private static final Pattern ESSENCE_PATTERN = Pattern.compile("^(?:\\+\\s*)?(WITHER|UNDEAD|SPIDER|DRAGON|ICE|DIAMOND|GOLD|CRIMSON) ESSENCE(?:\\s*[xX]\\s*(\\d+))?$");
@@ -212,6 +214,9 @@ public final class DungeonRunTrackerFeature {
 	private DungeonFloor pendingSPlusFloor = DungeonFloor.UNKNOWN;
 	private long pendingSPlusUntilMillis;
 	private boolean runCountedThisDungeon;
+	private long lastRunRecordMillis;
+	private DungeonFloor lastRunRecordFloor = DungeonFloor.UNKNOWN;
+	private String lastRunRecordGrade = "?";
 	private Object lastLevelIdentity;
 
 	private long lootWindowUntilMillis;
@@ -253,6 +258,7 @@ public final class DungeonRunTrackerFeature {
 	private boolean dragging;
 	private boolean leftMouseDownLastTick;
 	private final Deque<PacketCapturedMessage> recentSystemMessages = new ArrayDeque<>();
+	private final Deque<PacketCapturedMessage> recentLootMessages = new ArrayDeque<>();
 	private boolean positionDirty;
 	private int dragOffsetX;
 	private int dragOffsetY;
@@ -316,19 +322,22 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	public void handleChatMessage(Component message) {
-		handleMessage(message, false);
+		if (message == null) return;
+		if (!markMessageForProcessing(message)) return;
+		submitMessage(message, false);
 	}
 
 	public void handleRawSystemMessage(Component message) {
 		if (message == null) return;
-		if (!markSystemMessageForProcessing(message)) return;
-		handleMessage(message, true);
+		if (!markMessageForProcessing(message)) return;
+		submitMessage(message, true);
 	}
 
 	public void handleGameMessage(Component message, boolean overlay) {
 		if (overlay) return;
-		if (!markSystemMessageForProcessing(message)) return;
-		handleMessage(message, true);
+		if (message == null) return;
+		if (!markMessageForProcessing(message)) return;
+		submitMessage(message, true);
 	}
 
 	private static final int C_BG       = 0xCC0D0D14;
@@ -390,7 +399,7 @@ public final class DungeonRunTrackerFeature {
 			if (isHoveringModeLabel(client, mouseX, mouseY)) {
 				drawTooltip(client, guiGraphics, "Mode: " + hudVisibilityMode.displayName, mouseX, mouseY);
 			} else if (isHoveringFloorLabel(client, mouseX, mouseY)) {
-				drawTooltip(client, guiGraphics, "Click to cycle floors", mouseX, mouseY);
+				drawTooltip(client, guiGraphics, "Left/right click to cycle floors", mouseX, mouseY);
 			} else if (isHoveringRunsHrPart(client, mouseX, mouseY)) {
 				drawTooltip(client, guiGraphics, runsPerHrPaused ? "Click to resume /hr timer" : "Click to pause /hr timer", mouseX, mouseY);
 			} else if (isHoveringRunsLine(client, mouseX, mouseY)) {
@@ -585,13 +594,23 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private void cycleSelectedFloor() {
+		cycleSelectedFloor(1);
+	}
+
+	private void cycleSelectedFloorBackward() {
+		cycleSelectedFloor(-1);
+	}
+
+	private void cycleSelectedFloor(int direction) {
 		List<DungeonFloor> available = new ArrayList<>();
 		available.add(null);
 		for (DungeonFloor f : DungeonFloor.values()) {
 			if (f != DungeonFloor.UNKNOWN) available.add(f);
 		}
 		int idx = available.indexOf(selectedFloor);
-		selectedFloor = available.get((idx + 1) % available.size());
+		if (idx < 0) idx = 0;
+		int next = Math.floorMod(idx + direction, available.size());
+		selectedFloor = available.get(next);
 		DrtConfigManager.updateSelectedFloor(selectedFloor == null ? null : selectedFloor.name());
 	}
 
@@ -684,11 +703,15 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	public boolean handleScreenMouseClick(Minecraft client, double mouseX, double mouseY, int button, boolean moveMode) {
-		if (!isTrackerVisible(client, moveMode) || button != 0) return false;
+		if (!isTrackerVisible(client, moveMode) || (button != 0 && button != 1)) return false;
 		if (moveMode) return false;
 		boolean showResetLine = shouldShowResetLine(client, false);
 		int mx = (int) mouseX;
 		int my = (int) mouseY;
+		if (button == 1) {
+			if (isHoveringFloorLabel(client, mx, my)) { cycleSelectedFloorBackward(); return true; }
+			return false;
+		}
 		if (isHoveringModeLabel(client, mx, my)) { cycleHudVisibilityMode(); return true; }
 		if (isHoveringFloorLabel(client, mx, my)) { cycleSelectedFloor(); return true; }
 		if (isHoveringRunsHrPart(client, mx, my)) { toggleRunsPerHrPause(); return true; }
@@ -841,13 +864,22 @@ public final class DungeonRunTrackerFeature {
 		handleLootMessage(rawText == null ? cleaned : rawText.trim(), cleaned, now);
 	}
 
-	private boolean markSystemMessageForProcessing(Component message) {
+	private void submitMessage(Component message, boolean fromGameMessage) {
+		Minecraft.getInstance().execute(() -> handleMessage(message, fromGameMessage));
+	}
+
+	private synchronized boolean markMessageForProcessing(Component message) {
 		String text = message.getString();
 		if (text == null || text.isEmpty()) return true;
+		text = text
+			.replace("\r\n", "\n")
+			.replace('\r', '\n')
+			.trim();
+		if (text.isEmpty()) return true;
 		long now = System.currentTimeMillis();
 		for (var iterator = recentSystemMessages.iterator(); iterator.hasNext();) {
 			PacketCapturedMessage captured = iterator.next();
-			if (now - captured.atMillis > 1_000L) {
+			if (now - captured.atMillis > MESSAGE_DEDUP_WINDOW_MS) {
 				iterator.remove();
 				continue;
 			}
@@ -1462,9 +1494,24 @@ public final class DungeonRunTrackerFeature {
 		pendingLootEntries.clear();
 	}
 
-	private void recordCompletedRun(long now, DungeonFloor floor, String grade) {
+	private synchronized void recordCompletedRun(long now, DungeonFloor floor, String grade) {
 		String key = floor != null && floor != DungeonFloor.UNKNOWN ? floor.name() : "UNKNOWN";
 		String g = grade == null || grade.isBlank() ? "?" : grade;
+		if (lastRunRecordMillis > 0L && now - lastRunRecordMillis <= RUN_COMPLETION_DEDUP_WINDOW_MS) {
+			DungeonRunTracker.LOGGER.info(
+				"[DRT] Ignored duplicate completion signal: floor={} grade={} previousFloor={} previousGrade={} ageMs={}",
+				key,
+				g,
+				lastRunRecordFloor != null ? lastRunRecordFloor.name() : "UNKNOWN",
+				lastRunRecordGrade,
+				now - lastRunRecordMillis
+			);
+			runCountedThisDungeon = true;
+			return;
+		}
+		lastRunRecordMillis = now;
+		lastRunRecordFloor = floor != null ? floor : DungeonFloor.UNKNOWN;
+		lastRunRecordGrade = g;
 		int newCount = floorRunCounts.merge(key, 1, Integer::sum);
 		DrtConfigManager.updateFloorRunCount(key, newCount);
 		gradeRunCounts.merge(g, 1, Integer::sum);
@@ -1507,6 +1554,7 @@ public final class DungeonRunTrackerFeature {
 		pendingLootEntries.clear();
 		cachedChestDataByTitle.clear();
 		scannedRewardScreens.clear();
+		recentLootMessages.clear();
 	}
 
 	private void handleLootMessage(String rawText, String cleaned, long now) {
@@ -1523,6 +1571,7 @@ public final class DungeonRunTrackerFeature {
 			return;
 		}
 		if (lootCollectionUntilMillis <= 0L || now > lootCollectionUntilMillis) return;
+		if (!markLootLineForProcessing(cleaned, now)) return;
 		DungeonLootEntry parsed = parseLootEntry(rawText, cleaned);
 		if (parsed == null) return;
 		mergePendingLootEntry(parsed);
@@ -1708,6 +1757,23 @@ public final class DungeonRunTrackerFeature {
 		pendingLootChestCostCoins = 0L;
 		pendingLootSeededFromGui = false;
 		pendingLootEntries.clear();
+		recentLootMessages.clear();
+	}
+
+	private boolean markLootLineForProcessing(String cleaned, long now) {
+		if (cleaned == null || cleaned.isBlank()) return true;
+		String key = pendingLootRunNumber + "|" + cleaned.trim();
+		for (var iterator = recentLootMessages.iterator(); iterator.hasNext();) {
+			PacketCapturedMessage captured = iterator.next();
+			if (now - captured.atMillis > MESSAGE_DEDUP_WINDOW_MS) {
+				iterator.remove();
+				continue;
+			}
+			if (captured.text.equals(key)) return false;
+		}
+		recentLootMessages.addLast(new PacketCapturedMessage(key, now));
+		while (recentLootMessages.size() > 64) recentLootMessages.removeFirst();
+		return true;
 	}
 
 	private String resolveItemId(String rawName) {
