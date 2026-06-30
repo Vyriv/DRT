@@ -8,8 +8,10 @@ import dev.vy.drt.config.DungeonLootEntry;
 import dev.vy.drt.config.DungeonRunRecord;
 import dev.vy.drt.price.DungeonProfitPricing;
 import dev.vy.drt.price.PriceCache;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -23,6 +25,7 @@ import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
+import net.minecraft.client.gui.screens.inventory.InventoryScreen;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.nbt.CompoundTag;
@@ -38,6 +41,7 @@ import net.minecraft.world.scores.DisplaySlot;
 import net.minecraft.world.scores.Objective;
 import net.minecraft.world.scores.PlayerScoreEntry;
 import net.minecraft.world.scores.Scoreboard;
+import org.joml.Matrix3x2fStack;
 
 public final class DungeonRunTrackerFeature {
 	private static final int REFRESH_INTERVAL_TICKS = 10;
@@ -53,7 +57,9 @@ public final class DungeonRunTrackerFeature {
 	private static final Pattern QUANTITY_PREFIX_PATTERN = Pattern.compile("^(\\d+)x?\\s+(.+)$");
 	private static final Pattern QUANTITY_SUFFIX_PATTERN = Pattern.compile("^(.+?)\\s+x(\\d+)$", Pattern.CASE_INSENSITIVE);
 	private static final Pattern ENCHANTED_BOOK_PATTERN = Pattern.compile("^Enchanted Book \\((.+) ([IVX]+)\\)$", Pattern.CASE_INSENSITIVE);
-	private static final Pattern BOSS_TIME_PATTERN = Pattern.compile(".*Defeated .+ in (\\d+)m (\\d+)s.*", Pattern.CASE_INSENSITIVE);
+	private static final Pattern BOSS_TIME_PATTERN = Pattern.compile("Defeated .+ in (\\d+)m\\s+(\\d+)s", Pattern.CASE_INSENSITIVE);
+	private static final Pattern SHORT_FLOOR_PATTERN = Pattern.compile("(?:^|[^A-Z0-9])([FM])\\s*([1-7])(?:$|[^A-Z0-9])");
+	private static final Pattern SCORE_GRADE_PATTERN = Pattern.compile("\\bSCORE\\b.*(?:\\((S\\+|S|A|B|C|D)\\)|(?:^|\\s)(S\\+|S|A|B|C|D)\\s*$)", Pattern.CASE_INSENSITIVE);
 	private static final Set<String> REWARD_CHEST_TITLES = Set.of("WOOD CHEST", "GOLD CHEST", "DIAMOND CHEST", "EMERALD CHEST", "OBSIDIAN CHEST", "BEDROCK CHEST");
 	private static final Map<String, String> TIER_NAME_TO_CHEST_TITLE = Map.of(
 		"WOOD", "WOOD CHEST", "GOLD", "GOLD CHEST", "DIAMOND", "DIAMOND CHEST",
@@ -68,6 +74,40 @@ public final class DungeonRunTrackerFeature {
 
 	private static final Map<String, ItemStack> CHEST_ICON_CACHE = new LinkedHashMap<>();
 	private static final Map<String, ItemStack> ITEM_ICON_CACHE = new LinkedHashMap<>();
+	private static final float MIN_HUD_SCALE = 0.5F;
+	private static final float MAX_HUD_SCALE = 2.0F;
+	private static final float HUD_SCALE_STEP = 0.1F;
+
+	private enum HudVisibilityMode {
+		GLOBAL("Global"),
+		DEFAULT("Default"),
+		DHUB("DHub");
+
+		private final String displayName;
+
+		HudVisibilityMode(String displayName) {
+			this.displayName = displayName;
+		}
+
+		HudVisibilityMode next() {
+			return switch (this) {
+				case DEFAULT -> GLOBAL;
+				case GLOBAL -> DHUB;
+				case DHUB -> DEFAULT;
+			};
+		}
+
+		static HudVisibilityMode fromConfig(String value) {
+			if (value == null || value.isBlank()) return DEFAULT;
+			try {
+				return HudVisibilityMode.valueOf(value.trim().toUpperCase(Locale.ROOT));
+			} catch (IllegalArgumentException ignored) {
+				return DEFAULT;
+			}
+		}
+	}
+
+	private record PacketCapturedMessage(String text, long atMillis) {}
 
 	public static ItemStack getChestIcon(String chestTitle) {
 		if (chestTitle == null) return ItemStack.EMPTY;
@@ -153,8 +193,10 @@ public final class DungeonRunTrackerFeature {
 	private DungeonFloor selectedFloor = null;
 
 	private boolean enabled;
+	private HudVisibilityMode hudVisibilityMode = HudVisibilityMode.DEFAULT;
 	private int hudX = 10;
 	private int hudY = 10;
+	private float hudScale = 1.0F;
 	private boolean lootScreenPending = false;
 
 	private int refreshCountdown;
@@ -191,6 +233,9 @@ public final class DungeonRunTrackerFeature {
 	private long totalLifetimeProfit;
 	private long sessionInRunMillis;
 	private long sessionTotalRunTimeMs;
+	private final Map<String, Integer> sessionFloorRuns = new LinkedHashMap<>();
+	private final Map<String, Long> sessionFloorProfitTotals = new LinkedHashMap<>();
+	private final Map<String, Long> sessionFloorRunTimeTotals = new LinkedHashMap<>();
 	private long currentRunStartMillis;
 	private long currentRunPausedMillis;
 	private long currentRunPauseStartMillis;
@@ -207,12 +252,14 @@ public final class DungeonRunTrackerFeature {
 
 	private boolean dragging;
 	private boolean leftMouseDownLastTick;
+	private final Deque<PacketCapturedMessage> recentSystemMessages = new ArrayDeque<>();
 	private boolean positionDirty;
 	private int dragOffsetX;
 	private int dragOffsetY;
 
 	public void applyConfig(DrtConfig config) {
 		enabled = config.enabled;
+		hudVisibilityMode = HudVisibilityMode.fromConfig(config.hudVisibilityMode);
 		floorRunCounts.clear();
 		if (config.floorRunCounts != null) {
 			config.floorRunCounts.forEach((k, v) -> {
@@ -224,6 +271,7 @@ public final class DungeonRunTrackerFeature {
 		}
 		hudX = Math.max(0, config.hudX);
 		hudY = Math.max(0, config.hudY);
+		hudScale = clampHudScale(config.hudScale);
 		String savedFloor = config.selectedFloor;
 		if (savedFloor != null && !savedFloor.isBlank()) {
 			try { selectedFloor = DungeonFloor.valueOf(savedFloor); } catch (IllegalArgumentException ignored) { selectedFloor = null; }
@@ -271,8 +319,15 @@ public final class DungeonRunTrackerFeature {
 		handleMessage(message, false);
 	}
 
+	public void handleRawSystemMessage(Component message) {
+		if (message == null) return;
+		if (!markSystemMessageForProcessing(message)) return;
+		handleMessage(message, true);
+	}
+
 	public void handleGameMessage(Component message, boolean overlay) {
 		if (overlay) return;
+		if (!markSystemMessageForProcessing(message)) return;
 		handleMessage(message, true);
 	}
 
@@ -290,32 +345,51 @@ public final class DungeonRunTrackerFeature {
 	private static final int C_RESET    = 0xFFFF4455;
 
 	public void extractRenderState(Minecraft client, GuiGraphicsExtractor guiGraphics, int mouseX, int mouseY) {
-		if (!isTrackerVisible(client)) return;
+		extractRenderState(client, guiGraphics, mouseX, mouseY, false);
+	}
+
+	public void extractRenderState(Minecraft client, GuiGraphicsExtractor guiGraphics, int mouseX, int mouseY, boolean moveMode) {
+		if (!isTrackerVisible(client, moveMode)) return;
+		boolean showResetLine = shouldShowResetLine(client, moveMode);
 
 		String floorTag = selectedFloor == null ? "All" : selectedFloor.name();
 		long lifetimeProfit = selectedFloor == null
 			? totalLifetimeProfit
 			: floorProfitTotals.getOrDefault(selectedFloor.name(), 0L);
+		int sessionRunCount = displaySessionRuns();
+		long sessionProfit = displaySessionProfit();
+		long sessionRunTimeMs = displaySessionRunTimeMs();
 		long inRunElapsedMs = activeInRunElapsedMs();
-		long completedRunTimeMs = completedRunElapsedMs();
 		double hoursElapsed = inRunElapsedMs / 3_600_000.0;
-		long profitPerHr = hoursElapsed > 0.001 ? (long) (sessionTotalProfit / hoursElapsed) : 0L;
-		double runsPerHr = hoursElapsed > 0.001 ? sessionRuns / hoursElapsed : 0.0;
-		long avgRunTimeMs = sessionRuns > 0 ? completedRunTimeMs / sessionRuns : 0L;
-		long avgProfitPerRun = sessionRuns > 0 ? sessionTotalProfit / sessionRuns : 0L;
+		long profitPerHr = hoursElapsed > 0.001 ? (long) (sessionProfit / hoursElapsed) : 0L;
+		double runsPerHr = hoursElapsed > 0.001 ? sessionRunCount / hoursElapsed : 0.0;
+		long avgRunTimeMs = sessionRunCount > 0 ? sessionRunTimeMs / sessionRunCount : 0L;
+		long avgProfitPerRun = sessionRunCount > 0 ? sessionProfit / sessionRunCount : 0L;
 		int totalRuns = selectedFloor == null
 			? totalRunsCompleted()
 			: floorRunCounts.getOrDefault(selectedFloor.name(), 0);
 
 		int lineH = client.font.lineHeight + 2;
 
-		renderHudTitleLine(client, guiGraphics, hudX, hudY, floorTag);
-		renderHudRunsLine(client, guiGraphics, hudX, hudY + lineH, totalRuns, runsPerHr, avgRunTimeMs);
-		renderHudProfitLine(client, guiGraphics, hudX, hudY + lineH * 2, lifetimeProfit, sessionTotalProfit, profitPerHr, avgProfitPerRun);
-		seg(client, guiGraphics, "Reset " + floorTag, hudX, hudY + lineH * 3, C_RESET);
+		Matrix3x2fStack pose = guiGraphics.pose();
+		pose.pushMatrix();
+		try {
+			pose.translate(hudX, hudY);
+			pose.scale(hudScale);
+			renderHudTitleLine(client, guiGraphics, 0, 0, floorTag);
+			renderHudRunsLine(client, guiGraphics, 0, lineH, totalRuns, sessionRunCount, runsPerHr, avgRunTimeMs);
+			renderHudProfitLine(client, guiGraphics, 0, lineH * 2, lifetimeProfit, sessionProfit, profitPerHr, avgProfitPerRun);
+			if (showResetLine) {
+				seg(client, guiGraphics, "Reset " + floorTag, 0, lineH * 3, C_RESET);
+			}
+		} finally {
+			pose.popMatrix();
+		}
 
-		if (client.screen != null) {
-			if (isHoveringFloorLabel(client, mouseX, mouseY)) {
+		if (client.screen != null && !moveMode) {
+			if (isHoveringModeLabel(client, mouseX, mouseY)) {
+				drawTooltip(client, guiGraphics, "Mode: " + hudVisibilityMode.displayName, mouseX, mouseY);
+			} else if (isHoveringFloorLabel(client, mouseX, mouseY)) {
 				drawTooltip(client, guiGraphics, "Click to cycle floors", mouseX, mouseY);
 			} else if (isHoveringRunsHrPart(client, mouseX, mouseY)) {
 				drawTooltip(client, guiGraphics, runsPerHrPaused ? "Click to resume /hr timer" : "Click to pause /hr timer", mouseX, mouseY);
@@ -323,7 +397,7 @@ public final class DungeonRunTrackerFeature {
 				drawTooltip(client, guiGraphics, buildRunsTooltip(), mouseX, mouseY);
 			} else if (isHoveringProfitLine(client, mouseX, mouseY)) {
 				drawTooltip(client, guiGraphics, "Click to open loot log", mouseX, mouseY);
-			} else if (isHoveringResetButton(client, mouseX, mouseY)) {
+			} else if (isHoveringResetButton(client, mouseX, mouseY, showResetLine)) {
 				drawTooltip(client, guiGraphics, "Click to reset " + floorTag + " tracker", mouseX, mouseY);
 			}
 		}
@@ -344,11 +418,11 @@ public final class DungeonRunTrackerFeature {
 		return C_FLOOR;
 	}
 
-	private void renderHudRunsLine(Minecraft client, GuiGraphicsExtractor g, int x, int y, int totalRuns, double runsPerHr, long avgRunTimeMs) {
+	private void renderHudRunsLine(Minecraft client, GuiGraphicsExtractor g, int x, int y, int totalRuns, int sessionRunCount, double runsPerHr, long avgRunTimeMs) {
 		x = seg(client, g, "Runs ", x, y, C_LABEL);
 		x = seg(client, g, String.valueOf(totalRuns), x, y, C_VALUE);
 		x = seg(client, g, " | ", x, y, C_SEP);
-		x = seg(client, g, String.valueOf(sessionRuns), x, y, C_VALUE);
+		x = seg(client, g, String.valueOf(sessionRunCount), x, y, C_VALUE);
 		x = seg(client, g, " | ", x, y, C_SEP);
 		x = seg(client, g, formatDuration(avgRunTimeMs), x, y, C_VALUE);
 		x = seg(client, g, " | ", x, y, C_SEP);
@@ -446,7 +520,12 @@ public final class DungeonRunTrackerFeature {
 		DrtConfigManager.save();
 	}
 
-	private List<String> getDisplayLines() {
+	public boolean toggleHud() {
+		setEnabled(!enabled);
+		return enabled;
+	}
+
+	private List<String> getDisplayLines(boolean includeResetLine) {
 		String floorTag = selectedFloor == null ? "All" : selectedFloor.name();
 		String resetLine = "Reset " + floorTag;
 
@@ -456,19 +535,34 @@ public final class DungeonRunTrackerFeature {
 		long lifetimeProfit = selectedFloor == null
 			? totalLifetimeProfit
 			: floorProfitTotals.getOrDefault(selectedFloor.name(), 0L);
+		int sessionRunCount = displaySessionRuns();
+		long sessionProfit = displaySessionProfit();
+		long sessionRunTimeMs = displaySessionRunTimeMs();
 
 		long inRunElapsedMs = activeInRunElapsedMs();
-		long completedRunTimeMs = completedRunElapsedMs();
 		double hoursElapsed = inRunElapsedMs / 3_600_000.0;
-		double runsPerHr = hoursElapsed > 0.001 ? sessionRuns / hoursElapsed : 0.0;
-		double profitPerHr = hoursElapsed > 0.001 ? sessionTotalProfit / hoursElapsed : 0.0;
-		long avgRunTimeMs = sessionRuns > 0 ? completedRunTimeMs / sessionRuns : 0L;
-		long avgProfitPerRun = sessionRuns > 0 ? sessionTotalProfit / sessionRuns : 0L;
+		double runsPerHr = hoursElapsed > 0.001 ? sessionRunCount / hoursElapsed : 0.0;
+		double profitPerHr = hoursElapsed > 0.001 ? sessionProfit / hoursElapsed : 0.0;
+		long avgRunTimeMs = sessionRunCount > 0 ? sessionRunTimeMs / sessionRunCount : 0L;
+		long avgProfitPerRun = sessionRunCount > 0 ? sessionProfit / sessionRunCount : 0L;
 
-		String runsLine = "Runs " + totalRuns + " | " + sessionRuns + " | " + formatDuration(avgRunTimeMs) + " | " + formatRate(runsPerHr) + "/hr"
+		String runsLine = "Runs " + totalRuns + " | " + sessionRunCount + " | " + formatDuration(avgRunTimeMs) + " | " + formatRate(runsPerHr) + "/hr"
 			+ (runsPerHrPaused ? " [paused]" : "");
-		String profitLine = "Profit " + formatCoins(lifetimeProfit) + " | " + formatCoins(sessionTotalProfit) + " | " + formatCoins(avgProfitPerRun) + "/run | " + formatCoins((long) profitPerHr) + "/hr";
-		return List.of("DRT [" + floorTag + "]", runsLine, profitLine, resetLine);
+		String profitLine = "Profit " + formatCoins(lifetimeProfit) + " | " + formatCoins(sessionProfit) + " | " + formatCoins(avgProfitPerRun) + "/run | " + formatCoins((long) profitPerHr) + "/hr";
+		if (includeResetLine) return List.of("DRT [" + floorTag + "]", runsLine, profitLine, resetLine);
+		return List.of("DRT [" + floorTag + "]", runsLine, profitLine);
+	}
+
+	private int displaySessionRuns() {
+		return selectedFloor == null ? sessionRuns : sessionFloorRuns.getOrDefault(selectedFloor.name(), 0);
+	}
+
+	private long displaySessionProfit() {
+		return selectedFloor == null ? sessionTotalProfit : sessionFloorProfitTotals.getOrDefault(selectedFloor.name(), 0L);
+	}
+
+	private long displaySessionRunTimeMs() {
+		return selectedFloor == null ? sessionTotalRunTimeMs : sessionFloorRunTimeTotals.getOrDefault(selectedFloor.name(), 0L);
 	}
 
 	private void resetSelectedFloor() {
@@ -501,6 +595,11 @@ public final class DungeonRunTrackerFeature {
 		DrtConfigManager.updateSelectedFloor(selectedFloor == null ? null : selectedFloor.name());
 	}
 
+	private void cycleHudVisibilityMode() {
+		hudVisibilityMode = hudVisibilityMode.next();
+		DrtConfigManager.updateHudVisibilityMode(hudVisibilityMode.name());
+	}
+
 	private int totalRunsCompleted() {
 		int total = 0;
 		for (int v : floorRunCounts.values()) total += v;
@@ -531,35 +630,90 @@ public final class DungeonRunTrackerFeature {
 	public int getHudX() { return hudX; }
 	public int getHudY() { return hudY; }
 
+	public int getHudScalePercent() {
+		return Math.round(hudScale * 100.0F);
+	}
+
 	public int getDisplayWidth(Minecraft client) {
+		return getDisplayWidth(client, false);
+	}
+
+	public int getDisplayWidth(Minecraft client, boolean includeResetLine) {
 		if (client == null) return 0;
-		return getDisplayLines().stream().mapToInt(l -> client.font.width(l)).max().orElse(0);
+		return scaledHudSize(getBaseDisplayWidth(client, includeResetLine));
 	}
 
 	public int getDisplayHeight(Minecraft client) {
+		return getDisplayHeight(client, false);
+	}
+
+	public int getDisplayHeight(Minecraft client, boolean includeResetLine) {
 		if (client == null) return 0;
-		List<String> lines = getDisplayLines();
+		return scaledHudSize(getBaseDisplayHeight(client, includeResetLine));
+	}
+
+	private int getBaseDisplayWidth(Minecraft client, boolean includeResetLine) {
+		return getDisplayLines(includeResetLine).stream().mapToInt(l -> client.font.width(l)).max().orElse(0);
+	}
+
+	private int getBaseDisplayHeight(Minecraft client, boolean includeResetLine) {
+		List<String> lines = getDisplayLines(includeResetLine);
 		return lines.size() * (client.font.lineHeight + 2) - 2;
 	}
 
+	private int scaledHudSize(int baseSize) {
+		if (baseSize <= 0) return 0;
+		return (int) Math.ceil(baseSize * hudScale);
+	}
+
 	public void setHudPosition(Minecraft client, int x, int y, boolean save) {
+		setHudPosition(client, x, y, save, false);
+	}
+
+	public void setHudPosition(Minecraft client, int x, int y, boolean save, boolean includeResetLine) {
 		if (client == null) return;
-		int maxX = Math.max(0, client.getWindow().getGuiScaledWidth() - getDisplayWidth(client));
-		int maxY = Math.max(0, client.getWindow().getGuiScaledHeight() - getDisplayHeight(client));
+		int maxX = Math.max(0, client.getWindow().getGuiScaledWidth() - getDisplayWidth(client, includeResetLine));
+		int maxY = Math.max(0, client.getWindow().getGuiScaledHeight() - getDisplayHeight(client, includeResetLine));
 		hudX = clamp(x, 0, maxX);
 		hudY = clamp(y, 0, maxY);
 		if (save) saveHudPosition();
 	}
 
 	public boolean handleScreenMouseClick(Minecraft client, double mouseX, double mouseY, int button) {
-		if (!isTrackerVisible(client) || button != 0) return false;
+		return handleScreenMouseClick(client, mouseX, mouseY, button, false);
+	}
+
+	public boolean handleScreenMouseClick(Minecraft client, double mouseX, double mouseY, int button, boolean moveMode) {
+		if (!isTrackerVisible(client, moveMode) || button != 0) return false;
+		if (moveMode) return false;
+		boolean showResetLine = shouldShowResetLine(client, false);
 		int mx = (int) mouseX;
 		int my = (int) mouseY;
+		if (isHoveringModeLabel(client, mx, my)) { cycleHudVisibilityMode(); return true; }
 		if (isHoveringFloorLabel(client, mx, my)) { cycleSelectedFloor(); return true; }
 		if (isHoveringRunsHrPart(client, mx, my)) { toggleRunsPerHrPause(); return true; }
 		if (isHoveringProfitLine(client, mx, my)) { lootScreenPending = true; return true; }
-		if (isHoveringResetButton(client, mx, my)) { resetSelectedFloor(); return true; }
+		if (isHoveringResetButton(client, mx, my, showResetLine)) { resetSelectedFloor(); return true; }
 		return false;
+	}
+
+	public void growHudScale(Minecraft client, boolean save, boolean includeResetLine) {
+		setHudScale(client, hudScale + HUD_SCALE_STEP, save, includeResetLine);
+	}
+
+	public void shrinkHudScale(Minecraft client, boolean save, boolean includeResetLine) {
+		setHudScale(client, hudScale - HUD_SCALE_STEP, save, includeResetLine);
+	}
+
+	public void setHudScale(Minecraft client, float scale, boolean save) {
+		setHudScale(client, scale, save, false);
+	}
+
+	public void setHudScale(Minecraft client, float scale, boolean save, boolean includeResetLine) {
+		if (client == null) return;
+		hudScale = clampHudScale(scale);
+		setHudPosition(client, hudX, hudY, false, includeResetLine);
+		if (save) saveHudLayout();
 	}
 
 	public boolean consumeLootScreenPending() {
@@ -584,6 +738,9 @@ public final class DungeonRunTrackerFeature {
 		currentRunActive = false;
 		runsPerHrPaused = false;
 		sessionGradeRuns.clear();
+		sessionFloorRuns.clear();
+		sessionFloorProfitTotals.clear();
+		sessionFloorRunTimeTotals.clear();
 	}
 
 	private long activeInRunElapsedMs() {
@@ -665,7 +822,7 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private void handleMessage(Component message, boolean fromGameMessage) {
-		if (!enabled || message == null) return;
+		if (message == null) return;
 
 		long now = System.currentTimeMillis();
 		if (lootCollectionUntilMillis > 0L && now > lootCollectionUntilMillis) flushPendingLootRecord();
@@ -675,13 +832,40 @@ public final class DungeonRunTrackerFeature {
 		String cleaned = normalize(rawText);
 		if (cleaned.isEmpty()) return;
 
+		expirePendingCompletionState(now);
+		for (String rawLine : splitMessageLines(rawText)) {
+			String cleanedLine = normalize(rawLine);
+			if (!cleanedLine.isEmpty()) handleCompletionLine(rawLine.trim(), cleanedLine, now);
+		}
+
+		handleLootMessage(rawText == null ? cleaned : rawText.trim(), cleaned, now);
+	}
+
+	private boolean markSystemMessageForProcessing(Component message) {
+		String text = message.getString();
+		if (text == null || text.isEmpty()) return true;
+		long now = System.currentTimeMillis();
+		for (var iterator = recentSystemMessages.iterator(); iterator.hasNext();) {
+			PacketCapturedMessage captured = iterator.next();
+			if (now - captured.atMillis > 1_000L) {
+				iterator.remove();
+				continue;
+			}
+			if (captured.text.equals(text)) return false;
+		}
+		recentSystemMessages.addLast(new PacketCapturedMessage(text, now));
+		while (recentSystemMessages.size() > 64) recentSystemMessages.removeFirst();
+		return true;
+	}
+
+	private void handleCompletionLine(String rawLine, String cleaned, long now) {
 		if (isDungeonEntryMessage(cleaned)) {
 			beginNewDungeonRun(now);
 			insideDungeon = true;
 		}
 
-		Matcher bossTimeMatcher = BOSS_TIME_PATTERN.matcher(rawText == null ? cleaned : rawText);
-		if (bossTimeMatcher.matches()) {
+		Matcher bossTimeMatcher = BOSS_TIME_PATTERN.matcher(rawLine == null ? cleaned : rawLine);
+		if (bossTimeMatcher.find()) {
 			long minutes = parsePositiveInt(bossTimeMatcher.group(1), 0);
 			long seconds = parsePositiveInt(bossTimeMatcher.group(2), 0);
 			currentRunBossTimeMs = (minutes * 60L + seconds) * 1000L;
@@ -690,37 +874,31 @@ public final class DungeonRunTrackerFeature {
 		DungeonFloor lineFloor = detectFloorFromLine(cleaned);
 		if (lineFloor != DungeonFloor.UNKNOWN) currentFloor = lineFloor;
 
-		if (awaitingExtraStatsScore && now > awaitingExtraStatsUntilMillis) {
-			awaitingExtraStatsScore = false;
-			awaitingExtraStatsFloor = DungeonFloor.UNKNOWN;
-		}
-		if (pendingScoreGrade != null && now > pendingSPlusUntilMillis) {
-			pendingScoreGrade = null;
-			pendingSPlusFloor = DungeonFloor.UNKNOWN;
-			pendingSPlusUntilMillis = 0L;
+		String preGrade = extractScoreGrade(cleaned);
+		if (preGrade != null && pendingScoreGrade == null) {
+			pendingScoreGrade = preGrade;
+			pendingSPlusFloor = lineFloor != DungeonFloor.UNKNOWN ? lineFloor : currentFloor;
+			pendingSPlusUntilMillis = now + EXTRA_STATS_TIMEOUT_MS;
 		}
 
-		String preGrade = extractScoreGrade(cleaned);
-		if (preGrade != null && pendingScoreGrade == null && !awaitingExtraStatsScore) {
-			pendingScoreGrade = preGrade;
-			pendingSPlusFloor = currentFloor;
-			pendingSPlusUntilMillis = now + EXTRA_STATS_TIMEOUT_MS;
+		if (pendingScoreGrade != null && currentRunBossTimeMs > 0L && !runCountedThisDungeon) {
+			DungeonFloor scoreFloor = bestCompletionFloor(lineFloor);
+			recordCompletedRun(now, scoreFloor, pendingScoreGrade);
+			clearPendingCompletionScore();
+			return;
 		}
 
 		if (isExtraStatsHeader(cleaned)) {
 			if (pendingScoreGrade != null && !runCountedThisDungeon) {
-				DungeonFloor f = pendingSPlusFloor != DungeonFloor.UNKNOWN ? pendingSPlusFloor : currentFloor;
+				DungeonFloor f = bestCompletionFloor(lineFloor);
 				recordCompletedRun(now, f, pendingScoreGrade);
-				pendingScoreGrade = null;
-				pendingSPlusFloor = DungeonFloor.UNKNOWN;
-				pendingSPlusUntilMillis = 0L;
+				clearPendingCompletionScore();
 			} else {
 				DungeonFloor contextFloor = currentFloor != DungeonFloor.UNKNOWN ? currentFloor : pendingSPlusFloor;
 				awaitingExtraStatsScore = true;
 				awaitingExtraStatsFloor = contextFloor;
 				awaitingExtraStatsUntilMillis = now + EXTRA_STATS_TIMEOUT_MS;
 			}
-			handleLootMessage(rawText == null ? cleaned : rawText.trim(), cleaned, now);
 			return;
 		}
 
@@ -729,7 +907,7 @@ public final class DungeonRunTrackerFeature {
 				awaitingExtraStatsFloor = lineFloor;
 				pendingSPlusFloor = lineFloor;
 			}
-			String postGrade = extractScoreGrade(cleaned);
+			String postGrade = preGrade;
 			if (postGrade != null) {
 				if (!runCountedThisDungeon) {
 					DungeonFloor scoreFloor = awaitingExtraStatsFloor != DungeonFloor.UNKNOWN ? awaitingExtraStatsFloor : currentFloor;
@@ -738,10 +916,48 @@ public final class DungeonRunTrackerFeature {
 				awaitingExtraStatsScore = false;
 				awaitingExtraStatsFloor = DungeonFloor.UNKNOWN;
 				awaitingExtraStatsUntilMillis = 0L;
+				clearPendingCompletionScore();
 			}
 		}
+	}
 
-		handleLootMessage(rawText == null ? cleaned : rawText.trim(), cleaned, now);
+	private List<String> splitMessageLines(String rawText) {
+		if (rawText == null || rawText.isBlank()) return List.of();
+		String expanded = rawText
+			.replace("\\r\\n", "\n")
+			.replace("\\n", "\n")
+			.replace("\\r", "\n");
+		String[] pieces = expanded.split("\\R");
+		List<String> lines = new ArrayList<>(pieces.length);
+		for (String piece : pieces) {
+			String line = piece.trim();
+			if (!line.isEmpty()) lines.add(line);
+		}
+		return lines.isEmpty() ? List.of(rawText) : lines;
+	}
+
+	private void expirePendingCompletionState(long now) {
+		if (awaitingExtraStatsScore && now > awaitingExtraStatsUntilMillis) {
+			awaitingExtraStatsScore = false;
+			awaitingExtraStatsFloor = DungeonFloor.UNKNOWN;
+			awaitingExtraStatsUntilMillis = 0L;
+		}
+		if (pendingScoreGrade != null && now > pendingSPlusUntilMillis) {
+			clearPendingCompletionScore();
+		}
+	}
+
+	private void clearPendingCompletionScore() {
+		pendingScoreGrade = null;
+		pendingSPlusFloor = DungeonFloor.UNKNOWN;
+		pendingSPlusUntilMillis = 0L;
+	}
+
+	private DungeonFloor bestCompletionFloor(DungeonFloor lineFloor) {
+		if (lineFloor != DungeonFloor.UNKNOWN) return lineFloor;
+		if (awaitingExtraStatsFloor != DungeonFloor.UNKNOWN) return awaitingExtraStatsFloor;
+		if (pendingSPlusFloor != DungeonFloor.UNKNOWN) return pendingSPlusFloor;
+		return currentFloor;
 	}
 
 	private void updateDungeonContext(Minecraft client) {
@@ -777,7 +993,7 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private void captureRewardChestCosts(Minecraft client) {
-		if (!enabled || !(client.screen instanceof AbstractContainerScreen<?> screen) || client.player == null) return;
+		if (!(client.screen instanceof AbstractContainerScreen<?> screen) || client.player == null) return;
 
 		String normalizedTitle = normalize(screen.getTitle().getString());
 
@@ -919,10 +1135,10 @@ public final class DungeonRunTrackerFeature {
 		}
 
 		if (leftMouseDown && !leftMouseDownLastTick && client.screen != null) {
+			if (isHoveringModeLabel(client, mouseX, mouseY)) { cycleHudVisibilityMode(); leftMouseDownLastTick = true; return; }
 			if (isHoveringFloorLabel(client, mouseX, mouseY)) { cycleSelectedFloor(); leftMouseDownLastTick = true; return; }
 			if (isHoveringRunsHrPart(client, mouseX, mouseY)) { toggleRunsPerHrPause(); leftMouseDownLastTick = true; return; }
 			if (isHoveringProfitLine(client, mouseX, mouseY)) { lootScreenPending = true; leftMouseDownLastTick = true; return; }
-			if (isHoveringResetButton(client, mouseX, mouseY)) { resetSelectedFloor(); leftMouseDownLastTick = true; return; }
 		}
 
 		if (!(client.screen instanceof AbstractContainerScreen<?>)) {
@@ -956,30 +1172,57 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private void saveHudPosition() {
-		DrtConfigManager.updateHudPosition(hudX, hudY);
+		saveHudLayout();
+	}
+
+	private void saveHudLayout() {
+		DrtConfigManager.updateHudLayout(hudX, hudY, hudScale);
 	}
 
 	private boolean isHoveringTracker(Minecraft client, int mouseX, int mouseY) {
-		int width = getDisplayWidth(client);
-		int height = getDisplayHeight(client);
-		return mouseX >= hudX - 3 && mouseX <= hudX + width + 3 && mouseY >= hudY - 2 && mouseY <= hudY + height + 2;
+		return isHoveringTracker(client, mouseX, mouseY, false);
+	}
+
+	private boolean isHoveringTracker(Minecraft client, int mouseX, int mouseY, boolean includeResetLine) {
+		double localX = toHudLocalX(mouseX);
+		double localY = toHudLocalY(mouseY);
+		int width = getBaseDisplayWidth(client, includeResetLine);
+		int height = getBaseDisplayHeight(client, includeResetLine);
+		return localX >= -3 && localX <= width + 3 && localY >= -2 && localY <= height + 2;
 	}
 
 	private boolean isTrackerVisible(Minecraft client) {
-		return enabled && client != null && client.player != null && (insideDungeon || inDungeonHub);
+		return isTrackerVisible(client, false);
+	}
+
+	private boolean isTrackerVisible(Minecraft client, boolean moveMode) {
+		if (client == null || client.player == null) return false;
+		if (moveMode) return true;
+		if (!enabled) return false;
+		return switch (hudVisibilityMode) {
+			case GLOBAL -> true;
+			case DEFAULT -> insideDungeon || inDungeonHub;
+			case DHUB -> inDungeonHub;
+		};
+	}
+
+	private boolean shouldShowResetLine(Minecraft client, boolean moveMode) {
+		return !moveMode && client != null && client.screen instanceof InventoryScreen;
 	}
 
 	private boolean isHoveringRunsLine(Minecraft client, int mouseX, int mouseY) {
+		double localX = toHudLocalX(mouseX);
+		double localY = toHudLocalY(mouseY);
 		int lineH = client.font.lineHeight + 2;
-		int ly = hudY + lineH;
-		int lineW = client.font.width(getDisplayLines().get(1));
-		return mouseX >= hudX - 3 && mouseX <= hudX + lineW + 3
-			&& mouseY >= ly - 2 && mouseY <= ly + client.font.lineHeight + 2;
+		int lineW = client.font.width(getDisplayLines(false).get(1));
+		return localX >= -3 && localX <= lineW + 3
+			&& localY >= lineH - 2 && localY <= lineH + client.font.lineHeight + 2;
 	}
 
 	private boolean isHoveringRunsHrPart(Minecraft client, int mouseX, int mouseY) {
 		if (!isHoveringRunsLine(client, mouseX, mouseY)) return false;
-		String runsLine = getDisplayLines().get(1);
+		double localX = toHudLocalX(mouseX);
+		String runsLine = getDisplayLines(false).get(1);
 		int firstSep = runsLine.indexOf(" | ");
 		if (firstSep < 0) return false;
 		int secondSep = runsLine.indexOf(" | ", firstSep + 3);
@@ -987,35 +1230,65 @@ public final class DungeonRunTrackerFeature {
 		int thirdSep = runsLine.indexOf(" | ", secondSep + 3);
 		if (thirdSep < 0) return false;
 		String visibleRunsLine = runsLine.replace(" [paused]", "");
-		int startX = hudX + client.font.width(runsLine.substring(0, thirdSep + 3));
-		int endX = hudX + client.font.width(visibleRunsLine);
-		return mouseX >= startX && mouseX <= endX;
+		int startX = client.font.width(runsLine.substring(0, thirdSep + 3));
+		int endX = client.font.width(visibleRunsLine);
+		return localX >= startX && localX <= endX;
+	}
+
+	private boolean isHoveringModeLabel(Minecraft client, int mouseX, int mouseY) {
+		double localX = toHudLocalX(mouseX);
+		double localY = toHudLocalY(mouseY);
+		int drtWidth = client.font.width("DRT");
+		int lineH = client.font.lineHeight + 2;
+		return localX >= -3 && localX <= drtWidth + 3
+			&& localY >= -2 && localY <= lineH;
 	}
 
 	private boolean isHoveringFloorLabel(Minecraft client, int mouseX, int mouseY) {
-		List<String> lines = getDisplayLines();
+		double localX = toHudLocalX(mouseX);
+		double localY = toHudLocalY(mouseY);
+		List<String> lines = getDisplayLines(false);
+		int labelStart = client.font.width("DRT ");
 		int labelWidth = client.font.width(lines.get(0));
 		int lineH = client.font.lineHeight + 2;
-		return mouseX >= hudX - 3 && mouseX <= hudX + labelWidth + 3
-			&& mouseY >= hudY - 2 && mouseY <= hudY + lineH;
+		return localX >= labelStart - 3 && localX <= labelWidth + 3
+			&& localY >= -2 && localY <= lineH;
 	}
 
 	private boolean isHoveringProfitLine(Minecraft client, int mouseX, int mouseY) {
+		double localX = toHudLocalX(mouseX);
+		double localY = toHudLocalY(mouseY);
 		int lineH = client.font.lineHeight + 2;
-		int ly = hudY + lineH * 2;
-		int lineW = client.font.width(getDisplayLines().get(2));
-		return mouseX >= hudX - 3 && mouseX <= hudX + lineW + 3
-			&& mouseY >= ly - 2 && mouseY <= ly + client.font.lineHeight + 2;
+		int lineW = client.font.width(getDisplayLines(false).get(2));
+		return localX >= -3 && localX <= lineW + 3
+			&& localY >= lineH * 2 - 2 && localY <= lineH * 2 + client.font.lineHeight + 2;
 	}
 
-	private boolean isHoveringResetButton(Minecraft client, int mouseX, int mouseY) {
-		List<String> lines = getDisplayLines();
+	private boolean isHoveringResetButton(Minecraft client, int mouseX, int mouseY, boolean includeResetLine) {
+		if (!includeResetLine) return false;
+		double localX = toHudLocalX(mouseX);
+		double localY = toHudLocalY(mouseY);
+		List<String> lines = getDisplayLines(true);
 		int lastIdx = lines.size() - 1;
 		int lineH = client.font.lineHeight + 2;
-		int resetY = hudY + lastIdx * lineH;
+		int resetY = lastIdx * lineH;
 		int resetWidth = client.font.width(lines.get(lastIdx));
-		return mouseX >= hudX - 3 && mouseX <= hudX + resetWidth + 3
-			&& mouseY >= resetY - 2 && mouseY <= resetY + client.font.lineHeight + 2;
+		return localX >= -3 && localX <= resetWidth + 3
+			&& localY >= resetY - 2 && localY <= resetY + client.font.lineHeight + 2;
+	}
+
+	private double toHudLocalX(double mouseX) {
+		return (mouseX - hudX) / hudScale;
+	}
+
+	private double toHudLocalY(double mouseY) {
+		return (mouseY - hudY) / hudScale;
+	}
+
+	private static float clampHudScale(float scale) {
+		if (!Float.isFinite(scale) || scale <= 0.0F) return 1.0F;
+		float rounded = Math.round(scale * 10.0F) / 10.0F;
+		return Math.max(MIN_HUD_SCALE, Math.min(MAX_HUD_SCALE, rounded));
 	}
 
 	private boolean isDungeon(List<String> lines) {
@@ -1066,12 +1339,27 @@ public final class DungeonRunTrackerFeature {
 			String name = f.name();
 			if (line.contains("(" + name + ")") || line.contains("DUNGEON: " + name)) return f;
 		}
+		if (line.contains("CATACOMBS") || line.contains("DUNGEON") || line.contains("FLOOR")) {
+			Matcher shortFloorMatcher = SHORT_FLOOR_PATTERN.matcher(line);
+			if (shortFloorMatcher.find()) {
+				DungeonFloor shortFloor = floorFromShortTag(shortFloorMatcher.group(1), shortFloorMatcher.group(2));
+				if (shortFloor != DungeonFloor.UNKNOWN) return shortFloor;
+			}
+		}
 		boolean isMaster = masterContext || line.contains("MASTER");
 		if ((isMaster || line.contains("CATACOMBS")) && line.contains("FLOOR")) {
 			int n = parseFloorNumber(line);
 			if (n >= 1 && n <= 7) return DungeonFloor.values()[isMaster ? 7 + n - 1 : n - 1];
 		}
 		return DungeonFloor.UNKNOWN;
+	}
+
+	private DungeonFloor floorFromShortTag(String mode, String number) {
+		if (mode == null || number == null) return DungeonFloor.UNKNOWN;
+		int n = parsePositiveInt(number, -1);
+		if (n < 1 || n > 7) return DungeonFloor.UNKNOWN;
+		boolean master = mode.equalsIgnoreCase("M");
+		return DungeonFloor.values()[master ? 7 + n - 1 : n - 1];
 	}
 
 	private int parseFloorNumber(String line) {
@@ -1089,14 +1377,10 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private String extractScoreGrade(String line) {
-		if (!line.contains("SCORE")) return null;
-		if (line.contains("S+")) return "S+";
-		if (line.contains("(S)") || line.endsWith(" S")) return "S";
-		if (line.contains("(A)") || line.endsWith(" A")) return "A";
-		if (line.contains("(B)") || line.endsWith(" B")) return "B";
-		if (line.contains("(C)") || line.endsWith(" C")) return "C";
-		if (line.contains("(D)") || line.endsWith(" D")) return "D";
-		return null;
+		Matcher matcher = SCORE_GRADE_PATTERN.matcher(line);
+		if (!matcher.find()) return null;
+		String grade = matcher.group(1) != null ? matcher.group(1) : matcher.group(2);
+		return grade == null ? null : grade.toUpperCase(Locale.ROOT);
 	}
 
 	private boolean isExtraStatsHeader(String line) {
@@ -1195,10 +1479,13 @@ public final class DungeonRunTrackerFeature {
 		}
 		long wallRunTimeMs = finishCurrentRunTiming(now);
 		if (wallRunTimeMs <= 0L) wallRunTimeMs = lastFinishedRunTimeMs;
-		sessionTotalRunTimeMs += currentRunBossTimeMs > 0L ? currentRunBossTimeMs : wallRunTimeMs;
+		long runTimeMs = currentRunBossTimeMs > 0L ? currentRunBossTimeMs : wallRunTimeMs;
+		sessionTotalRunTimeMs += runTimeMs;
+		sessionFloorRunTimeTotals.merge(key, runTimeMs, Long::sum);
 		currentRunBossTimeMs = 0L;
 		lastFinishedRunTimeMs = 0L;
 		sessionRuns++;
+		sessionFloorRuns.merge(key, 1, Integer::sum);
 
 		startLootWindow(now, totalRunsCompleted(), floor != null ? floor : DungeonFloor.UNKNOWN);
 	}
@@ -1410,6 +1697,7 @@ public final class DungeonRunTrackerFeature {
 		totalLifetimeProfit += chestProfitCoins;
 		sessionTotalProfit += chestProfitCoins;
 		floorProfitTotals.merge(floorName, chestProfitCoins, Long::sum);
+		sessionFloorProfitTotals.merge(floorName, chestProfitCoins, Long::sum);
 		if (keepWindow) resetPendingChestState();
 		else clearLootWindow();
 	}
