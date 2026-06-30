@@ -20,10 +20,11 @@
 	"mixins": [
 		"drt.mixins.json"
 	],
+	"icon": "assets/drt/icon.png",
 	"depends": {
-		"fabricloader": ">=0.19.3",
-		"minecraft": "~26.1.2",
-		"java": ">=25",
+		"fabricloader": "${loader}",
+		"minecraft": "${minecraft}",
+		"java": "${java}",
 		"fabric-api": "*"
 	}
 }
