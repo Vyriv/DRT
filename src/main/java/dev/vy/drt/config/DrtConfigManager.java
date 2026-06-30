@@ -17,6 +17,8 @@ import java.util.List;
 import net.fabricmc.loader.api.FabricLoader;
 
 public final class DrtConfigManager {
+	private static final float MIN_HUD_SCALE = 0.5F;
+	private static final float MAX_HUD_SCALE = 2.0F;
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 	private static final Path CONFIG_PATH = FabricLoader.getInstance().getConfigDir().resolve("drt.json");
 	private static DrtConfig config = new DrtConfig();
@@ -38,6 +40,8 @@ public final class DrtConfigManager {
 				if (loaded == null) loaded = new DrtConfig();
 				if (loaded.floorRunCounts == null) loaded.floorRunCounts = new LinkedHashMap<>();
 				if (loaded.runHistory == null) loaded.runHistory = new ArrayList<>();
+				loaded.hudScale = clampHudScale(loaded.hudScale);
+				loaded.hudVisibilityMode = normalizeHudVisibilityMode(loaded.hudVisibilityMode);
 				if (loaded.legacyRunsCompleted > 0 && !loaded.floorRunCounts.containsKey("M5")) {
 					loaded.floorRunCounts.put("M5", loaded.legacyRunsCompleted);
 				}
@@ -105,6 +109,18 @@ public final class DrtConfigManager {
 		save();
 	}
 
+	public static synchronized void updateHudLayout(int x, int y, float scale) {
+		config.hudX = Math.max(0, x);
+		config.hudY = Math.max(0, y);
+		config.hudScale = clampHudScale(scale);
+		save();
+	}
+
+	public static synchronized void updateHudVisibilityMode(String mode) {
+		config.hudVisibilityMode = normalizeHudVisibilityMode(mode);
+		save();
+	}
+
 	public static synchronized void clearAllData() {
 		if (config.floorRunCounts != null) config.floorRunCounts.clear();
 		config.legacyRunsCompleted = 0;
@@ -116,5 +132,19 @@ public final class DrtConfigManager {
 		if (config.floorRunCounts != null) config.floorRunCounts.remove(floor);
 		if (config.runHistory != null) config.runHistory.removeIf(r -> r != null && floor.equals(r.floor));
 		save();
+	}
+
+	private static float clampHudScale(float scale) {
+		if (!Float.isFinite(scale) || scale <= 0.0F) return 1.0F;
+		return Math.max(MIN_HUD_SCALE, Math.min(MAX_HUD_SCALE, scale));
+	}
+
+	private static String normalizeHudVisibilityMode(String mode) {
+		if (mode == null || mode.isBlank()) return "DEFAULT";
+		String normalized = mode.trim().toUpperCase(java.util.Locale.ROOT);
+		return switch (normalized) {
+			case "GLOBAL", "DEFAULT", "DHUB" -> normalized;
+			default -> "DEFAULT";
+		};
 	}
 }

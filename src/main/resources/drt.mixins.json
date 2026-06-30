@@ -3,7 +3,16 @@
 	"package": "dev.vy.drt.mixin",
 	"compatibilityLevel": "JAVA_21",
 	"client": [
-		"PlayerTabOverlayAccessor"
+		"ClientPacketListenerRunDetectionMixin",
+		"EntityCosmeticsMixin",
+		"EntityRendererCosmeticsMixin",
+		"FontCosmeticsMixin",
+		"PlayerInfoCosmeticsMixin",
+		"PlayerTabOverlayAccessor",
+		"PlayerTabOverlayCosmeticsMixin",
+		"SkyHanniAdvancedPlayerListCosmeticsMixin",
+		"SkyHanniScoreboardElementPartyCosmeticsMixin",
+		"SkyHanniScoreboardEventDungeonsCosmeticsMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1
