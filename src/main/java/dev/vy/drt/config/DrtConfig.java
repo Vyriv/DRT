@@ -11,6 +11,8 @@ public final class DrtConfig {
 	public Map<String, Integer> floorRunCounts = new LinkedHashMap<>();
 	public int hudX = 10;
 	public int hudY = 10;
+	public float hudScale = 1.0F;
+	public String hudVisibilityMode = "DEFAULT";
 	public List<DungeonRunRecord> runHistory = new ArrayList<>();
 	public String selectedFloor = null;
 	public int witherEssenceValuePer = 2600;
