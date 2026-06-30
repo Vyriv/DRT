@@ -746,7 +746,7 @@ public final class NameStyler {
 
 	private enum TransformKind {
 		GRADIENT_TEXT(false, false, false),
-		CHAT_HEADER_TEXT(true, true, false),
+		CHAT_HEADER_TEXT(true, false, false),
 		NAMEPLATE_TEXT(true, true, false),
 		NAMEPLATE_DISPLAY_TEXT(true, true, false),
 		SCOREBOARD_TEXT(false, true, true),

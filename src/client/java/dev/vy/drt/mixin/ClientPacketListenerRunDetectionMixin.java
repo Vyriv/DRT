@@ -2,7 +2,6 @@ package dev.vy.drt.mixin;
 
 import dev.vy.drt.client.DrtClient;
 import dev.vy.drt.client.tracker.DungeonRunTrackerFeature;
-import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.game.ClientboundSystemChatPacket;
@@ -17,9 +16,7 @@ public abstract class ClientPacketListenerRunDetectionMixin {
 	private void drt$captureSystemChat(ClientboundSystemChatPacket packet, CallbackInfo ci) {
 		if (packet.overlay()) return;
 		Component content = packet.content();
-		Minecraft.getInstance().execute(() -> {
-			DungeonRunTrackerFeature tracker = DrtClient.getTracker();
-			if (tracker != null) tracker.handleRawSystemMessage(content);
-		});
+		DungeonRunTrackerFeature tracker = DrtClient.getTracker();
+		if (tracker != null) tracker.handleRawSystemMessage(content);
 	}
 }

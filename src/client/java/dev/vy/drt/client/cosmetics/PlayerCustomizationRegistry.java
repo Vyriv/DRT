@@ -118,8 +118,10 @@ public final class PlayerCustomizationRegistry {
 			allNameCandidates.addAll(exactCandidates);
 			if (customization.hasChatDisplayOverride()) {
 				nameplateDisplayCandidates.addAll(exactCandidates);
-				chatHeaderNameCandidates.addAll(exactCandidates);
 				scoreboardDisplayNameCandidates.addAll(scoreboardCandidates(customization, names));
+			}
+			if (customization.hasChatHeaderDecorations()) {
+				chatHeaderNameCandidates.addAll(exactCandidates);
 			}
 			if (customization.hasNameCustomization()) {
 				styledNameCandidates.addAll(exactCandidates);
@@ -315,6 +317,10 @@ public final class PlayerCustomizationRegistry {
 
 		public boolean hasChatDisplayOverride() {
 			return hasDecorations() || hasNickname();
+		}
+
+		public boolean hasChatHeaderDecorations() {
+			return hasExplicitNameColors() || nameBold || hasNickname();
 		}
 
 		public boolean hasCapeCustomization() {
