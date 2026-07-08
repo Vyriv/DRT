@@ -1468,20 +1468,21 @@ public final class DungeonRunTrackerFeature {
 		String label = display.name;
 		String quantityText = entry.quantity > 1 ? " x" + entry.quantity : "";
 		String priceText = formatCoins(totalPrice);
-		int salvageIconW = forceSalvage ? 18 : 0;
-		int priceTextW = client.font.width(priceText);
-		int priceW = priceTextW + salvageIconW;
+		int priceW = client.font.width(priceText);
 		int quantityW = client.font.width(quantityText);
-		String visibleLabel = ellipsize(client, label, CHEST_OVERLAY_W - 28 - priceW - quantityW);
+		int salvageIconW = forceSalvage ? 18 : 0;
+		String visibleLabel = ellipsize(client, label, CHEST_OVERLAY_W - 28 - priceW - quantityW - salvageIconW);
 		drawOverlayText(client, g, visibleLabel, x + 18, y, display.color, display.bold);
+		int afterNameX = x + 18 + client.font.width(visibleLabel);
+		if (forceSalvage) {
+			g.item(forcedSalvageEssenceIcon(), afterNameX + 2, y - 4);
+			afterNameX += salvageIconW;
+		}
 		if (!quantityText.isEmpty()) {
-			drawOverlayText(client, g, quantityText, x + 18 + client.font.width(visibleLabel), y, OVERLAY_MUTED, false);
+			drawOverlayText(client, g, quantityText, afterNameX, y, OVERLAY_MUTED, false);
 		}
 		int priceX = x + CHEST_OVERLAY_W - priceW;
 		drawOverlayText(client, g, priceText, priceX, y, OVERLAY_VALUE, false);
-		if (forceSalvage) {
-			g.item(forcedSalvageEssenceIcon(), x + CHEST_OVERLAY_W - 16, y - 4);
-		}
 		return y + rowH;
 	}
 
@@ -2148,12 +2149,15 @@ public final class DungeonRunTrackerFeature {
 
 	private void assignPendingOpenedChest(String normalizedTitle, DungeonChestOffer offer) {
 		String displayTitle = toDisplayChestTitle(normalizedTitle);
-		if (pendingLootChestAssigned && !pendingLootEntries.isEmpty() && !displayTitle.equalsIgnoreCase(pendingLootChestTitle)) {
+		boolean samePendingChest = pendingLootChestAssigned && displayTitle.equalsIgnoreCase(pendingLootChestTitle);
+		boolean hadPendingEntries = !pendingLootEntries.isEmpty();
+		boolean wasSeededFromGui = pendingLootSeededFromGui;
+		if (pendingLootChestAssigned && hadPendingEntries && !samePendingChest) {
 			flushPendingLootRecord(true);
+			hadPendingEntries = false;
+			wasSeededFromGui = false;
+			samePendingChest = false;
 		}
-		boolean samePendingChest = pendingLootChestAssigned
-			&& pendingLootEntries.isEmpty()
-			&& displayTitle.equalsIgnoreCase(pendingLootChestTitle);
 		if (!samePendingChest) {
 			openedRewardChestsInLootWindow++;
 		}
@@ -2183,11 +2187,14 @@ public final class DungeonRunTrackerFeature {
 		applyKuudraChestCostHint(normalizedTitle, pendingLootCostBreakdown);
 		populateKnownModifierCosts(pendingLootCostBreakdown);
 		suppressDungeonChestKeyForKuudra(normalizedTitle, pendingLootCostBreakdown);
-		seedPendingLootEntriesFromGuiOffer(offer);
+		if (hadPendingEntries) {
+			pendingLootSeededFromGui = wasSeededFromGui;
+		} else {
+			seedPendingLootEntriesFromGuiOffer(offer);
+		}
 	}
 
 	private void seedPendingLootEntriesFromGuiOffer(DungeonChestOffer offer) {
-		pendingLootSeededFromGui = false;
 		if (offer == null || offer.lootEntries == null || offer.lootEntries.isEmpty() || !pendingLootEntries.isEmpty()) return;
 		for (DungeonLootEntry entry : offer.lootEntries) {
 			if (entry != null) pendingLootEntries.add(entry.copy());
