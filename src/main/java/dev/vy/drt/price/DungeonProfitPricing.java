@@ -11,7 +11,9 @@ public final class DungeonProfitPricing {
 	private static final String ITEM_ENCHANTED_MYCELIUM = "ENCHANTED_MYCELIUM";
 	private static final String ITEM_ENCHANTED_RED_SAND = "ENCHANTED_RED_SAND";
 	private static final String ITEM_CORRUPTED_NETHER_STAR = "CORRUPTED_NETHER_STAR";
-	private static final int KUUDRA_FORCED_SALVAGE_BASE_ESSENCE = 500;
+	private static final int KUUDRA_ARMOR_BASE_CRIMSON_ESSENCE = 108;
+	private static final double KUUDRA_ARMOR_STAR_REFUND_MULTIPLIER = 0.63D;
+	private static final int KUUDRA_TABLE_DROP_CRIMSON_ESSENCE = 500;
 
 	private DungeonProfitPricing() {
 	}
@@ -21,10 +23,19 @@ public final class DungeonProfitPricing {
 		long total = 0L;
 		for (DungeonLootEntry entry : entries) {
 			if (entry == null) continue;
-			long unitPrice = resolveUnitPrice(entry, config);
-			total += unitPrice * Math.max(1, entry.quantity);
+			total += resolveTotalPrice(entry, config);
 		}
 		return total;
+	}
+
+	public static long resolveTotalPrice(DungeonLootEntry entry, DrtConfig config) {
+		if (entry == null) return 0L;
+		long unitPrice = resolveUnitPrice(entry, config);
+		int quantity = Math.max(1, entry.quantity);
+		if (isCrimsonEssenceEntry(entry)) {
+			quantity = adjustedCrimsonEssenceAmount(quantity, config);
+		}
+		return unitPrice * quantity;
 	}
 
 	public static long resolveUnitPrice(DungeonLootEntry entry, DrtConfig config) {
@@ -41,7 +52,7 @@ public final class DungeonProfitPricing {
 
 		if (!itemIdUpper.isBlank()) {
 			String resolvedItemId = normalizePriceItemId(itemIdUpper);
-			Long forcedSalvageValue = resolveForcedKuudraSalvageValue(resolvedItemId, config);
+			Long forcedSalvageValue = resolveForcedKuudraSalvageValue(resolvedItemId, rawUpper, config);
 			if (forcedSalvageValue != null) return forcedSalvageValue;
 
 			PriceCache.AuctionPriceData auctionData = PriceCache.getAuctionHouse(resolvedItemId);
@@ -62,6 +73,19 @@ public final class DungeonProfitPricing {
 			if (lookup != null) return roundPositive(lookup.price());
 		}
 		return 0L;
+	}
+
+	public static boolean isForcedSalvageValued(DungeonLootEntry entry, DrtConfig config) {
+		if (entry == null || config == null) return false;
+		String itemIdUpper = entry.itemId == null ? "" : entry.itemId.trim().toUpperCase(Locale.ROOT);
+		if (itemIdUpper.isBlank()) return false;
+		KuudraSalvageCategory category = kuudraSalvageCategory(normalizePriceItemId(itemIdUpper));
+		if (category == null) return false;
+		return switch (category) {
+			case ARMOR -> config.forceSalvageArmor;
+			case WAND -> config.forceSalvageWands;
+			case EQUIPMENT -> config.forceSalvageEquipment;
+		};
 	}
 
 	public static long resolveKuudraKeyCost(DungeonFloor floor, DrtConfig config) {
@@ -128,7 +152,7 @@ public final class DungeonProfitPricing {
 		return faction.equals("BARBARIAN") ? "BARBARIAN" : "MAGE";
 	}
 
-	private static Long resolveForcedKuudraSalvageValue(String itemId, DrtConfig config) {
+	private static Long resolveForcedKuudraSalvageValue(String itemId, String rawName, DrtConfig config) {
 		if (config == null || itemId == null || itemId.isBlank()) return null;
 		KuudraSalvageCategory category = kuudraSalvageCategory(itemId);
 		if (category == null) return null;
@@ -140,8 +164,47 @@ public final class DungeonProfitPricing {
 		if (!enabled) return null;
 		long crimsonEssencePrice = resolveSellValue(ITEM_CRIMSON_ESSENCE, config);
 		if (crimsonEssencePrice <= 0L) return 0L;
-		int essence = adjustedSalvageEssence(KUUDRA_FORCED_SALVAGE_BASE_ESSENCE, config);
+		int essence = adjustedSalvageEssence(baseForcedSalvageEssence(category, rawName), config);
 		return crimsonEssencePrice * Math.max(0, essence);
+	}
+
+	private static boolean isCrimsonEssenceEntry(DungeonLootEntry entry) {
+		if (entry == null) return false;
+		String rawUpper = entry.rawName == null ? "" : entry.rawName.trim().toUpperCase(Locale.ROOT);
+		String itemIdUpper = entry.itemId == null ? "" : entry.itemId.trim().toUpperCase(Locale.ROOT);
+		return rawUpper.contains("CRIMSON ESSENCE") || itemIdUpper.equals(ITEM_CRIMSON_ESSENCE);
+	}
+
+	private static int adjustedCrimsonEssenceAmount(int baseAmount, DrtConfig config) {
+		if (config == null || !config.kuudraPetEnabled) return Math.max(0, baseAmount);
+		double bonusPercent = kuudraPetCrimsonBonusPercent(config.kuudraPetRarity, config.kuudraPetLevel);
+		return (int) Math.round(Math.max(0, baseAmount) * (100.0D + bonusPercent) / 100.0D);
+	}
+
+	private static int baseForcedSalvageEssence(KuudraSalvageCategory category, String rawName) {
+		if (category == KuudraSalvageCategory.ARMOR) {
+			return kuudraArmorBaseSalvageEssence(rawName);
+		}
+		return KUUDRA_TABLE_DROP_CRIMSON_ESSENCE;
+	}
+
+	private static int kuudraArmorBaseSalvageEssence(String rawName) {
+		int stars = countKuudraStars(rawName);
+		int starEssenceCost = 0;
+		for (int star = 1; star <= stars; star++) {
+			starEssenceCost += 20 + star * 5;
+		}
+		return KUUDRA_ARMOR_BASE_CRIMSON_ESSENCE
+			+ (int) Math.floor(starEssenceCost * KUUDRA_ARMOR_STAR_REFUND_MULTIPLIER);
+	}
+
+	private static int countKuudraStars(String rawName) {
+		if (rawName == null || rawName.isBlank()) return 0;
+		int stars = 0;
+		for (int i = 0; i < rawName.length(); i++) {
+			if (rawName.charAt(i) == '✪') stars++;
+		}
+		return stars;
 	}
 
 	private static int adjustedSalvageEssence(int baseEssence, DrtConfig config) {
@@ -201,7 +264,12 @@ public final class DungeonProfitPricing {
 		if (itemId == null || itemId.isBlank()) return null;
 		String id = itemId.toUpperCase(Locale.ROOT);
 		if (isKuudraArmor(id)) return KuudraSalvageCategory.ARMOR;
-		if (id.equals("AURORA_STAFF") || id.equals("HOLLOW_WAND")) return KuudraSalvageCategory.WAND;
+		if (id.equals("AURORA_STAFF")
+			|| id.equals("HOLLOW_WAND")
+			|| id.equals("KUUDRA_MANDIBLE")
+			|| id.equals("TORMENTOR")) {
+			return KuudraSalvageCategory.WAND;
+		}
 		if (id.equals("MOLTEN_BELT")
 			|| id.equals("MOLTEN_BRACELET")
 			|| id.equals("MOLTEN_CLOAK")
