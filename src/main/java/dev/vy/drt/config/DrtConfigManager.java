@@ -104,6 +104,7 @@ public final class DrtConfigManager {
 			config.nextChestLogNumber = Math.max(Math.max(1, config.nextChestLogNumber), stored.chestNumber + 1);
 		}
 		stored.normalizeCostBreakdown();
+		removeDuplicateRunRecord(stored);
 		config.runHistory.add(stored);
 		save();
 	}
@@ -251,7 +252,117 @@ public final class DrtConfigManager {
 			loaded.nextChestLogNumber = next;
 			changed = true;
 		}
+		if (deduplicateRunHistory(loaded.runHistory)) {
+			changed = true;
+		}
 		return changed;
+	}
+
+	private static boolean deduplicateRunHistory(List<DungeonRunRecord> records) {
+		if (records == null || records.size() < 2) return false;
+		boolean changed = false;
+		for (int i = 0; i < records.size(); i++) {
+			DungeonRunRecord left = records.get(i);
+			if (left == null) continue;
+			for (int j = records.size() - 1; j > i; j--) {
+				DungeonRunRecord right = records.get(j);
+				if (!areDuplicateLootRecords(left, right)) continue;
+				DungeonRunRecord keep = preferredLootRecord(left, right);
+				records.set(i, keep);
+				records.remove(j);
+				left = keep;
+				changed = true;
+			}
+		}
+		return changed;
+	}
+
+	private static void removeDuplicateRunRecord(DungeonRunRecord incoming) {
+		if (incoming == null || config.runHistory == null || config.runHistory.isEmpty()) return;
+		for (int i = config.runHistory.size() - 1; i >= 0; i--) {
+			DungeonRunRecord existing = config.runHistory.get(i);
+			if (!areDuplicateLootRecords(existing, incoming)) continue;
+			DungeonRunRecord keep = preferredLootRecord(existing, incoming);
+			if (keep == existing) return;
+			config.runHistory.remove(i);
+			return;
+		}
+	}
+
+	private static DungeonRunRecord preferredLootRecord(DungeonRunRecord left, DungeonRunRecord right) {
+		if (left == null) return right;
+		if (right == null) return left;
+		int leftQuantity = totalLootQuantity(left);
+		int rightQuantity = totalLootQuantity(right);
+		if (leftQuantity != rightQuantity) return leftQuantity < rightQuantity ? left : right;
+		if (left.chestValueCoins != right.chestValueCoins) return left.chestValueCoins <= right.chestValueCoins ? left : right;
+		return left.timestampEpochMillis <= right.timestampEpochMillis ? left : right;
+	}
+
+	private static boolean areDuplicateLootRecords(DungeonRunRecord left, DungeonRunRecord right) {
+		if (left == null || right == null) return false;
+		if (Math.abs(left.timestampEpochMillis - right.timestampEpochMillis) > 30_000L) return false;
+		if (!sameText(left.floor, right.floor)) return false;
+		if (!sameText(left.chestTitle, right.chestTitle)) return false;
+		if (left.totalCostCoins() != right.totalCostCoins()) return false;
+		return sameLootShape(left, right);
+	}
+
+	private static boolean sameLootShape(DungeonRunRecord left, DungeonRunRecord right) {
+		if (left.lootEntries == null || right.lootEntries == null || left.lootEntries.isEmpty() || right.lootEntries.isEmpty()) return false;
+		LinkedHashMap<String, Integer> leftCounts = lootCounts(left);
+		LinkedHashMap<String, Integer> rightCounts = lootCounts(right);
+		if (!leftCounts.keySet().equals(rightCounts.keySet())) return false;
+		Integer multiplier = null;
+		for (String key : leftCounts.keySet()) {
+			int leftQuantity = Math.max(1, leftCounts.getOrDefault(key, 0));
+			int rightQuantity = Math.max(1, rightCounts.getOrDefault(key, 0));
+			if (leftQuantity == rightQuantity) continue;
+			if (leftQuantity == rightQuantity * 2) {
+				if (multiplier != null && multiplier != 2) return false;
+				multiplier = 2;
+				continue;
+			}
+			if (rightQuantity == leftQuantity * 2) {
+				if (multiplier != null && multiplier != -2) return false;
+				multiplier = -2;
+				continue;
+			}
+			return false;
+		}
+		return true;
+	}
+
+	private static LinkedHashMap<String, Integer> lootCounts(DungeonRunRecord record) {
+		LinkedHashMap<String, Integer> counts = new LinkedHashMap<>();
+		if (record == null || record.lootEntries == null) return counts;
+		for (DungeonLootEntry entry : record.lootEntries) {
+			if (entry == null) continue;
+			counts.merge(lootKey(entry), Math.max(1, entry.quantity), Integer::sum);
+		}
+		return counts;
+	}
+
+	private static int totalLootQuantity(DungeonRunRecord record) {
+		int total = 0;
+		if (record == null || record.lootEntries == null) return total;
+		for (DungeonLootEntry entry : record.lootEntries) {
+			if (entry != null) total += Math.max(1, entry.quantity);
+		}
+		return total;
+	}
+
+	private static String lootKey(DungeonLootEntry entry) {
+		if (entry == null) return "";
+		String itemId = entry.itemId == null ? "" : entry.itemId.trim().toUpperCase(java.util.Locale.ROOT);
+		if (!itemId.isBlank()) return itemId;
+		return entry.rawName == null ? "" : entry.rawName.trim().toUpperCase(java.util.Locale.ROOT);
+	}
+
+	private static boolean sameText(String left, String right) {
+		String leftText = left == null ? "" : left.trim();
+		String rightText = right == null ? "" : right.trim();
+		return leftText.equalsIgnoreCase(rightText);
 	}
 
 	private static int nextChestLogNumber() {

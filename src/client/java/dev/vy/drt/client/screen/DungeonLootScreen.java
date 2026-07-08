@@ -407,7 +407,8 @@ public final class DungeonLootScreen extends Screen {
 					g.item(icon, itemLeft, drawY + 2);
 					nameX = itemLeft + 18;
 				}
-				String truncated = ellipsize(row.label, Math.max(0, qtyRight - nameX - 18));
+				int salvageIconW = row.forcedSalvage() ? 18 : 0;
+				String truncated = ellipsize(row.label, Math.max(0, qtyRight - nameX - 18 - salvageIconW));
 				int textY = drawY + 6;
 				if (isUltimateItem(row.itemId)) {
 					Component comp = Component.literal(truncated).withStyle(Style.EMPTY.withBold(true).withColor(TextColor.fromRgb(0xFF55FF)));
@@ -415,13 +416,12 @@ public final class DungeonLootScreen extends Screen {
 				} else {
 					g.text(font, truncated, nameX, textY, itemColor(row.itemId));
 				}
+				if (row.forcedSalvage()) {
+					g.item(forcedSalvageEssenceIcon(), nameX + font.width(truncated) + 2, drawY + 2);
+				}
 				drawRightAligned(g, Integer.toString(row.quantity), qtyRight, textY, 0xFFB6C2DF);
 				drawRightAligned(g, formatCoins(row.unitPrice), eachRight, textY, 0xFF7FB98E);
-				if (row.forcedSalvage()) {
-					drawRightAlignedWithEssenceIcon(g, formatCoins(row.totalPrice), totalRight, textY, 0xFF9CE3AC);
-				} else {
-					drawRightAligned(g, formatCoins(row.totalPrice), totalRight, textY, 0xFF9CE3AC);
-				}
+				drawRightAligned(g, formatCoins(row.totalPrice), totalRight, textY, 0xFF9CE3AC);
 				addLootRowTargets(row, drawY);
 			}
 			drawY += ROW_H;
@@ -1034,13 +1034,6 @@ public final class DungeonLootScreen extends Screen {
 
 	private void drawRightAligned(GuiGraphicsExtractor g, String text, int rightX, int y, int color) {
 		g.text(font, text, rightX - font.width(text), y, color);
-	}
-
-	private void drawRightAlignedWithEssenceIcon(GuiGraphicsExtractor g, String text, int rightX, int y, int color) {
-		ItemStack icon = forcedSalvageEssenceIcon();
-		int iconX = rightX - 16;
-		g.text(font, text, iconX - 2 - font.width(text), y, color);
-		g.item(icon, iconX, y - 4);
 	}
 
 	private static ItemStack forcedSalvageEssenceIcon() {
