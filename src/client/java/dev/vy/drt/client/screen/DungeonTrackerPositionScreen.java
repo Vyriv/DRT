@@ -11,13 +11,19 @@ import org.lwjgl.glfw.GLFW;
 
 public final class DungeonTrackerPositionScreen extends Screen {
 	private final DungeonRunTrackerFeature trackerFeature;
+	private final Screen parent;
 	private boolean dragging;
 	private int dragOffsetX;
 	private int dragOffsetY;
 
 	public DungeonTrackerPositionScreen(DungeonRunTrackerFeature trackerFeature) {
+		this(trackerFeature, null);
+	}
+
+	public DungeonTrackerPositionScreen(DungeonRunTrackerFeature trackerFeature, Screen parent) {
 		super(Component.literal("Move DRT Tracker"));
 		this.trackerFeature = trackerFeature;
+		this.parent = parent;
 	}
 
 	@Override
@@ -107,6 +113,16 @@ public final class DungeonTrackerPositionScreen extends Screen {
 			return true;
 		}
 		return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);
+	}
+
+	@Override
+	public void onClose() {
+		trackerFeature.setHudPosition(Minecraft.getInstance(), trackerFeature.getHudX(), trackerFeature.getHudY(), true);
+		if (minecraft != null && parent != null) {
+			minecraft.setScreen(parent);
+			return;
+		}
+		super.onClose();
 	}
 
 	@Override
