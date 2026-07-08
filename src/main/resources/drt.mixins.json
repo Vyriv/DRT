@@ -3,6 +3,7 @@
 	"package": "dev.vy.drt.mixin",
 	"compatibilityLevel": "JAVA_21",
 	"client": [
+		"AbstractContainerScreenAccessor",
 		"ClientPacketListenerRunDetectionMixin",
 		"EntityCosmeticsMixin",
 		"EntityRendererCosmeticsMixin",

@@ -37,7 +37,11 @@ tasks.withType<JavaCompile>().configureEach {
 }
 
 java {
-	val javaVersion = JavaVersion.toVersion(project.property("java_version").toString())
+	val javaVersionNumber = project.property("java_version").toString().toInt()
+	toolchain {
+		languageVersion.set(JavaLanguageVersion.of(javaVersionNumber))
+	}
+	val javaVersion = JavaVersion.toVersion(javaVersionNumber)
 	sourceCompatibility = javaVersion
 	targetCompatibility = javaVersion
 	withSourcesJar()

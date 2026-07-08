@@ -14,7 +14,19 @@ public final class DrtConfig {
 	public float hudScale = 1.0F;
 	public String hudVisibilityMode = "DEFAULT";
 	public List<DungeonRunRecord> runHistory = new ArrayList<>();
+	public int nextChestLogNumber = 1;
 	public String selectedFloor = null;
 	public int witherEssenceValuePer = 2600;
 	public int undeadEssenceValuePer = 722;
+	public boolean onboardingComplete = false;
+	public String kuudraFaction = "MAGE";
+	public boolean kuudraPetEnabled = false;
+	public String kuudraPetRarity = "LEGENDARY";
+	public int kuudraPetLevel = 100;
+	public boolean forceSalvageArmor = false;
+	public boolean forceSalvageWands = false;
+	public boolean forceSalvageEquipment = false;
+	public boolean coolForgedEnabled = false;
+	public int coolForgedLevel = 1;
+	public String bazaarPriceMode = "INSTANT";
 }

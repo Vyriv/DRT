@@ -1,5 +1,7 @@
 package dev.vy.drt.client.tracker;
 
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import dev.vy.drt.DungeonRunTracker;
@@ -18,10 +20,12 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -29,6 +33,8 @@ public final class NeuItemResolver {
 
 	private static final String NEU_BASE =
 		"https://raw.githubusercontent.com/NotEnoughUpdates/NotEnoughUpdates-REPO/master/items/";
+	private static final String NEU_CONSTANTS_BASE =
+		"https://raw.githubusercontent.com/NotEnoughUpdates/NotEnoughUpdates-REPO/master/constants/";
 	private static final Duration TIMEOUT = Duration.ofSeconds(8);
 
 	private static final Pattern TEXTURE_VALUE = Pattern.compile("Value:\"([A-Za-z0-9+/=]+)\"");
@@ -48,6 +54,11 @@ public final class NeuItemResolver {
 	private static final Set<String> FETCHED = ConcurrentHashMap.newKeySet();
 	private static final ConcurrentHashMap<String, ItemStack> RESOLVED_STACKS = new ConcurrentHashMap<>();
 	private static final ConcurrentHashMap<String, Integer>   RESOLVED_COLORS = new ConcurrentHashMap<>();
+	private static final ConcurrentHashMap<String, String> ATTRIBUTE_SHARD_INTERNAL_NAMES = new ConcurrentHashMap<>(Map.of(
+		"SHARD_BEZAL", "ATTRIBUTE_SHARD_BLAZING_RESISTANCE;1",
+		"SHARD_KRAKEN", "ATTRIBUTE_SHARD_MENDING;1"
+	));
+	private static final AtomicBoolean ATTRIBUTE_SHARD_INDEX_REQUESTED = new AtomicBoolean();
 
 	private NeuItemResolver() {}
 
@@ -61,11 +72,57 @@ public final class NeuItemResolver {
 		return RESOLVED_COLORS.get(itemId.toUpperCase(Locale.ROOT));
 	}
 
+	public static String getAttributeShardInternalName(String bazaarName) {
+		if (bazaarName == null || bazaarName.isBlank()) return null;
+		String key = bazaarName.toUpperCase(Locale.ROOT);
+		String internalName = ATTRIBUTE_SHARD_INTERNAL_NAMES.get(key);
+		if (internalName == null && key.startsWith("SHARD_")) {
+			loadAttributeShardIndexAsync();
+		}
+		return internalName;
+	}
+
 	public static void enqueue(String itemId) {
 		if (itemId == null || itemId.isBlank()) return;
 		String key = itemId.toUpperCase(Locale.ROOT);
 		if (FETCHED.add(key)) {
 			EXECUTOR.submit(() -> fetchAndResolve(key));
+		}
+	}
+
+	private static void loadAttributeShardIndexAsync() {
+		if (ATTRIBUTE_SHARD_INDEX_REQUESTED.compareAndSet(false, true)) {
+			EXECUTOR.submit(NeuItemResolver::fetchAttributeShardIndex);
+		}
+	}
+
+	private static void fetchAttributeShardIndex() {
+		try {
+			HttpRequest req = HttpRequest.newBuilder(URI.create(NEU_CONSTANTS_BASE + "attribute_shards.json"))
+				.timeout(TIMEOUT).GET().build();
+			HttpResponse<String> resp = HTTP.send(req, HttpResponse.BodyHandlers.ofString());
+			if (resp.statusCode() < 200 || resp.statusCode() >= 300) {
+				DungeonRunTracker.LOGGER.warn("[NEU] HTTP {} for attribute_shards.json", resp.statusCode());
+				return;
+			}
+
+			JsonObject json = JsonParser.parseString(resp.body()).getAsJsonObject();
+			JsonArray attributes = json.getAsJsonArray("attributes");
+			if (attributes == null) return;
+			for (JsonElement element : attributes) {
+				if (!element.isJsonObject()) continue;
+				JsonObject object = element.getAsJsonObject();
+				if (!object.has("bazaarName") || !object.has("internalName")) continue;
+				String bazaarName = object.get("bazaarName").getAsString();
+				String internalName = object.get("internalName").getAsString();
+				if (bazaarName == null || bazaarName.isBlank() || internalName == null || internalName.isBlank()) continue;
+				ATTRIBUTE_SHARD_INTERNAL_NAMES.putIfAbsent(
+					bazaarName.toUpperCase(Locale.ROOT),
+					internalName.toUpperCase(Locale.ROOT)
+				);
+			}
+		} catch (Exception e) {
+			DungeonRunTracker.LOGGER.warn("[NEU] Failed to load attribute shard index: {}", e.getMessage());
 		}
 	}
 

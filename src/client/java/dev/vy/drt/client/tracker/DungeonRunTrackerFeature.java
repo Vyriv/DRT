@@ -1,11 +1,14 @@
 package dev.vy.drt.client.tracker;
 
 import dev.vy.drt.DungeonRunTracker;
+import dev.vy.drt.config.ChestCostBreakdown;
 import dev.vy.drt.config.DrtConfig;
 import dev.vy.drt.config.DrtConfigManager;
+import dev.vy.drt.config.DungeonChestOffer;
 import dev.vy.drt.config.DungeonFloor;
 import dev.vy.drt.config.DungeonLootEntry;
 import dev.vy.drt.config.DungeonRunRecord;
+import dev.vy.drt.mixin.AbstractContainerScreenAccessor;
 import dev.vy.drt.price.DungeonProfitPricing;
 import dev.vy.drt.price.PriceCache;
 import java.util.ArrayDeque;
@@ -32,6 +35,7 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.NbtOps;
 import net.minecraft.world.inventory.AbstractContainerMenu;
+import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.component.CustomData;
@@ -51,6 +55,7 @@ public final class DungeonRunTrackerFeature {
 	private static final long RUN_COMPLETION_DEDUP_WINDOW_MS = 20_000L;
 	private static final long LOOT_WINDOW_MS = 180_000L;
 	private static final long LOOT_COLLECTION_MS = 3_000L;
+	private static final long REWARD_MODIFIER_SCAN_INTERVAL_MS = 300L;
 	private static final Pattern ESSENCE_PATTERN = Pattern.compile("^(?:\\+\\s*)?(WITHER|UNDEAD|SPIDER|DRAGON|ICE|DIAMOND|GOLD|CRIMSON) ESSENCE(?:\\s*[xX]\\s*(\\d+))?$");
 	private static final Pattern RECEIVED_PATTERN = Pattern.compile("^YOU RECEIVED\\s+(.+?)(?:\\s*[xX]\\s*(\\d+))?!?$");
 	private static final Pattern PLUS_PATTERN = Pattern.compile("^\\+\\s*(.+?)(?:\\s*[xX]\\s*(\\d+))?$");
@@ -61,11 +66,24 @@ public final class DungeonRunTrackerFeature {
 	private static final Pattern ENCHANTED_BOOK_PATTERN = Pattern.compile("^Enchanted Book \\((.+) ([IVX]+)\\)$", Pattern.CASE_INSENSITIVE);
 	private static final Pattern BOSS_TIME_PATTERN = Pattern.compile("Defeated .+ in (\\d+)m\\s+(\\d+)s", Pattern.CASE_INSENSITIVE);
 	private static final Pattern SHORT_FLOOR_PATTERN = Pattern.compile("(?:^|[^A-Z0-9])([FM])\\s*([1-7])(?:$|[^A-Z0-9])");
+	private static final Pattern KUUDRA_SHORT_TIER_PATTERN = Pattern.compile("(?:^|[^A-Z0-9])(?:K|T)\\s*([1-5])(?:$|[^A-Z0-9])", Pattern.CASE_INSENSITIVE);
+	private static final Pattern KUUDRA_TIER_WORD_PATTERN = Pattern.compile("\\bTIER\\s*(?:-|:)?\\s*(I{1,3}|IV|V|[1-5])\\b", Pattern.CASE_INSENSITIVE);
 	private static final Pattern SCORE_GRADE_PATTERN = Pattern.compile("\\bSCORE\\b.*(?:\\((S\\+|S|A|B|C|D)\\)|(?:^|\\s)(S\\+|S|A|B|C|D)\\s*$)", Pattern.CASE_INSENSITIVE);
-	private static final Set<String> REWARD_CHEST_TITLES = Set.of("WOOD CHEST", "GOLD CHEST", "DIAMOND CHEST", "EMERALD CHEST", "OBSIDIAN CHEST", "BEDROCK CHEST");
+	private static final Set<String> REWARD_CHEST_TITLES = Set.of(
+		"WOOD CHEST", "GOLD CHEST", "DIAMOND CHEST", "EMERALD CHEST", "OBSIDIAN CHEST", "BEDROCK CHEST",
+		"FREE CHEST", "PAID CHEST"
+	);
 	private static final Map<String, String> TIER_NAME_TO_CHEST_TITLE = Map.of(
 		"WOOD", "WOOD CHEST", "GOLD", "GOLD CHEST", "DIAMOND", "DIAMOND CHEST",
-		"EMERALD", "EMERALD CHEST", "OBSIDIAN", "OBSIDIAN CHEST", "BEDROCK", "BEDROCK CHEST"
+		"EMERALD", "EMERALD CHEST", "OBSIDIAN", "OBSIDIAN CHEST", "BEDROCK", "BEDROCK CHEST",
+		"FREE", "FREE CHEST", "PAID", "PAID CHEST"
+	);
+	private static final Map<String, DungeonFloor> KUUDRA_TIER_NAMES = Map.of(
+		"BASIC", DungeonFloor.K1,
+		"HOT", DungeonFloor.K2,
+		"BURNING", DungeonFloor.K3,
+		"FIERY", DungeonFloor.K4,
+		"INFERNAL", DungeonFloor.K5
 	);
 	private static final Set<String> ULTIMATE_ENCHANTS = Set.of(
 		"LEGION", "ULTIMATE_WISE", "LAST_STAND", "SOUL_EATER", "SWARM", "COMBO", "REND",
@@ -73,9 +91,15 @@ public final class DungeonRunTrackerFeature {
 		"FATAL_TEMPO", "DUPLEX", "FLASH", "HABANERO_TACTICS"
 	);
 	private static final Map<String, String> ITEM_ID_ALIASES = createItemIdAliases();
+	private static final String ITEM_DUNGEON_CHEST_KEY = "DUNGEON_CHEST_KEY";
+	private static final String ITEM_KISMET_FEATHER = "KISMET_FEATHER";
+	private static final String ITEM_WHEEL_OF_FATE = "WHEEL_OF_FATE";
 
 	private static final Map<String, ItemStack> CHEST_ICON_CACHE = new LinkedHashMap<>();
 	private static final Map<String, ItemStack> ITEM_ICON_CACHE = new LinkedHashMap<>();
+	private static final long ICON_CACHE_RETRY_MS = 2_000L;
+	private static long nextIconCacheRetryMillis;
+	private static boolean iconCacheLoadWarningLogged;
 	private static final float MIN_HUD_SCALE = 0.5F;
 	private static final float MAX_HUD_SCALE = 2.0F;
 	private static final float HUD_SCALE_STEP = 0.1F;
@@ -110,6 +134,23 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private record PacketCapturedMessage(String text, long atMillis) {}
+	private record OverlayChestData(String chestTitle, List<DungeonLootEntry> entries, ChestCostBreakdown breakdown, long valueCoins, long profitCoins) {}
+	private record CroesusChestRow(String canonicalTitle, String displayName, ItemStack icon, int menuSlotIndex, int slotX, int slotY, long normalProfitCoins, long keyProfitCoins, boolean alreadyOpened, boolean kismetRerolled) {}
+	private record CroesusRunSlot(int slotX, int slotY) {}
+	private record ScreenBounds(int left, int top, int width, int height) {
+		int right() { return left + width; }
+	}
+	private static final class OverlayItemDisplay {
+		final String name;
+		final boolean bold;
+		final int color;
+
+		OverlayItemDisplay(String name, boolean bold, int color) {
+			this.name = name;
+			this.bold = bold;
+			this.color = color;
+		}
+	}
 
 	public static ItemStack getChestIcon(String chestTitle) {
 		if (chestTitle == null) return ItemStack.EMPTY;
@@ -134,6 +175,9 @@ public final class DungeonRunTrackerFeature {
 	private static final String TEX_WITHER_HELMET = "ewogICJ0aW1lc3RhbXAiIDogMTY4OTY4MzY3MDM4NywKICAicHJvZmlsZUlkIiA6ICJkNzU2OTc4MWUyYjY0OWIyYjVlMjVlYTJhNDZkOGQxOSIsCiAgInByb2ZpbGVOYW1lIiA6ICJEckthcGRvciIsCiAgInNpZ25hdHVyZVJlcXVpcmVkIiA6IHRydWUsCiAgInRleHR1cmVzIiA6IHsKICAgICJTS0lOIiA6IHsKICAgICAgInVybCIgOiAiaHR0cDovL3RleHR1cmVzLm1pbmVjcmFmdC5uZXQvdGV4dHVyZS82OTExMjk0MDk3ODk1ODlhZTFiNDNlMWQ4MjhjMDZmYzlhMjEzYjc4MzQ4YTY4YjczMTNiZGQ0MDFkNzQ4NWNjIiwKICAgICAgIm1ldGFkYXRhIiA6IHsKICAgICAgICAibW9kZWwiIDogInNsaW0iCiAgICAgIH0KICAgIH0KICB9Cn0=";
 
 	public static boolean loadIconCachesFromConfig() {
+		long now = System.currentTimeMillis();
+		if (now < nextIconCacheRetryMillis) return false;
+
 		boolean loaded = true;
 		loaded &= cacheSkull(CHEST_ICON_CACHE, "WOOD CHEST", TEX_WOOD);
 		loaded &= cacheSkull(CHEST_ICON_CACHE, "GOLD CHEST", TEX_GOLD);
@@ -146,7 +190,10 @@ public final class DungeonRunTrackerFeature {
 		loaded &= cacheSkull(ITEM_ICON_CACHE, "SHADOW_ASSASSIN_HELMET", TEX_SHADOW_ASSASSIN_HELMET);
 		loaded &= cacheSkull(ITEM_ICON_CACHE, "NECROMANCER_LORD_HELMET", TEX_NECROMANCER_LORD_HELMET);
 		loaded &= cacheSkull(ITEM_ICON_CACHE, "WITHER_HELMET", TEX_WITHER_HELMET);
-		if (!loaded) return false;
+		if (!loaded) {
+			nextIconCacheRetryMillis = now + ICON_CACHE_RETRY_MS;
+			return false;
+		}
 		NeuItemResolver.preload();
 		return true;
 	}
@@ -175,7 +222,12 @@ public final class DungeonRunTrackerFeature {
 				.ifPresent(profile -> skull.set(DataComponents.PROFILE, profile));
 			return skull;
 		} catch (Exception e) {
-			DungeonRunTracker.LOGGER.warn("[DRT] skullFromTexture failed: {}", e.getMessage());
+			if (!iconCacheLoadWarningLogged) {
+				iconCacheLoadWarningLogged = true;
+				DungeonRunTracker.LOGGER.warn("[DRT] Skull icon cache is not ready yet: {}", e.getMessage());
+			} else {
+				DungeonRunTracker.LOGGER.debug("[DRT] Skull icon cache retry failed: {}", e.getMessage());
+			}
 			return ItemStack.EMPTY;
 		}
 	}
@@ -203,9 +255,12 @@ public final class DungeonRunTrackerFeature {
 
 	private int refreshCountdown;
 	private boolean insideDungeon;
+	private boolean insideKuudra;
 	private boolean inDungeonHub;
+	private boolean inCrimsonIsle;
 	private DungeonFloor currentFloor = DungeonFloor.UNKNOWN;
 	private long dungeonSignalUntilMillis;
+	private long kuudraSignalUntilMillis;
 	private long awaitingExtraStatsUntilMillis;
 	private boolean awaitingExtraStatsScore;
 	private DungeonFloor awaitingExtraStatsFloor = DungeonFloor.UNKNOWN;
@@ -224,12 +279,24 @@ public final class DungeonRunTrackerFeature {
 	private int pendingLootRunNumber;
 	private long pendingLootRunTimestamp;
 	private String pendingLootChestTitle = "";
-	private long pendingLootChestCostCoins;
+	private ChestCostBreakdown pendingLootCostBreakdown = new ChestCostBreakdown();
 	private DungeonFloor pendingLootFloor = DungeonFloor.UNKNOWN;
 	private boolean pendingLootSeededFromGui;
+	private boolean pendingLootChestAssigned;
+	private int openedRewardChestsInLootWindow;
+	private boolean nextOpenedChestUsesDungeonChestKey;
+	private boolean nextOpenedChestUsesKismetFeather;
+	private boolean nextOpenedChestUsesWheelOfFate;
+	private boolean rewardMenuKismetRerollPending;
+	private String rewardMenuKismetRerolledChestTitle = "";
 	private final List<DungeonLootEntry> pendingLootEntries = new ArrayList<>();
-	private final Map<String, CachedChestData> cachedChestDataByTitle = new HashMap<>();
+	private final Map<String, DungeonChestOffer> cachedChestOffersByTitle = new HashMap<>();
+	private final Map<String, Integer> cachedChestOfferFingerprintsByTitle = new HashMap<>();
 	private final Set<String> scannedRewardScreens = new HashSet<>();
+	private String lastRewardModifierScanKey = "";
+	private long lastRewardModifierScanMillis;
+	private boolean lastRewardModifierScanHadKeyRequirement;
+	private boolean lastRewardModifierScanHadKismetMarker;
 
 	private boolean sessionActive;
 	private long sessionStartMillis;
@@ -311,8 +378,9 @@ public final class DungeonRunTrackerFeature {
 		long now = System.currentTimeMillis();
 		resumeCurrentRunAfterUnavailable(now);
 		if (lootCollectionUntilMillis > 0L && now > lootCollectionUntilMillis) {
-			flushPendingLootRecord();
-		} else if (lootWindowUntilMillis > 0L && now > lootWindowUntilMillis) {
+			flushPendingLootRecord(lootWindowUntilMillis > 0L && now <= lootWindowUntilMillis);
+		}
+		if (lootWindowUntilMillis > 0L && now > lootWindowUntilMillis) {
 			clearLootWindow();
 		}
 
@@ -352,6 +420,20 @@ public final class DungeonRunTrackerFeature {
 	private static final int C_RATE     = 0xFFDDDDEE;
 	private static final int C_PAUSED   = 0xFFFFAA00;
 	private static final int C_RESET    = 0xFFFF4455;
+	private static final int OVERLAY_BG = 0xDD0B0C14;
+	private static final int OVERLAY_BG_ALT = 0xEE111320;
+	private static final int OVERLAY_BORDER = 0xFF323858;
+	private static final int OVERLAY_TEXT = 0xFFE5E7F0;
+	private static final int OVERLAY_MUTED = 0xFF8993AE;
+	private static final int OVERLAY_VALUE = 0xFF8FE39F;
+	private static final int OVERLAY_COST = 0xFFFF7373;
+	private static final int OVERLAY_BOOK = 0xFF55AAFF;
+	private static final int OVERLAY_ULTIMATE = 0xFFFF55FF;
+	private static final int OVERLAY_ESSENCE = 0xFFFF55FF;
+	private static final int OVERLAY_PROFIT = 0xFF55FF55;
+	private static final int OVERLAY_LOSS = 0xFFFF5555;
+	private static final int CHEST_OVERLAY_W = 178;
+	private static final int CHEST_OVERLAY_MAX_ITEMS = 8;
 
 	public void extractRenderState(Minecraft client, GuiGraphicsExtractor guiGraphics, int mouseX, int mouseY) {
 		extractRenderState(client, guiGraphics, mouseX, mouseY, false);
@@ -385,9 +467,9 @@ public final class DungeonRunTrackerFeature {
 		try {
 			pose.translate(hudX, hudY);
 			pose.scale(hudScale);
-			renderHudTitleLine(client, guiGraphics, 0, 0, floorTag);
-			renderHudRunsLine(client, guiGraphics, 0, lineH, totalRuns, sessionRunCount, runsPerHr, avgRunTimeMs);
-			renderHudProfitLine(client, guiGraphics, 0, lineH * 2, lifetimeProfit, sessionProfit, profitPerHr, avgProfitPerRun);
+			extractRenderStateHudTitleLine(client, guiGraphics, 0, 0, floorTag);
+			extractRenderStateHudRunsLine(client, guiGraphics, 0, lineH, totalRuns, sessionRunCount, runsPerHr, avgRunTimeMs);
+			extractRenderStateHudProfitLine(client, guiGraphics, 0, lineH * 2, lifetimeProfit, sessionProfit, profitPerHr, avgProfitPerRun);
 			if (showResetLine) {
 				seg(client, guiGraphics, "Reset " + floorTag, 0, lineH * 3, C_RESET);
 			}
@@ -410,9 +492,16 @@ public final class DungeonRunTrackerFeature {
 				drawTooltip(client, guiGraphics, "Click to reset " + floorTag + " tracker", mouseX, mouseY);
 			}
 		}
+
 	}
 
-	private void renderHudTitleLine(Minecraft client, GuiGraphicsExtractor g, int x, int y, String floorTag) {
+	public void extractChestOverlayRenderState(Minecraft client, GuiGraphicsExtractor guiGraphics, int mouseX, int mouseY) {
+		if (extractRenderStateCroesusChestOverlay(client, guiGraphics, mouseX, mouseY)) return;
+		extractRenderStateCroesusMainMenuHighlights(client, guiGraphics);
+		extractRenderStateChestBreakdownOverlay(client, guiGraphics, mouseX, mouseY);
+	}
+
+	private void extractRenderStateHudTitleLine(Minecraft client, GuiGraphicsExtractor g, int x, int y, String floorTag) {
 		int floorColor = floorTagColor(floorTag);
 		x = seg(client, g, "DRT ", x, y, C_TITLE);
 		x = seg(client, g, "[", x, y, C_BRACKET);
@@ -424,10 +513,11 @@ public final class DungeonRunTrackerFeature {
 		if (tag == null) return C_FLOOR;
 		if (tag.startsWith("F")) return 0xFF55CC66;
 		if (tag.startsWith("M")) return 0xFFFF5555;
+		if (tag.startsWith("K")) return 0xFFAA0000;
 		return C_FLOOR;
 	}
 
-	private void renderHudRunsLine(Minecraft client, GuiGraphicsExtractor g, int x, int y, int totalRuns, int sessionRunCount, double runsPerHr, long avgRunTimeMs) {
+	private void extractRenderStateHudRunsLine(Minecraft client, GuiGraphicsExtractor g, int x, int y, int totalRuns, int sessionRunCount, double runsPerHr, long avgRunTimeMs) {
 		x = seg(client, g, "Runs ", x, y, C_LABEL);
 		x = seg(client, g, String.valueOf(totalRuns), x, y, C_VALUE);
 		x = seg(client, g, " | ", x, y, C_SEP);
@@ -440,7 +530,7 @@ public final class DungeonRunTrackerFeature {
 		if (runsPerHrPaused) seg(client, g, " [paused]", x, y, C_PAUSED);
 	}
 
-	private void renderHudProfitLine(Minecraft client, GuiGraphicsExtractor g, int x, int y,
+	private void extractRenderStateHudProfitLine(Minecraft client, GuiGraphicsExtractor g, int x, int y,
 			long lifetime, long session, long perHr, long avgProfitPerRun) {
 		x = seg(client, g, "Profit ", x, y, C_LABEL);
 		x = seg(client, g, formatCoins(lifetime), x, y, profitColor(lifetime));
@@ -703,11 +793,13 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	public boolean handleScreenMouseClick(Minecraft client, double mouseX, double mouseY, int button, boolean moveMode) {
+		int mx = (int) mouseX;
+		int my = (int) mouseY;
+		if (button == 0 && !moveMode && handleChestKeyModifierClick(client, mx, my)) return true;
+		if (button == 0 && !moveMode && handleCroesusOverlayClick(client, mx, my)) return true;
 		if (!isTrackerVisible(client, moveMode) || (button != 0 && button != 1)) return false;
 		if (moveMode) return false;
 		boolean showResetLine = shouldShowResetLine(client, false);
-		int mx = (int) mouseX;
-		int my = (int) mouseY;
 		if (button == 1) {
 			if (isHoveringFloorLabel(client, mx, my)) { cycleSelectedFloorBackward(); return true; }
 			return false;
@@ -718,6 +810,122 @@ public final class DungeonRunTrackerFeature {
 		if (isHoveringProfitLine(client, mx, my)) { lootScreenPending = true; return true; }
 		if (isHoveringResetButton(client, mx, my, showResetLine)) { resetSelectedFloor(); return true; }
 		return false;
+	}
+
+	private boolean handleChestKeyModifierClick(Minecraft client, int mouseX, int mouseY) {
+		if (client == null || client.player == null) return false;
+		if (!isHoveringChestKeyModifier(client, mouseX, mouseY)) return false;
+		sendClientCommand(client, "bz dungeon chest key");
+		return true;
+	}
+
+	private void sendClientCommand(Minecraft client, String command) {
+		if (client == null || client.player == null || client.player.connection == null) return;
+		client.player.connection.sendCommand(command);
+	}
+
+	private boolean isHoveringChestKeyModifier(Minecraft client, int mouseX, int mouseY) {
+		OverlayChestData data = currentOverlayChestData(client);
+		if (data == null || data.breakdown == null) return false;
+		if (!data.breakdown.usedDungeonChestKey && data.breakdown.dungeonChestKeyCostCoins <= 0L) return false;
+
+		int rowH = 14;
+		int lineH = client.font.lineHeight + 2;
+		int itemRows = 0;
+		int essenceRows = 0;
+		for (DungeonLootEntry entry : data.entries) {
+			if (isEssenceEntry(entry)) essenceRows++;
+			else itemRows++;
+		}
+		int shownItemRows = Math.min(4, itemRows);
+		int hiddenRows = Math.max(0, itemRows - shownItemRows);
+		int screenW = client.getWindow().getGuiScaledWidth();
+		int screenH = client.getWindow().getGuiScaledHeight();
+		ScreenBounds bounds = currentContainerBounds(client);
+		int x = Math.min(screenW - CHEST_OVERLAY_W - 4, bounds.right() + 8);
+		if (x < bounds.right() + 2) x = Math.max(4, bounds.right() + 2);
+		int y = Math.max(6, Math.min(screenH - 12, bounds.top() + 2));
+
+		int keyY = y
+			+ lineH + 8
+			+ shownItemRows * rowH
+			+ essenceRows * rowH
+			+ (hiddenRows > 0 ? rowH : 0)
+			+ 8
+			+ lineH + 8
+			+ lineH;
+		return pointInRect(mouseX, mouseY, x, keyY - 4, CHEST_OVERLAY_W, lineH + 2);
+	}
+
+	private boolean handleCroesusOverlayClick(Minecraft client, int mouseX, int mouseY) {
+		if (client == null || client.player == null || client.gameMode == null) return false;
+		CroesusChestRow row = croesusOverlayRowAt(client, mouseX, mouseY);
+		if (row == null) return false;
+		return invokeInventoryPickupClick(client, row.menuSlotIndex);
+	}
+
+	private boolean invokeInventoryPickupClick(Minecraft client, int menuSlotIndex) {
+		if (client == null || client.player == null || client.gameMode == null || client.player.containerMenu == null) return false;
+		Object gameMode = client.gameMode;
+		Class<?> playerType = client.player.getClass();
+		for (java.lang.reflect.Method method : gameMode.getClass().getDeclaredMethods()) {
+			Class<?>[] params = method.getParameterTypes();
+			if (params.length != 5) continue;
+			if (params[0] != int.class || params[1] != int.class || params[2] != int.class) continue;
+			if (!params[3].isEnum() || !params[4].isAssignableFrom(playerType)) continue;
+			Object pickup = enumConstant(params[3], "PICKUP");
+			if (pickup == null) continue;
+			try {
+				method.setAccessible(true);
+				method.invoke(gameMode, client.player.containerMenu.containerId, menuSlotIndex, 0, pickup, client.player);
+				return true;
+			} catch (ReflectiveOperationException | RuntimeException e) {
+				DungeonRunTracker.LOGGER.debug("[DRT] Croesus overlay click failed: {}", e.getMessage());
+				return false;
+			}
+		}
+		return false;
+	}
+
+	private Object enumConstant(Class<?> enumType, String name) {
+		Object[] constants = enumType.getEnumConstants();
+		if (constants == null) return null;
+		for (Object constant : constants) {
+			if (constant instanceof Enum<?> e && e.name().equals(name)) return constant;
+		}
+		return null;
+	}
+
+	private CroesusChestRow croesusOverlayRowAt(Minecraft client, int mouseX, int mouseY) {
+		if (!(client.screen instanceof AbstractContainerScreen<?> screen)) return null;
+		String normalizedTitle = normalize(screen.getTitle().getString());
+		if (REWARD_CHEST_TITLES.contains(normalizedTitle) || !isRewardsMenuTitle(normalizedTitle)) return null;
+
+		List<CroesusChestRow> rows = currentCroesusChestRows(client);
+		if (rows.isEmpty()) return null;
+
+		int screenW = client.getWindow().getGuiScaledWidth();
+		ScreenBounds bounds = currentContainerBounds(client);
+		int x = Math.min(screenW - CHEST_OVERLAY_W - 4, bounds.right() + 8);
+		if (x < bounds.right() + 2) x = Math.max(4, bounds.right() + 2);
+		int y = Math.max(6, bounds.top() + 2);
+		int lineH = client.font.lineHeight + 2;
+		int rowH = 14;
+		int cursorY = y + lineH + 8;
+		for (CroesusChestRow row : rows) {
+			if (pointInRect(mouseX, mouseY, x, cursorY - 4, CHEST_OVERLAY_W, rowH)) return row;
+			cursorY += rowH;
+		}
+
+		CroesusChestRow bestNormal = bestNormalChest(rows);
+		CroesusChestRow bestKey = bestKeyChest(rows, bestNormal);
+		cursorY += 8 + lineH + 2;
+		if (bestNormal != null) {
+			if (pointInRect(mouseX, mouseY, x, cursorY - 4, CHEST_OVERLAY_W, rowH)) return bestNormal;
+			cursorY += rowH;
+		}
+		if (bestKey != null && pointInRect(mouseX, mouseY, x, cursorY - 4, CHEST_OVERLAY_W, rowH)) return bestKey;
+		return null;
 	}
 
 	public void growHudScale(Minecraft client, boolean save, boolean includeResetLine) {
@@ -848,7 +1056,9 @@ public final class DungeonRunTrackerFeature {
 		if (message == null) return;
 
 		long now = System.currentTimeMillis();
-		if (lootCollectionUntilMillis > 0L && now > lootCollectionUntilMillis) flushPendingLootRecord();
+		if (lootCollectionUntilMillis > 0L && now > lootCollectionUntilMillis) {
+			flushPendingLootRecord(lootWindowUntilMillis > 0L && now <= lootWindowUntilMillis);
+		}
 		if (lootWindowUntilMillis > 0L && now > lootWindowUntilMillis) clearLootWindow();
 
 		String rawText = ChatFormatting.stripFormatting(message.getString());
@@ -856,12 +1066,20 @@ public final class DungeonRunTrackerFeature {
 		if (cleaned.isEmpty()) return;
 
 		expirePendingCompletionState(now);
-		for (String rawLine : splitMessageLines(rawText)) {
+		List<String> rawLines = splitMessageLines(rawText);
+		for (String rawLine : rawLines) {
 			String cleanedLine = normalize(rawLine);
 			if (!cleanedLine.isEmpty()) handleCompletionLine(rawLine.trim(), cleanedLine, now);
 		}
 
-		handleLootMessage(rawText == null ? cleaned : rawText.trim(), cleaned, now);
+		if (rawLines.size() > 1) {
+			for (String rawLine : rawLines) {
+				String cleanedLine = normalize(rawLine);
+				if (!cleanedLine.isEmpty()) handleLootMessage(rawLine.trim(), cleanedLine, now);
+			}
+		} else {
+			handleLootMessage(rawText == null ? cleaned : rawText.trim(), cleaned, now);
+		}
 	}
 
 	private void submitMessage(Component message, boolean fromGameMessage) {
@@ -891,6 +1109,8 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private void handleCompletionLine(String rawLine, String cleaned, long now) {
+		if (handleKuudraLine(cleaned, now)) return;
+
 		if (isDungeonEntryMessage(cleaned)) {
 			beginNewDungeonRun(now);
 			insideDungeon = true;
@@ -951,6 +1171,634 @@ public final class DungeonRunTrackerFeature {
 				clearPendingCompletionScore();
 			}
 		}
+
+	}
+
+	private boolean extractRenderStateCroesusChestOverlay(Minecraft client, GuiGraphicsExtractor g, int mouseX, int mouseY) {
+		if (!(client.screen instanceof AbstractContainerScreen<?> screen)) return false;
+		String normalizedTitle = normalize(screen.getTitle().getString());
+		if (REWARD_CHEST_TITLES.contains(normalizedTitle) || !isRewardsMenuTitle(normalizedTitle)) return false;
+
+		List<CroesusChestRow> rows = currentCroesusChestRows(client);
+		if (rows.isEmpty()) return false;
+
+		int screenW = client.getWindow().getGuiScaledWidth();
+		ScreenBounds bounds = currentContainerBounds(client);
+		int x = Math.min(screenW - CHEST_OVERLAY_W - 4, bounds.right() + 8);
+		if (x < bounds.right() + 2) x = Math.max(4, bounds.right() + 2);
+		int y = Math.max(6, bounds.top() + 2);
+		int lineH = client.font.lineHeight + 2;
+		int rowH = 14;
+		int cursorY = y;
+
+		CroesusChestRow bestNormal = bestNormalChest(rows);
+		CroesusChestRow bestKey = bestKeyChest(rows, bestNormal);
+		CroesusChestRow hoverRow = hoveredChestSlot(rows, mouseX, mouseY);
+		CroesusChestRow tooltipRow = null;
+		boolean itemTooltipActive = hoverRow != null;
+		int hoverColor = hoverRow == null ? 0 : chestTitleColor(hoverRow.displayName);
+
+		if (!itemTooltipActive) {
+			drawOverlayText(client, g, "Chests", x, cursorY, OVERLAY_TEXT, true);
+			cursorY += lineH + 8;
+			for (CroesusChestRow row : rows) {
+				if (pointInRect(mouseX, mouseY, x, cursorY - 4, CHEST_OVERLAY_W, rowH)) {
+					hoverRow = row;
+					tooltipRow = row;
+					hoverColor = chestTitleColor(row.displayName);
+				}
+				drawCroesusChestRow(client, g, row, x, cursorY, row.normalProfitCoins, false);
+				cursorY += rowH;
+			}
+
+			cursorY += 8;
+			drawOverlayText(client, g, "Open", x, cursorY, OVERLAY_TEXT, true);
+			cursorY += lineH + 2;
+			if (bestNormal != null) {
+				if (pointInRect(mouseX, mouseY, x, cursorY - 4, CHEST_OVERLAY_W, rowH)) {
+					hoverRow = bestNormal;
+					tooltipRow = bestNormal;
+					hoverColor = OVERLAY_PROFIT;
+				}
+				drawCroesusOpenRow(client, g, bestNormal, x, cursorY, 1, bestNormal.normalProfitCoins, new ItemStack(Items.AIR));
+				cursorY += rowH;
+			}
+			if (bestKey != null) {
+				if (pointInRect(mouseX, mouseY, x, cursorY - 4, CHEST_OVERLAY_W, rowH)) {
+					hoverRow = bestKey;
+					tooltipRow = bestKey;
+					hoverColor = 0xFFFFDD55;
+				}
+				drawCroesusOpenRow(client, g, bestKey, x, cursorY, 2, bestKey.keyProfitCoins, new ItemStack(Items.TRIPWIRE_HOOK));
+			}
+		}
+
+		if (bestNormal != null) drawSlotHighlight(g, bestNormal, OVERLAY_PROFIT, false);
+		if (bestKey != null) drawSlotHighlight(g, bestKey, 0xFFFFDD55, false);
+		if (hoverRow != null) drawSlotHighlight(g, hoverRow, hoverColor, true);
+		if (tooltipRow != null) drawTooltip(client, g, "Click to view " + tooltipRow.displayName + " Chest", mouseX, mouseY);
+		return true;
+	}
+
+	private void extractRenderStateCroesusMainMenuHighlights(Minecraft client, GuiGraphicsExtractor g) {
+		for (CroesusRunSlot slot : currentCroesusMainMenuUnopenedSlots(client)) {
+			drawSlotHighlight(g, slot.slotX, slot.slotY, OVERLAY_PROFIT, false);
+		}
+	}
+
+	private void drawCroesusChestRow(Minecraft client, GuiGraphicsExtractor g, CroesusChestRow row, int x, int y, long profitCoins, boolean bold) {
+		ItemStack icon = row.icon.isEmpty() ? new ItemStack(Items.CHEST) : row.icon;
+		g.item(icon, x, y - 4);
+		String value = row.alreadyOpened ? "Opened" : signedCoins(profitCoins);
+		int valueW = client.font.width(value);
+		int nameMaxW = CHEST_OVERLAY_W - 20 - valueW - (row.kismetRerolled ? 22 : 6);
+		String visibleName = ellipsize(client, row.displayName, Math.max(16, nameMaxW));
+		drawOverlayText(client, g, visibleName, x + 18, y, chestTitleColor(row.displayName), bold);
+		if (row.kismetRerolled) {
+			g.item(new ItemStack(Items.FEATHER), x + 20 + client.font.width(visibleName), y - 4);
+		}
+		drawOverlayText(client, g, value, x + CHEST_OVERLAY_W - valueW, y, row.alreadyOpened ? OVERLAY_ESSENCE : (profitCoins >= 0L ? OVERLAY_PROFIT : OVERLAY_LOSS), false);
+	}
+
+	private void drawCroesusOpenRow(Minecraft client, GuiGraphicsExtractor g, CroesusChestRow row, int x, int y, int rank, long profitCoins, ItemStack modifierIcon) {
+		drawOverlayText(client, g, rank + ".", x, y, OVERLAY_MUTED, false);
+		int iconX = x + 16;
+		if (!modifierIcon.isEmpty()) {
+			g.item(modifierIcon, iconX, y - 4);
+			iconX += 18;
+		}
+		ItemStack chestIcon = row.icon.isEmpty() ? new ItemStack(Items.CHEST) : row.icon;
+		g.item(chestIcon, iconX, y - 4);
+		String label = row.displayName;
+		String value = signedCoins(profitCoins);
+		int valueW = client.font.width(value);
+		int nameMaxW = CHEST_OVERLAY_W - (iconX - x) - 20 - valueW - (row.kismetRerolled ? 20 : 0);
+		String visibleLabel = ellipsize(client, label, Math.max(16, nameMaxW));
+		drawOverlayText(client, g, visibleLabel, iconX + 18, y, chestTitleColor(row.displayName), true);
+		if (row.kismetRerolled) {
+			g.item(new ItemStack(Items.FEATHER), iconX + 20 + client.font.width(visibleLabel), y - 4);
+		}
+		drawOverlayText(client, g, value, x + CHEST_OVERLAY_W - valueW, y, profitCoins >= 0L ? OVERLAY_PROFIT : OVERLAY_LOSS, false);
+	}
+
+	private List<CroesusChestRow> currentCroesusChestRows(Minecraft client) {
+		if (!(client.screen instanceof AbstractContainerScreen<?> screen) || client.player == null) return List.of();
+		AbstractContainerMenu menu = client.player.containerMenu;
+		if (menu == null) return List.of();
+
+		Map<String, CroesusChestRow> byTitle = new HashMap<>();
+		ScreenBounds bounds = currentContainerBounds(client);
+		for (int slotIndex = 0; slotIndex < menu.slots.size(); slotIndex++) {
+			Slot slot = menu.slots.get(slotIndex);
+			ItemStack stack = slot.getItem();
+			if (stack.isEmpty()) continue;
+			String canonicalKey = canonicalChestTitleFromStack(stack);
+			if (canonicalKey == null || !isCatacombsRewardChest(canonicalKey)) continue;
+
+			CHEST_ICON_CACHE.putIfAbsent(canonicalKey, stack.copy());
+			DungeonChestOffer offer = cachedChestOffersByTitle.get(canonicalKey);
+			if (offer == null) continue;
+			List<DungeonLootEntry> entries = offer.lootEntries == null ? List.of() : offer.lootEntries;
+			long value = offer.valueCoins > 0L ? offer.valueCoins : DungeonProfitPricing.calculateLootValue(entries, DrtConfigManager.getConfig());
+			ChestCostBreakdown breakdown = offer.costBreakdown == null ? new ChestCostBreakdown() : offer.costBreakdown;
+			long baseCost = Math.max(0L, breakdown.baseChestCostCoins);
+			long existingModifierCost = Math.max(0L, breakdown.kismetFeatherCostCoins)
+				+ Math.max(0L, breakdown.wheelOfFateCostCoins)
+				+ Math.max(0L, breakdown.kuudraKeyCostCoins);
+			long keyCost = resolveModifierItemCost(ITEM_DUNGEON_CHEST_KEY);
+			boolean kismetRerolled = breakdown.usedKismetFeather;
+			String display = shortChestName(toDisplayChestTitle(canonicalKey));
+			long normalProfit = value - baseCost - existingModifierCost;
+			byTitle.put(canonicalKey, new CroesusChestRow(canonicalKey, display, stack.copy(), slotIndex, bounds.left + slot.x, bounds.top + slot.y, normalProfit, keyCost > 0L ? normalProfit - keyCost : Long.MIN_VALUE, offer.alreadyOpened, kismetRerolled));
+		}
+
+		List<CroesusChestRow> rows = new ArrayList<>();
+		for (String title : List.of("BEDROCK CHEST", "OBSIDIAN CHEST", "EMERALD CHEST", "DIAMOND CHEST", "GOLD CHEST", "WOOD CHEST")) {
+			CroesusChestRow row = byTitle.get(title);
+			if (row != null) rows.add(row);
+		}
+		return rows;
+	}
+
+	private CroesusChestRow bestNormalChest(List<CroesusChestRow> rows) {
+		CroesusChestRow best = null;
+		for (CroesusChestRow row : rows) {
+			if (row.alreadyOpened) continue;
+			if (best == null || row.normalProfitCoins > best.normalProfitCoins) best = row;
+		}
+		return best;
+	}
+
+	private CroesusChestRow bestKeyChest(List<CroesusChestRow> rows, CroesusChestRow bestNormal) {
+		CroesusChestRow best = null;
+		for (CroesusChestRow row : rows) {
+			if (row.alreadyOpened) continue;
+			if (bestNormal != null && row.canonicalTitle.equals(bestNormal.canonicalTitle)) continue;
+			if (row.keyProfitCoins <= 0L || row.keyProfitCoins == Long.MIN_VALUE) continue;
+			if (best == null || row.keyProfitCoins > best.keyProfitCoins) best = row;
+		}
+		return best;
+	}
+
+	private CroesusChestRow hoveredChestSlot(List<CroesusChestRow> rows, int mouseX, int mouseY) {
+		for (CroesusChestRow row : rows) {
+			if (pointInRect(mouseX, mouseY, row.slotX, row.slotY, 16, 16)) return row;
+		}
+		return null;
+	}
+
+	private void drawSlotHighlight(GuiGraphicsExtractor g, CroesusChestRow row, int color, boolean hovered) {
+		drawSlotHighlight(g, row.slotX, row.slotY, color, hovered);
+	}
+
+	private void drawSlotHighlight(GuiGraphicsExtractor g, int slotX, int slotY, int color, boolean hovered) {
+		int fillColor = withAlpha(color, hovered ? 0x88 : 0x24);
+		int borderColor = withAlpha(color, hovered ? 0xFF : 0xCC);
+		int left = slotX - 1;
+		int top = slotY - 1;
+		int right = slotX + 17;
+		int bottom = slotY + 17;
+		g.fill(left, top, right, bottom, fillColor);
+		g.fill(left, top, right, top + 1, borderColor);
+		g.fill(left, bottom - 1, right, bottom, borderColor);
+		g.fill(left, top, left + 1, bottom, borderColor);
+		g.fill(right - 1, top, right, bottom, borderColor);
+	}
+
+	private boolean pointInRect(int mouseX, int mouseY, int x, int y, int width, int height) {
+		return mouseX >= x && mouseY >= y && mouseX < x + width && mouseY < y + height;
+	}
+
+	private int withAlpha(int color, int alpha) {
+		return (color & 0x00FFFFFF) | ((alpha & 0xFF) << 24);
+	}
+
+	private String signedCoins(long coins) {
+		return coins >= 0L ? "+" + formatCoins(coins) : formatCoins(coins);
+	}
+
+	private String shortChestName(String title) {
+		if (title == null) return "Chest";
+		return title.replace(" Chest", "").trim();
+	}
+
+	private void extractRenderStateChestBreakdownOverlay(Minecraft client, GuiGraphicsExtractor g, int mouseX, int mouseY) {
+		OverlayChestData data = currentOverlayChestData(client);
+		if (data == null) return;
+
+		int rowH = 14;
+		int lineH = client.font.lineHeight + 2;
+		List<DungeonLootEntry> itemEntries = new ArrayList<>();
+		List<DungeonLootEntry> essenceEntries = new ArrayList<>();
+		for (DungeonLootEntry entry : data.entries) {
+			if (isEssenceEntry(entry)) essenceEntries.add(entry);
+			else itemEntries.add(entry);
+		}
+		int itemRows = Math.min(4, itemEntries.size());
+		int hiddenRows = Math.max(0, itemEntries.size() - itemRows);
+		int screenW = client.getWindow().getGuiScaledWidth();
+		int screenH = client.getWindow().getGuiScaledHeight();
+		ScreenBounds bounds = currentContainerBounds(client);
+		int x = Math.min(screenW - CHEST_OVERLAY_W - 4, bounds.right() + 8);
+		if (x < bounds.right() + 2) x = Math.max(4, bounds.right() + 2);
+		int y = Math.max(6, Math.min(screenH - 12, bounds.top() + 2));
+
+		int cursorY = y;
+		ItemStack chestIcon = getChestIcon(data.chestTitle);
+		if (chestIcon.isEmpty()) chestIcon = new ItemStack(Items.CHEST);
+		g.item(chestIcon, x, cursorY - 4);
+		drawOverlayText(client, g, data.chestTitle, x + 18, cursorY, chestTitleColor(data.chestTitle), true);
+
+		cursorY += lineH + 8;
+		for (int i = 0; i < itemRows; i++) {
+			cursorY = drawOverlayEntry(client, g, x, cursorY, itemEntries.get(i), rowH);
+		}
+		for (DungeonLootEntry essenceEntry : essenceEntries) {
+			cursorY = drawOverlayEntry(client, g, x, cursorY, essenceEntry, rowH);
+		}
+		if (hiddenRows > 0) {
+			String more = "+" + hiddenRows + " more";
+			drawOverlayText(client, g, more, x + 18, cursorY, OVERLAY_MUTED, false);
+			cursorY += rowH;
+		}
+
+		cursorY += 8;
+		drawOverlayMetric(client, g, x, cursorY, "Value", data.valueCoins, OVERLAY_VALUE, false);
+		cursorY += lineH + 8;
+		drawOverlayMetric(client, g, x, cursorY, "Open Cost", data.breakdown.baseChestCostCoins, OVERLAY_COST, true);
+		cursorY += lineH;
+		if (data.breakdown.usedDungeonChestKey || data.breakdown.dungeonChestKeyCostCoins > 0L) {
+			drawOverlayCostWithIcon(client, g, x, cursorY, "Chest Key", data.breakdown.dungeonChestKeyCostCoins, new ItemStack(Items.TRIPWIRE_HOOK));
+			if (pointInRect(mouseX, mouseY, x, cursorY - 4, CHEST_OVERLAY_W, lineH + 2)) {
+				drawTooltip(client, g, "Click to buy a dungeon chest key", mouseX, mouseY);
+			}
+			cursorY += lineH;
+		}
+		if (data.breakdown.usedKismetFeather || data.breakdown.kismetFeatherCostCoins > 0L) {
+			drawOverlayCostWithIcon(client, g, x, cursorY, "Kismet", data.breakdown.kismetFeatherCostCoins, new ItemStack(Items.FEATHER));
+			cursorY += lineH;
+		}
+		if (data.breakdown.usedWheelOfFate || data.breakdown.wheelOfFateCostCoins > 0L) {
+			drawOverlayCostWithIcon(client, g, x, cursorY, "Wheel", data.breakdown.wheelOfFateCostCoins, new ItemStack(Items.CLOCK));
+			cursorY += lineH;
+		}
+		if (data.breakdown.usedKuudraKey || data.breakdown.kuudraKeyCostCoins > 0L) {
+			drawOverlayCostWithIcon(client, g, x, cursorY, "Kuudra Key", data.breakdown.kuudraKeyCostCoins, new ItemStack(Items.TRIPWIRE_HOOK));
+			cursorY += lineH;
+		}
+		cursorY += 8;
+		drawOverlayMetric(client, g, x, cursorY, "Profit", data.profitCoins, data.profitCoins >= 0L ? OVERLAY_PROFIT : OVERLAY_LOSS, false);
+	}
+
+	private int drawOverlayEntry(Minecraft client, GuiGraphicsExtractor g, int x, int y, DungeonLootEntry entry, int rowH) {
+		long unitPrice = DungeonProfitPricing.resolveUnitPrice(entry, DrtConfigManager.getConfig());
+		long totalPrice = unitPrice * Math.max(1, entry.quantity);
+		ItemStack icon = overlayItemIcon(entry.itemId);
+		if (icon.isEmpty()) icon = new ItemStack(Items.PAPER);
+		g.item(icon, x, y - 4);
+		OverlayItemDisplay display = overlayItemDisplay(entry);
+		String label = display.name;
+		String quantityText = entry.quantity > 1 ? " x" + entry.quantity : "";
+		String priceText = formatCoins(totalPrice);
+		int priceW = client.font.width(priceText);
+		int quantityW = client.font.width(quantityText);
+		String visibleLabel = ellipsize(client, label, CHEST_OVERLAY_W - 28 - priceW - quantityW);
+		drawOverlayText(client, g, visibleLabel, x + 18, y, display.color, display.bold);
+		if (!quantityText.isEmpty()) {
+			drawOverlayText(client, g, quantityText, x + 18 + client.font.width(visibleLabel), y, OVERLAY_MUTED, false);
+		}
+		drawOverlayText(client, g, priceText, x + CHEST_OVERLAY_W - priceW, y, OVERLAY_VALUE, false);
+		return y + rowH;
+	}
+
+	private void drawOverlayMetric(Minecraft client, GuiGraphicsExtractor g, int x, int y, String label, long coins, int valueColor, boolean negative) {
+		String value = (negative && coins > 0L ? "-" : "") + formatCoins(coins);
+		drawOverlayText(client, g, label, x, y, OVERLAY_MUTED, false);
+		drawOverlayText(client, g, value, x + CHEST_OVERLAY_W - client.font.width(value), y, valueColor, false);
+	}
+
+	private void drawOverlayCostWithIcon(Minecraft client, GuiGraphicsExtractor g, int x, int y, String label, long coins, ItemStack icon) {
+		g.item(icon, x, y - 4);
+		String value = coins > 0L ? "-" + formatCoins(coins) : "-?";
+		drawOverlayText(client, g, label, x + 18, y, OVERLAY_MUTED, false);
+		drawOverlayText(client, g, value, x + CHEST_OVERLAY_W - client.font.width(value), y, OVERLAY_COST, false);
+	}
+
+	private void drawOverlayText(Minecraft client, GuiGraphicsExtractor g, String text, int x, int y, int color, boolean bold) {
+		if (!bold) {
+			g.text(client.font, text, x, y, color, true);
+			return;
+		}
+		g.text(client.font, Component.literal(text).withStyle(ChatFormatting.BOLD), x, y, color, true);
+	}
+
+	private ScreenBounds currentContainerBounds(Minecraft client) {
+		if (!(client.screen instanceof AbstractContainerScreen<?> screen)) {
+			int width = 176;
+			int height = 166;
+			return new ScreenBounds((client.getWindow().getGuiScaledWidth() - width) / 2, (client.getWindow().getGuiScaledHeight() - height) / 2, width, height);
+		}
+		if (screen instanceof AbstractContainerScreenAccessor accessor) {
+			return new ScreenBounds(accessor.drt$getLeftPos(), accessor.drt$getTopPos(), accessor.drt$getImageWidth(), accessor.drt$getImageHeight());
+		}
+		int width = reflectedScreenInt(screen, 176, "imageWidth", "backgroundWidth");
+		int height = reflectedScreenInt(screen, 166, "imageHeight", "backgroundHeight");
+		int left = reflectedScreenInt(screen, (client.getWindow().getGuiScaledWidth() - width) / 2, "leftPos", "x");
+		int top = reflectedScreenInt(screen, (client.getWindow().getGuiScaledHeight() - height) / 2, "topPos", "y");
+		return new ScreenBounds(left, top, width, height);
+	}
+
+	private int reflectedScreenInt(Object target, int fallback, String... names) {
+		Class<?> type = target.getClass();
+		while (type != null) {
+			for (String name : names) {
+				try {
+					java.lang.reflect.Field field = type.getDeclaredField(name);
+					field.setAccessible(true);
+					return field.getInt(target);
+				} catch (ReflectiveOperationException | RuntimeException ignored) {
+				}
+			}
+			type = type.getSuperclass();
+		}
+		return fallback;
+	}
+
+	private List<CroesusRunSlot> currentCroesusMainMenuUnopenedSlots(Minecraft client) {
+		if (!(client.screen instanceof AbstractContainerScreen<?> screen) || client.player == null) return List.of();
+		String normalizedTitle = normalize(screen.getTitle().getString());
+		if (!isCroesusMainMenuTitle(normalizedTitle)) return List.of();
+
+		AbstractContainerMenu menu = client.player.containerMenu;
+		if (menu == null) return List.of();
+		ScreenBounds bounds = currentContainerBounds(client);
+		List<CroesusRunSlot> slots = new ArrayList<>();
+		for (int slotIndex = 0; slotIndex < menu.slots.size(); slotIndex++) {
+			Slot slot = menu.slots.get(slotIndex);
+			ItemStack stack = slot.getItem();
+			if (stack.isEmpty()) continue;
+			if (!croesusRunHasUnopenedChest(stack)) continue;
+			slots.add(new CroesusRunSlot(bounds.left + slot.x, bounds.top + slot.y));
+		}
+		return slots;
+	}
+
+	private boolean isCroesusMainMenuTitle(String normalizedTitle) {
+		if (normalizedTitle == null || normalizedTitle.isBlank()) return false;
+		return normalizedTitle.equals("CROESUS") || normalizedTitle.equals("CROESUS CHEST") || normalizedTitle.equals("CROESUS MENU");
+	}
+
+	private boolean croesusRunHasUnopenedChest(ItemStack stack) {
+		for (String line : cleanLoreLines(stack)) {
+			String normalized = normalize(line);
+			if (lineClearlyIndicatesUnopenedChest(normalized)) return true;
+		}
+		return false;
+	}
+
+	private boolean lineClearlyIndicatesUnopenedChest(String normalized) {
+		if (normalized == null || !normalized.contains("CHEST")) return false;
+		if (normalized.contains("OPENED CHEST:")) return false;
+		if (normalized.contains("NO CHESTS OPENED YET")) return true;
+		if (normalized.contains("NO UNOPENED") || normalized.contains("NO UNCLAIMED") || normalized.contains("0 UNOPENED") || normalized.contains("0 UNCLAIMED")) return false;
+		return normalized.contains("UNOPENED")
+			|| normalized.contains("UNCLAIMED")
+			|| normalized.contains("AVAILABLE")
+			|| normalized.contains("OPENABLE")
+			|| normalized.contains("NOT OPENED");
+	}
+
+	private OverlayChestData currentOverlayChestData(Minecraft client) {
+		if (!(client.screen instanceof AbstractContainerScreen<?> screen)) return null;
+		String normalizedTitle = normalize(screen.getTitle().getString());
+		String canonicalTitle = canonicalRewardChestTitle(normalizedTitle);
+		if (canonicalTitle == null) {
+			if (!pendingLootChestAssigned || pendingLootChestTitle.isBlank()) return null;
+			canonicalTitle = pendingLootChestTitle.toUpperCase(Locale.ROOT);
+		}
+		DungeonChestOffer offer = cachedChestOffersByTitle.get(canonicalTitle);
+		if (offer == null && pendingLootChestAssigned && toDisplayChestTitle(canonicalTitle).equalsIgnoreCase(pendingLootChestTitle)) {
+			offer = new DungeonChestOffer(pendingLootChestTitle, pendingLootCostBreakdown, 0L, pendingLootEntries);
+		}
+		if (offer == null || offer.lootEntries == null || offer.lootEntries.isEmpty()) return null;
+
+		ChestCostBreakdown breakdown = offer.costBreakdown == null ? new ChestCostBreakdown() : offer.costBreakdown.copy();
+		if (pendingLootChestAssigned && toDisplayChestTitle(canonicalTitle).equalsIgnoreCase(pendingLootChestTitle)) {
+			ChestCostBreakdown pending = pendingLootCostBreakdown == null ? new ChestCostBreakdown() : pendingLootCostBreakdown.copy();
+			if (breakdown.baseChestCostCoins <= 0L) breakdown.baseChestCostCoins = pending.baseChestCostCoins;
+			if (pending.usedDungeonChestKey) {
+				breakdown.usedDungeonChestKey = true;
+				breakdown.dungeonChestKeyCostCoins = pending.dungeonChestKeyCostCoins;
+			}
+			if (pending.usedKismetFeather) {
+				breakdown.usedKismetFeather = true;
+				breakdown.kismetRerolledChestOpened = pending.kismetRerolledChestOpened;
+				breakdown.kismetFeatherCostCoins = pending.kismetFeatherCostCoins;
+			}
+			if (pending.usedWheelOfFate) {
+				breakdown.usedWheelOfFate = true;
+				breakdown.wheelOfFateCostCoins = pending.wheelOfFateCostCoins;
+			}
+		} else if (isCatacombsRewardChest(canonicalTitle) && shouldPreviewArmedKismetForChest(canonicalTitle)) {
+			applyArmedRewardModifiersForPreview(breakdown);
+		}
+		populateKnownModifierCosts(breakdown);
+		List<DungeonLootEntry> entries = new ArrayList<>();
+		for (DungeonLootEntry entry : offer.lootEntries) {
+			if (entry != null) entries.add(entry.copy());
+		}
+		long value = offer.valueCoins > 0L ? offer.valueCoins : DungeonProfitPricing.calculateLootValue(entries, DrtConfigManager.getConfig());
+		return new OverlayChestData(toDisplayChestTitle(canonicalTitle), entries, breakdown, value, value - breakdown.totalCostCoins());
+	}
+
+	private void applyArmedRewardModifiersForPreview(ChestCostBreakdown breakdown) {
+		if (breakdown == null) return;
+		if (nextOpenedChestUsesDungeonChestKey) breakdown.usedDungeonChestKey = true;
+		if (nextOpenedChestUsesKismetFeather || rewardMenuKismetRerollPending) {
+			breakdown.usedKismetFeather = true;
+		}
+		if (nextOpenedChestUsesWheelOfFate) breakdown.usedWheelOfFate = true;
+	}
+
+	private boolean shouldPreviewArmedKismetForChest(String canonicalTitle) {
+		if (!nextOpenedChestUsesKismetFeather && !rewardMenuKismetRerollPending) return false;
+		return rewardMenuKismetRerolledChestTitle != null
+			&& !rewardMenuKismetRerolledChestTitle.isBlank()
+			&& rewardMenuKismetRerolledChestTitle.equals(canonicalTitle);
+	}
+
+	private String canonicalRewardChestTitle(String normalizedTitle) {
+		if (normalizedTitle == null || normalizedTitle.isBlank()) return null;
+		if (REWARD_CHEST_TITLES.contains(normalizedTitle)) return normalizedTitle;
+		String mapped = TIER_NAME_TO_CHEST_TITLE.get(normalizedTitle);
+		if (mapped != null) return mapped;
+		for (String title : REWARD_CHEST_TITLES) {
+			if (normalizedTitle.startsWith(title)) return title;
+			String shortTitle = title.replace(" CHEST", "");
+			if (normalizedTitle.equals(shortTitle) || normalizedTitle.startsWith(shortTitle + " ")) return title;
+		}
+		return null;
+	}
+
+	private ItemStack overlayItemIcon(String itemId) {
+		if (itemId == null || itemId.isBlank()) return ItemStack.EMPTY;
+		String id = normalizeOverlayItemId(itemId.toUpperCase(Locale.ROOT));
+		ItemStack cached = getItemIcon(id);
+		if (!cached.isEmpty()) return cached;
+		if (id.equals(ITEM_DUNGEON_CHEST_KEY)) return new ItemStack(Items.TRIPWIRE_HOOK);
+		if (id.equals(ITEM_KISMET_FEATHER)) return new ItemStack(Items.FEATHER);
+		if (id.equals(ITEM_WHEEL_OF_FATE)) return new ItemStack(Items.CLOCK);
+		if (id.startsWith("ENCHANTMENT_")) return new ItemStack(Items.ENCHANTED_BOOK);
+		if (id.startsWith("ESSENCE_")) return new ItemStack(Items.NETHER_STAR);
+		if (id.startsWith("SHARD_")) return new ItemStack(Items.AMETHYST_SHARD);
+		if (id.equals("FUMING_POTATO_BOOK")) return new ItemStack(Items.BOOK);
+		if (id.equals("RECOMBOBULATOR_3000")) return new ItemStack(Items.GOLD_INGOT);
+		if (id.contains("SWORD") || id.contains("DAGGER") || id.contains("BLADE")) return new ItemStack(Items.IRON_SWORD);
+		if (id.contains("BOW")) return new ItemStack(Items.BOW);
+		if (id.contains("HELMET")) return new ItemStack(Items.LEATHER_HELMET);
+		if (id.contains("CHESTPLATE")) return new ItemStack(Items.LEATHER_CHESTPLATE);
+		if (id.contains("LEGGINGS")) return new ItemStack(Items.LEATHER_LEGGINGS);
+		if (id.contains("BOOTS")) return new ItemStack(Items.LEATHER_BOOTS);
+		NeuItemResolver.enqueue(id);
+		ItemStack resolved = NeuItemResolver.getResolvedStack(id);
+		if (resolved != null && !resolved.isEmpty() && !resolved.is(Items.BARRIER)) return resolved;
+		return ItemStack.EMPTY;
+	}
+
+	private String normalizeOverlayItemId(String id) {
+		return switch (id) {
+			case "NECRONS_HANDLE" -> "NECRON_HANDLE";
+			case "SCARFS_STUDIES" -> "SCARF_STUDIES";
+			case "SPIRIT_STONE" -> "SPIRIT_DECOY";
+			case "SPIRIT_BOOTS" -> "THORNS_BOOTS";
+			case "WARPED_STONE" -> "AOTE_STONE";
+			case "ADAPTIVE_BLADE" -> "STONE_BLADE";
+			case "WITHER_CLOAK_SWORD" -> "WITHER_CLOAK";
+			default -> id;
+		};
+	}
+
+	private OverlayItemDisplay overlayItemDisplay(DungeonLootEntry entry) {
+		String rawName = entry == null || entry.rawName == null ? "Unknown Item" : entry.rawName.trim();
+		String itemId = entry == null || entry.itemId == null ? "" : entry.itemId.trim().toUpperCase(Locale.ROOT);
+		Matcher bookMatcher = ENCHANTED_BOOK_PATTERN.matcher(rawName);
+		if (bookMatcher.matches()) {
+			String enchantName = bookMatcher.group(1).trim();
+			String displayName = enchantName + " " + romanToArabic(bookMatcher.group(2));
+			return new OverlayItemDisplay(displayName, isUltimateEnchantName(enchantName, itemId), isUltimateEnchantName(enchantName, itemId) ? OVERLAY_ULTIMATE : OVERLAY_BOOK);
+		}
+		if (itemId.startsWith("ENCHANTMENT_")) {
+			String displayName = enchantDisplayFromItemId(itemId);
+			return new OverlayItemDisplay(displayName, isUltimateEnchantName(displayName, itemId), isUltimateEnchantName(displayName, itemId) ? OVERLAY_ULTIMATE : OVERLAY_BOOK);
+		}
+		String upper = rawName.toUpperCase(Locale.ROOT);
+		if (upper.contains("ESSENCE") || itemId.startsWith("ESSENCE_")) {
+			return new OverlayItemDisplay(rawName, false, OVERLAY_ESSENCE);
+		}
+		return new OverlayItemDisplay(rawName, false, OVERLAY_TEXT);
+	}
+
+	private boolean isEssenceEntry(DungeonLootEntry entry) {
+		if (entry == null) return false;
+		String rawName = entry.rawName == null ? "" : entry.rawName.toUpperCase(Locale.ROOT);
+		String itemId = entry.itemId == null ? "" : entry.itemId.toUpperCase(Locale.ROOT);
+		return rawName.contains("ESSENCE") || itemId.startsWith("ESSENCE_");
+	}
+
+	private boolean isUltimateEnchantName(String displayName, String itemId) {
+		if (itemId != null && itemId.startsWith("ENCHANTMENT_ULTIMATE_")) return true;
+		String normalized = toItemIdPart(displayName);
+		return ULTIMATE_ENCHANTS.contains(normalized);
+	}
+
+	private String enchantDisplayFromItemId(String itemId) {
+		String id = itemId;
+		if (id.startsWith("ENCHANTMENT_ULTIMATE_")) id = id.substring("ENCHANTMENT_ULTIMATE_".length());
+		else if (id.startsWith("ENCHANTMENT_")) id = id.substring("ENCHANTMENT_".length());
+		String[] parts = id.split("_");
+		if (parts.length == 0) return itemId;
+		String level = parts[parts.length - 1];
+		StringBuilder name = new StringBuilder();
+		for (int i = 0; i < parts.length - 1; i++) {
+			if (parts[i].isBlank()) continue;
+			if (name.length() > 0) name.append(' ');
+			String part = parts[i].toLowerCase(Locale.ROOT);
+			name.append(Character.toUpperCase(part.charAt(0))).append(part.substring(1));
+		}
+		if (name.length() == 0) return itemId;
+		return name + " " + level;
+	}
+
+	private String romanToArabic(String roman) {
+		int value = parseRomanNumeral(roman);
+		return value > 0 ? Integer.toString(value) : roman;
+	}
+
+	private int parseRomanNumeral(String roman) {
+		if (roman == null || roman.isBlank()) return -1;
+		String normalized = roman.trim().toUpperCase(Locale.ROOT);
+		int total = 0;
+		int previous = 0;
+		for (int i = normalized.length() - 1; i >= 0; i--) {
+			int value = switch (normalized.charAt(i)) {
+				case 'I' -> 1;
+				case 'V' -> 5;
+				case 'X' -> 10;
+				default -> -1;
+			};
+			if (value <= 0) return -1;
+			if (value < previous) total -= value;
+			else {
+				total += value;
+				previous = value;
+			}
+		}
+		return total;
+	}
+
+	private String ellipsize(Minecraft client, String text, int maxWidth) {
+		if (client.font.width(text) <= maxWidth) return text;
+		String suffix = "...";
+		int suffixW = client.font.width(suffix);
+		String trimmed = text;
+		while (!trimmed.isEmpty() && client.font.width(trimmed) + suffixW > maxWidth) {
+			trimmed = trimmed.substring(0, trimmed.length() - 1);
+		}
+		return trimmed.isEmpty() ? suffix : trimmed + suffix;
+	}
+
+	private int chestTitleColor(String title) {
+		String upper = title == null ? "" : title.toUpperCase(Locale.ROOT);
+		if (upper.contains("WOOD") || upper.contains("FREE")) return 0xFFB88554;
+		if (upper.contains("GOLD")) return 0xFFFFD85A;
+		if (upper.contains("DIAMOND")) return 0xFF6FE7FF;
+		if (upper.contains("EMERALD")) return 0xFF55FF88;
+		if (upper.contains("OBSIDIAN")) return 0xFFAA74FF;
+		if (upper.contains("BEDROCK")) return 0xFFFF74D4;
+		return OVERLAY_TEXT;
+	}
+
+	private boolean handleKuudraLine(String cleaned, long now) {
+		if (cleaned == null || cleaned.isBlank()) return false;
+
+		DungeonFloor lineTier = detectKuudraTierFromLine(cleaned, insideKuudra || isCurrentFloorKuudra());
+		if (lineTier != DungeonFloor.UNKNOWN) currentFloor = lineTier;
+
+		if (isKuudraEntryMessage(cleaned)) {
+			beginNewKuudraRun(now, lineTier != DungeonFloor.UNKNOWN ? lineTier : currentFloor);
+			return false;
+		}
+
+		if (!isKuudraCompletionMessage(cleaned)) return false;
+
+		DungeonFloor tier = lineTier != DungeonFloor.UNKNOWN ? lineTier : (isCurrentFloorKuudra() ? currentFloor : DungeonFloor.UNKNOWN);
+		if (!currentRunActive && !runCountedThisDungeon) {
+			beginNewKuudraRun(now, tier);
+		}
+		insideKuudra = true;
+		kuudraSignalUntilMillis = now + DUNGEON_SIGNAL_GRACE_MS;
+		recordCompletedRun(now, tier, "100%");
+		return true;
 	}
 
 	private List<String> splitMessageLines(String rawText) {
@@ -999,6 +1847,7 @@ public final class DungeonRunTrackerFeature {
 			lastLevelIdentity = currentLevel;
 			resetDungeonRuntimeState();
 			inDungeonHub = false;
+			inCrimsonIsle = false;
 		}
 
 		if (refreshCountdown > 0) {
@@ -1009,19 +1858,32 @@ public final class DungeonRunTrackerFeature {
 		refreshCountdown = REFRESH_INTERVAL_TICKS;
 		List<String> scoreboardLines = readScoreboardLines(client);
 		List<String> tabLines = TabReader.readNormalizedLines(client);
-		boolean wasDungeon = insideDungeon;
+		boolean wasKuudra = insideKuudra;
 		inDungeonHub = isDungeonHub(scoreboardLines) || isDungeonHub(tabLines);
+		inCrimsonIsle = isCrimsonIsle(scoreboardLines) || isCrimsonIsle(tabLines);
 		insideDungeon = isDungeon(scoreboardLines) || isDungeonTab(tabLines) || now <= dungeonSignalUntilMillis;
+		insideKuudra = isKuudra(scoreboardLines) || isKuudra(tabLines) || now <= kuudraSignalUntilMillis;
 
-		if (!insideDungeon) {
+		if (!insideDungeon && !insideKuudra) {
 			finishCurrentRunTiming(now);
 			resetDungeonRuntimeState();
 			return;
 		}
 
-		DungeonFloor detected = detectFloorFromLines(scoreboardLines);
-		if (detected == DungeonFloor.UNKNOWN) detected = detectFloorFromLines(tabLines);
-		if (detected != DungeonFloor.UNKNOWN && detected != currentFloor) currentFloor = detected;
+		if (insideDungeon) {
+			DungeonFloor detected = detectFloorFromLines(scoreboardLines);
+			if (detected == DungeonFloor.UNKNOWN) detected = detectFloorFromLines(tabLines);
+			if (detected != DungeonFloor.UNKNOWN && detected != currentFloor) currentFloor = detected;
+		}
+
+		if (insideKuudra) {
+			DungeonFloor detected = detectKuudraTierFromLines(scoreboardLines);
+			if (detected == DungeonFloor.UNKNOWN) detected = detectKuudraTierFromLines(tabLines);
+			if (detected != DungeonFloor.UNKNOWN && detected != currentFloor) currentFloor = detected;
+			if (!wasKuudra && !currentRunActive && !runCountedThisDungeon) {
+				beginNewKuudraRun(now, detected != DungeonFloor.UNKNOWN ? detected : currentFloor);
+			}
+		}
 	}
 
 	private void captureRewardChestCosts(Minecraft client) {
@@ -1029,18 +1891,20 @@ public final class DungeonRunTrackerFeature {
 
 		String normalizedTitle = normalize(screen.getTitle().getString());
 
-		if (REWARD_CHEST_TITLES.contains(normalizedTitle) && lootWindowUntilMillis > 0L) {
+		if (REWARD_CHEST_TITLES.contains(normalizedTitle)) {
+			long now = System.currentTimeMillis();
+			if ((lootWindowUntilMillis <= 0L || now > lootWindowUntilMillis) && (insideDungeon || insideKuudra || isCurrentFloorKuudra())) {
+				startAdHocLootWindow(now);
+			}
+			if (lootWindowUntilMillis <= 0L || now > lootWindowUntilMillis) return;
 			String screenKey = "opened#" + normalizedTitle + "#" + client.player.containerMenu.containerId;
+			refreshRewardModifierScan(client.player.containerMenu, screenKey, now);
+			if (lastRewardModifierScanHadKeyRequirement) markDungeonChestKeyUsed();
+			if (lastRewardModifierScanHadKismetMarker) markKismetFeatherUsed();
 			if (scannedRewardScreens.add(screenKey)) {
-				pendingLootChestTitle = toDisplayChestTitle(normalizedTitle);
-				CachedChestData cached = cachedChestDataByTitle.get(normalizedTitle);
-				if (cached != null) {
-					pendingLootChestCostCoins = cached.costCoins;
-					pendingLootSeededFromGui = false;
-					lootCollectionUntilMillis = System.currentTimeMillis() + LOOT_COLLECTION_MS;
-				} else {
-					pendingLootChestCostCoins = 0L;
-				}
+				DungeonChestOffer cached = cachedChestOffersByTitle.get(normalizedTitle);
+				assignPendingOpenedChest(normalizedTitle, cached);
+				if (cached != null) lootCollectionUntilMillis = now + LOOT_COLLECTION_MS;
 			}
 			return;
 		}
@@ -1051,42 +1915,86 @@ public final class DungeonRunTrackerFeature {
 		if (menu == null) return;
 
 		String screenKey = normalizedTitle + "#" + menu.containerId;
-		if (!scannedRewardScreens.add(screenKey)) return;
+		long now = System.currentTimeMillis();
+		boolean firstScan = scannedRewardScreens.add(screenKey);
+		boolean dueScan = firstScan || !screenKey.equals(lastRewardModifierScanKey) || now - lastRewardModifierScanMillis >= REWARD_MODIFIER_SCAN_INTERVAL_MS;
+		if (!dueScan) return;
+		refreshRewardModifierScan(menu, screenKey, now);
+		if (lastRewardModifierScanHadKeyRequirement) markDungeonChestKeyUsed();
+		if (lastRewardModifierScanHadKismetMarker) armNextOpenedKismetReroll();
 
 		DungeonFloor titleFloor = detectFloorFromLine(normalizedTitle);
 		if (titleFloor != DungeonFloor.UNKNOWN && titleFloor != currentFloor) currentFloor = titleFloor;
 
-		for (int slotIndex = 0; slotIndex < menu.slots.size(); slotIndex++) {
-			ItemStack stack = menu.getSlot(slotIndex).getItem();
-			if (stack.isEmpty()) continue;
-			String chestTitle = normalize(cleanText(stack.getHoverName().getString()));
-			String canonicalKey = TIER_NAME_TO_CHEST_TITLE.get(chestTitle);
-			if (canonicalKey == null) {
-				for (String t : REWARD_CHEST_TITLES) {
-					if (chestTitle.startsWith(t)) { canonicalKey = t; break; }
-				}
-			}
-			if (canonicalKey == null) continue;
-			CHEST_ICON_CACHE.putIfAbsent(canonicalKey, stack.copy());
-			if (cachedChestDataByTitle.containsKey(canonicalKey)) continue;
-			CachedChestData data = parseChestData(stack);
-			cachedChestDataByTitle.put(canonicalKey, data);
-		}
+		updateCachedRewardChestOffers(menu);
 
-		long now = System.currentTimeMillis();
 		if (lootWindowUntilMillis <= 0L || now > lootWindowUntilMillis) startAdHocLootWindow(now);
 	}
 
-	private CachedChestData parseChestData(ItemStack stack) {
+	private void refreshRewardModifierScan(AbstractContainerMenu menu, String screenKey, long now) {
+		if (menu == null) return;
+		if (screenKey.equals(lastRewardModifierScanKey) && now - lastRewardModifierScanMillis < REWARD_MODIFIER_SCAN_INTERVAL_MS) return;
+		lastRewardModifierScanKey = screenKey;
+		lastRewardModifierScanMillis = now;
+		lastRewardModifierScanHadKeyRequirement = screenHasDungeonChestKeyRequirement(menu);
+		lastRewardModifierScanHadKismetMarker = screenHasKismetRerollMarker(menu);
+	}
+
+	private void updateCachedRewardChestOffers(AbstractContainerMenu menu) {
+		List<String> changedExistingOffers = new ArrayList<>();
+		for (int slotIndex = 0; slotIndex < menu.slots.size(); slotIndex++) {
+			ItemStack stack = menu.getSlot(slotIndex).getItem();
+			if (stack.isEmpty()) continue;
+			String canonicalKey = canonicalChestTitleFromStack(stack);
+			if (canonicalKey == null) continue;
+			int fingerprint = chestOfferFingerprint(stack);
+			Integer previous = cachedChestOfferFingerprintsByTitle.get(canonicalKey);
+			if (previous != null && previous == fingerprint && cachedChestOffersByTitle.containsKey(canonicalKey)) continue;
+			if (previous != null && previous != fingerprint) changedExistingOffers.add(canonicalKey);
+			CHEST_ICON_CACHE.putIfAbsent(canonicalKey, stack.copy());
+			DungeonChestOffer offer = parseChestOffer(canonicalKey, stack);
+			cachedChestOffersByTitle.put(canonicalKey, offer);
+			cachedChestOfferFingerprintsByTitle.put(canonicalKey, fingerprint);
+		}
+		if ((nextOpenedChestUsesKismetFeather || rewardMenuKismetRerollPending)
+			&& rewardMenuKismetRerolledChestTitle.isBlank()
+			&& changedExistingOffers.size() == 1) {
+			rewardMenuKismetRerolledChestTitle = changedExistingOffers.get(0);
+		}
+	}
+
+	private String canonicalChestTitleFromStack(ItemStack stack) {
+		if (stack == null || stack.isEmpty()) return null;
+		String chestTitle = normalize(cleanText(stack.getHoverName().getString()));
+		String canonicalKey = TIER_NAME_TO_CHEST_TITLE.get(chestTitle);
+		if (canonicalKey != null) return canonicalKey;
+		for (String title : REWARD_CHEST_TITLES) {
+			if (chestTitle.startsWith(title)) return title;
+		}
+		return null;
+	}
+
+	private int chestOfferFingerprint(ItemStack stack) {
+		int hash = cleanText(stack.getHoverName().getString()).hashCode();
+		for (String line : cleanLoreLines(stack)) {
+			if (lineIndicatesKismetRerollState(normalize(line))) continue;
+			hash = 31 * hash + line.hashCode();
+		}
+		return hash;
+	}
+
+	private DungeonChestOffer parseChestOffer(String normalizedTitle, ItemStack stack) {
 		List<String> lore = cleanLoreLines(stack);
 		long costCoins = 0L;
 		long valueCoins = 0L;
+		boolean alreadyOpened = false;
 		List<DungeonLootEntry> entries = new ArrayList<>();
 
 		Long parsedCost = parseChestCost(stack);
 		if (parsedCost != null) costCoins = parsedCost;
 		for (int i = 0; i < lore.size(); i++) {
 			String line = lore.get(i);
+			if (lineIndicatesAlreadyOpened(line)) alreadyOpened = true;
 			if (line.regionMatches(true, 0, "Value:", 0, 6)) {
 				Long v = parseCoins(line.substring(6).trim());
 				if (v == null && i + 1 < lore.size()) v = parseCoins(lore.get(i + 1));
@@ -1122,7 +2030,259 @@ public final class DungeonRunTrackerFeature {
 				entries.add(new DungeonLootEntry(itemName, itemId, quantity));
 			}
 		}
-		return new CachedChestData(costCoins, entries);
+		ChestCostBreakdown breakdown = new ChestCostBreakdown(costCoins);
+		applyModifierLoreHints(lore, breakdown);
+		if (isKuudraPaidRewardChest(normalizedTitle)) {
+			breakdown.usedKuudraKey = true;
+		}
+		populateKnownModifierCosts(breakdown);
+		DungeonChestOffer offer = new DungeonChestOffer(toDisplayChestTitle(normalizedTitle), breakdown, valueCoins, entries);
+		offer.alreadyOpened = alreadyOpened;
+		offer.normalize();
+		return offer;
+	}
+
+	private void assignPendingOpenedChest(String normalizedTitle, DungeonChestOffer offer) {
+		String displayTitle = toDisplayChestTitle(normalizedTitle);
+		boolean samePendingChest = pendingLootChestAssigned
+			&& pendingLootEntries.isEmpty()
+			&& displayTitle.equalsIgnoreCase(pendingLootChestTitle);
+		if (!samePendingChest) {
+			openedRewardChestsInLootWindow++;
+		}
+
+		pendingLootChestAssigned = true;
+		pendingLootChestTitle = displayTitle;
+		pendingLootCostBreakdown = offer == null ? new ChestCostBreakdown() : offer.costBreakdown.copy();
+		if ((nextOpenedChestUsesDungeonChestKey || openedRewardChestsInLootWindow > 1) && isCatacombsRewardChest(normalizedTitle)) {
+			pendingLootCostBreakdown.usedDungeonChestKey = true;
+			nextOpenedChestUsesDungeonChestKey = false;
+		}
+		if (shouldAssignArmedKismetToOpenedChest(normalizedTitle)) {
+			pendingLootCostBreakdown.usedKismetFeather = true;
+			pendingLootCostBreakdown.kismetRerolledChestOpened = true;
+			nextOpenedChestUsesKismetFeather = false;
+			rewardMenuKismetRerollPending = false;
+			rewardMenuKismetRerolledChestTitle = "";
+		}
+		if (nextOpenedChestUsesWheelOfFate) {
+			pendingLootCostBreakdown.usedWheelOfFate = true;
+			nextOpenedChestUsesWheelOfFate = false;
+		}
+		if (isKuudraPaidRewardChest(normalizedTitle)) {
+			pendingLootCostBreakdown.usedKuudraKey = true;
+		}
+		populateKnownModifierCosts(pendingLootCostBreakdown);
+		pendingLootSeededFromGui = false;
+	}
+
+	private boolean shouldAssignArmedKismetToOpenedChest(String normalizedTitle) {
+		if (!nextOpenedChestUsesKismetFeather && !rewardMenuKismetRerollPending) return false;
+		if (rewardMenuKismetRerolledChestTitle == null || rewardMenuKismetRerolledChestTitle.isBlank()) return true;
+		return rewardMenuKismetRerolledChestTitle.equals(normalizedTitle);
+	}
+
+	private boolean isCatacombsRewardChest(String normalizedTitle) {
+		if (normalizedTitle == null || normalizedTitle.isBlank()) return false;
+		if (!REWARD_CHEST_TITLES.contains(normalizedTitle)) return false;
+		return !normalizedTitle.equals("FREE CHEST") && !normalizedTitle.equals("PAID CHEST") && !isCurrentFloorKuudra();
+	}
+
+	private boolean isKuudraPaidRewardChest(String normalizedTitle) {
+		if (!isCurrentFloorKuudra()) return false;
+		if (normalizedTitle == null || normalizedTitle.isBlank()) return false;
+		return normalizedTitle.equals("PAID CHEST")
+			|| normalizedTitle.contains("PAID")
+			|| normalizedTitle.contains("REWARD");
+	}
+
+	private void applyModifierLoreHints(List<String> lore, ChestCostBreakdown breakdown) {
+		if (lore == null || lore.isEmpty() || breakdown == null) return;
+		for (String line : lore) {
+			String normalized = normalize(line);
+			if (lineIndicatesKismetRerollState(normalized)) continue;
+			if (lineIndicatesDungeonChestKeyUsed(normalized)) {
+				breakdown.usedDungeonChestKey = true;
+			}
+			if (lineIndicatesDungeonChestKeyRequirement(normalized)) {
+				breakdown.usedDungeonChestKey = true;
+			}
+			if (lineIndicatesKismetUsed(normalized)) {
+				breakdown.usedKismetFeather = true;
+				breakdown.kismetRerolledChestOpened = true;
+			}
+			if (lineIndicatesWheelOfFateUsed(normalized)) {
+				breakdown.usedWheelOfFate = true;
+			}
+		}
+	}
+
+	private boolean handleModifierMessage(String cleaned) {
+		if (lineIndicatesDungeonChestKeyUsed(cleaned)) {
+			markDungeonChestKeyUsed();
+			return true;
+		}
+		if (lineIndicatesKismetUsed(cleaned)) {
+			markKismetFeatherUsed();
+			return true;
+		}
+		if (lineIndicatesKismetRerollState(cleaned)) {
+			markKismetFeatherUsed();
+			return true;
+		}
+		if (lineIndicatesWheelOfFateUsed(cleaned)) {
+			markWheelOfFateUsed();
+			return true;
+		}
+		return false;
+	}
+
+	private boolean lineIndicatesDungeonChestKeyUsed(String normalized) {
+		if (normalized == null || !normalized.contains("DUNGEON CHEST KEY")) return false;
+		return normalized.contains("USED")
+			|| normalized.contains("CONSUMED")
+			|| normalized.contains("OPENED")
+			|| normalized.contains("UNLOCKED")
+			|| normalized.contains("OPEN ANOTHER")
+			|| normalized.contains("EXTRA CHEST");
+	}
+
+	private boolean lineIndicatesDungeonChestKeyRequirement(String normalized) {
+		if (normalized == null || !normalized.contains("DUNGEON CHEST KEY")) return false;
+		return normalized.contains("REQUIRES")
+			|| normalized.contains("REQUIRE")
+			|| normalized.contains("NEEDS")
+			|| normalized.contains("NEED");
+	}
+
+	private boolean lineIndicatesAlreadyOpened(String line) {
+		return normalize(line).contains("ALREADY OPENED");
+	}
+
+	private boolean lineIndicatesKismetUsed(String normalized) {
+		if (normalized == null || !normalized.contains("KISMET")) return false;
+		return normalized.contains("USED")
+			|| normalized.contains("CONSUMED")
+			|| normalized.contains("REROLLED")
+			|| normalized.contains("RE-ROLLED")
+			|| normalized.contains("REROLL USED");
+	}
+
+	private boolean lineIndicatesKismetRerollState(String normalized) {
+		if (normalized == null || normalized.isBlank()) return false;
+		return normalized.contains("YOU ALREADY REROLLED A CHEST")
+			|| normalized.contains("ALREADY REROLLED A CHEST")
+			|| (normalized.contains("REROLL USED") && normalized.contains("KISMET"));
+	}
+
+	private boolean screenHasKismetRerollMarker(AbstractContainerMenu menu) {
+		if (menu == null) return false;
+		for (int slotIndex = 0; slotIndex < menu.slots.size(); slotIndex++) {
+			ItemStack stack = menu.getSlot(slotIndex).getItem();
+			if (stack.isEmpty()) continue;
+			String name = normalize(cleanText(stack.getHoverName().getString()));
+			if (lineIndicatesKismetRerollState(name)) return true;
+			for (String line : cleanLoreLines(stack)) {
+				String normalized = normalize(line);
+				if (lineIndicatesKismetRerollState(normalized)) return true;
+			}
+		}
+		return false;
+	}
+
+	private boolean screenHasDungeonChestKeyRequirement(AbstractContainerMenu menu) {
+		if (menu == null) return false;
+		for (int slotIndex = 0; slotIndex < menu.slots.size(); slotIndex++) {
+			ItemStack stack = menu.getSlot(slotIndex).getItem();
+			if (stack.isEmpty()) continue;
+			String name = normalize(cleanText(stack.getHoverName().getString()));
+			if (lineIndicatesDungeonChestKeyRequirement(name)) return true;
+			for (String line : cleanLoreLines(stack)) {
+				String normalized = normalize(line);
+				if (lineIndicatesDungeonChestKeyRequirement(normalized)) return true;
+			}
+		}
+		return false;
+	}
+
+	private boolean lineIndicatesWheelOfFateUsed(String normalized) {
+		if (normalized == null || !normalized.contains("WHEEL OF FATE")) return false;
+		return normalized.contains("USED")
+			|| normalized.contains("CONSUMED")
+			|| normalized.contains("APPLIED")
+			|| normalized.contains("ACTIVE")
+			|| normalized.contains("REROLLED")
+			|| normalized.contains("RE-ROLLED");
+	}
+
+	private void markDungeonChestKeyUsed() {
+		if (pendingLootChestAssigned) {
+			pendingLootCostBreakdown.usedDungeonChestKey = true;
+			populateKnownModifierCosts(pendingLootCostBreakdown);
+		} else {
+			nextOpenedChestUsesDungeonChestKey = true;
+		}
+	}
+
+	private void markKismetFeatherUsed() {
+		invalidateRewardMenuScans();
+		if (pendingLootChestAssigned) {
+			pendingLootCostBreakdown.usedKismetFeather = true;
+			pendingLootCostBreakdown.kismetRerolledChestOpened = true;
+			nextOpenedChestUsesKismetFeather = false;
+			rewardMenuKismetRerollPending = false;
+			rewardMenuKismetRerolledChestTitle = "";
+			populateKnownModifierCosts(pendingLootCostBreakdown);
+		} else {
+			armNextOpenedKismetReroll();
+		}
+	}
+
+	private void armNextOpenedKismetReroll() {
+		rewardMenuKismetRerollPending = true;
+		nextOpenedChestUsesKismetFeather = true;
+	}
+
+	private void invalidateRewardMenuScans() {
+		scannedRewardScreens.removeIf(key -> !key.startsWith("opened#"));
+	}
+
+	private void markWheelOfFateUsed() {
+		invalidateRewardMenuScans();
+		if (pendingLootChestAssigned) {
+			pendingLootCostBreakdown.usedWheelOfFate = true;
+			populateKnownModifierCosts(pendingLootCostBreakdown);
+		} else {
+			nextOpenedChestUsesWheelOfFate = true;
+		}
+	}
+
+	private void populateKnownModifierCosts(ChestCostBreakdown breakdown) {
+		if (breakdown == null) return;
+		if (breakdown.usedDungeonChestKey && breakdown.dungeonChestKeyCostCoins <= 0L) {
+			breakdown.dungeonChestKeyCostCoins = resolveModifierItemCost(ITEM_DUNGEON_CHEST_KEY);
+		}
+		if (breakdown.usedKismetFeather && breakdown.kismetFeatherCostCoins <= 0L) {
+			breakdown.kismetFeatherCostCoins = resolveModifierItemCost(ITEM_KISMET_FEATHER);
+		}
+		if (breakdown.usedWheelOfFate && breakdown.wheelOfFateCostCoins <= 0L) {
+			breakdown.wheelOfFateCostCoins = resolveModifierItemCost(ITEM_WHEEL_OF_FATE);
+		}
+		if (breakdown.usedKuudraKey && breakdown.kuudraKeyCostCoins <= 0L) {
+			breakdown.kuudraKeyCostCoins = DungeonProfitPricing.resolveKuudraKeyCost(currentKuudraFloorForPricing(), DrtConfigManager.getConfig());
+		}
+		breakdown.normalize();
+	}
+
+	private DungeonFloor currentKuudraFloorForPricing() {
+		if (pendingLootFloor != null && pendingLootFloor.isKuudra()) return pendingLootFloor;
+		if (currentFloor != null && currentFloor.isKuudra()) return currentFloor;
+		return DungeonFloor.UNKNOWN;
+	}
+
+	private long resolveModifierItemCost(String itemId) {
+		long cost = DungeonProfitPricing.resolveModifierCost(itemId, DrtConfigManager.getConfig());
+		return Math.max(0L, cost);
 	}
 
 	private boolean isContentsSectionEnd(String line) {
@@ -1139,15 +2299,6 @@ public final class DungeonRunTrackerFeature {
 		return line.equalsIgnoreCase("FREE")
 			|| line.regionMatches(true, 0, "Value:", 0, 6)
 			|| line.regionMatches(true, 0, "Profit:", 0, 7);
-	}
-
-	private static final class CachedChestData {
-		final long costCoins;
-		final List<DungeonLootEntry> lootEntries;
-		CachedChestData(long costCoins, List<DungeonLootEntry> lootEntries) {
-			this.costCoins = costCoins;
-			this.lootEntries = lootEntries;
-		}
 	}
 
 	private void handleDragging(Minecraft client) {
@@ -1233,7 +2384,7 @@ public final class DungeonRunTrackerFeature {
 		if (!enabled) return false;
 		return switch (hudVisibilityMode) {
 			case GLOBAL -> true;
-			case DEFAULT -> insideDungeon || inDungeonHub;
+			case DEFAULT -> insideDungeon || insideKuudra || inDungeonHub || inCrimsonIsle;
 			case DHUB -> inDungeonHub;
 		};
 	}
@@ -1341,6 +2492,13 @@ public final class DungeonRunTrackerFeature {
 		return line.contains("DUNGEON HUB") || line.contains("DUNGEON_HUB");
 	}
 
+	private boolean isCrimsonIsle(List<String> lines) {
+		for (String line : lines) {
+			if (line.contains("CRIMSON ISLE") || line.contains("CRIMSON ISLES") || line.contains("CRIMSON_ISLE")) return true;
+		}
+		return false;
+	}
+
 	private boolean isDungeonTab(List<String> lines) {
 		for (String line : lines) {
 			if (line.startsWith("AREA:") && !isDungeonHubLine(line) && (line.contains("DUNGEON") || line.contains("CATACOMBS"))) return true;
@@ -1350,6 +2508,53 @@ public final class DungeonRunTrackerFeature {
 				|| line.contains("YOUR MILESTONE:")) return true;
 		}
 		return false;
+	}
+
+	private boolean isKuudra(List<String> lines) {
+		for (String line : lines) {
+			if (line.contains("KUUDRA'S HOLLOW") || line.contains("KUUDRA HOLLOW")) return true;
+			if (line.startsWith("AREA:") && line.contains("KUUDRA")) return true;
+			if (line.contains("KUUDRA DOWN") || line.contains("KUUDRA DEFEATED")) return true;
+			if (line.contains("KUUDRA") && (line.contains("TIER") || line.contains("BASIC") || line.contains("HOT")
+				|| line.contains("BURNING") || line.contains("FIERY") || line.contains("INFERNAL"))) return true;
+		}
+		return false;
+	}
+
+	private DungeonFloor detectKuudraTierFromLines(List<String> lines) {
+		boolean kuudraContext = lines.stream().anyMatch(line -> line.contains("KUUDRA"));
+		for (String line : lines) {
+			DungeonFloor tier = detectKuudraTierFromLine(line, kuudraContext);
+			if (tier != DungeonFloor.UNKNOWN) return tier;
+		}
+		return DungeonFloor.UNKNOWN;
+	}
+
+	private DungeonFloor detectKuudraTierFromLine(String line, boolean kuudraContext) {
+		if (line == null || line.isBlank()) return DungeonFloor.UNKNOWN;
+		boolean hasKuudra = line.contains("KUUDRA");
+
+		Matcher shortMatcher = KUUDRA_SHORT_TIER_PATTERN.matcher(line);
+		if ((hasKuudra || kuudraContext) && shortMatcher.find()) {
+			return kuudraTier(parsePositiveInt(shortMatcher.group(1), -1));
+		}
+
+		Matcher wordMatcher = KUUDRA_TIER_WORD_PATTERN.matcher(line);
+		if ((hasKuudra || kuudraContext || line.startsWith("TIER")) && wordMatcher.find()) {
+			return kuudraTier(parseTierNumber(wordMatcher.group(1)));
+		}
+
+		boolean tierNameContext = line.startsWith("TIER:")
+			|| line.startsWith("TIER ")
+			|| line.contains("KUUDRA'S HOLLOW")
+			|| line.contains("KUUDRA HOLLOW")
+			|| (hasKuudra && !line.contains("CORE"));
+		if (tierNameContext) {
+			for (Map.Entry<String, DungeonFloor> entry : KUUDRA_TIER_NAMES.entrySet()) {
+				if (line.contains(entry.getKey())) return entry.getValue();
+			}
+		}
+		return DungeonFloor.UNKNOWN;
 	}
 
 	private DungeonFloor detectFloorFromLines(List<String> lines) {
@@ -1367,7 +2572,7 @@ public final class DungeonRunTrackerFeature {
 
 	private DungeonFloor detectFloorFromLine(String line, boolean masterContext) {
 		for (DungeonFloor f : DungeonFloor.values()) {
-			if (f == DungeonFloor.UNKNOWN) continue;
+			if (f == DungeonFloor.UNKNOWN || !f.isCatacombs()) continue;
 			String name = f.name();
 			if (line.contains("(" + name + ")") || line.contains("DUNGEON: " + name)) return f;
 		}
@@ -1392,6 +2597,30 @@ public final class DungeonRunTrackerFeature {
 		if (n < 1 || n > 7) return DungeonFloor.UNKNOWN;
 		boolean master = mode.equalsIgnoreCase("M");
 		return DungeonFloor.values()[master ? 7 + n - 1 : n - 1];
+	}
+
+	private DungeonFloor kuudraTier(int number) {
+		return switch (number) {
+			case 1 -> DungeonFloor.K1;
+			case 2 -> DungeonFloor.K2;
+			case 3 -> DungeonFloor.K3;
+			case 4 -> DungeonFloor.K4;
+			case 5 -> DungeonFloor.K5;
+			default -> DungeonFloor.UNKNOWN;
+		};
+	}
+
+	private int parseTierNumber(String value) {
+		if (value == null || value.isBlank()) return -1;
+		String normalized = value.trim().toUpperCase(Locale.ROOT);
+		return switch (normalized) {
+			case "I" -> 1;
+			case "II" -> 2;
+			case "III" -> 3;
+			case "IV" -> 4;
+			case "V" -> 5;
+			default -> parsePositiveInt(normalized, -1);
+		};
 	}
 
 	private int parseFloorNumber(String line) {
@@ -1427,6 +2656,24 @@ public final class DungeonRunTrackerFeature {
 			|| cleaned.startsWith("MASTER MODE CATACOMBS - FLOOR ");
 	}
 
+	private boolean isKuudraEntryMessage(String cleaned) {
+		return cleaned.contains("KUUDRA'S HOLLOW")
+			|| cleaned.contains("KUUDRA HOLLOW")
+			|| (cleaned.contains("KUUDRA") && !cleaned.contains("CORE") && (cleaned.contains("STARTING") || cleaned.contains("TIER") || cleaned.contains("BASIC")
+				|| cleaned.contains("HOT") || cleaned.contains("BURNING") || cleaned.contains("FIERY") || cleaned.contains("INFERNAL")));
+	}
+
+	private boolean isKuudraCompletionMessage(String cleaned) {
+		return cleaned.contains("KUUDRA DOWN")
+			|| cleaned.contains("KUUDRA DEFEATED")
+			|| cleaned.contains("DEFEATED KUUDRA")
+			|| cleaned.contains("KUUDRA RUN ENDED: COMPLETED");
+	}
+
+	private boolean isCurrentFloorKuudra() {
+		return currentFloor != null && currentFloor.isKuudra();
+	}
+
 	private List<String> readScoreboardLines(Minecraft client) {
 		Scoreboard scoreboard = client.level.getScoreboard();
 		Objective sidebar = scoreboard.getDisplayObjective(DisplaySlot.SIDEBAR);
@@ -1455,7 +2702,9 @@ public final class DungeonRunTrackerFeature {
 		flushPendingLootRecord();
 		resetDungeonRuntimeState();
 		inDungeonHub = false;
+		inCrimsonIsle = false;
 		dungeonSignalUntilMillis = 0L;
+		kuudraSignalUntilMillis = 0L;
 		lastLevelIdentity = null;
 		clearLootWindow();
 		dragging = false;
@@ -1464,12 +2713,15 @@ public final class DungeonRunTrackerFeature {
 
 	private void resetDungeonRuntimeState() {
 		insideDungeon = false;
+		insideKuudra = false;
 	}
 
 	private void beginNewDungeonRun(long now) {
 		flushPendingLootRecord();
 		startCurrentRunTiming(now);
 		currentFloor = DungeonFloor.UNKNOWN;
+		insideKuudra = false;
+		kuudraSignalUntilMillis = 0L;
 		awaitingExtraStatsScore = false;
 		awaitingExtraStatsFloor = DungeonFloor.UNKNOWN;
 		awaitingExtraStatsUntilMillis = 0L;
@@ -1478,7 +2730,25 @@ public final class DungeonRunTrackerFeature {
 		pendingSPlusUntilMillis = 0L;
 		runCountedThisDungeon = false;
 		dungeonSignalUntilMillis = now + DUNGEON_SIGNAL_GRACE_MS;
-		cachedChestDataByTitle.clear();
+		cachedChestOffersByTitle.clear();
+		scannedRewardScreens.clear();
+	}
+
+	private void beginNewKuudraRun(long now, DungeonFloor tier) {
+		flushPendingLootRecord();
+		startCurrentRunTiming(now);
+		currentFloor = tier != null && tier.isKuudra() ? tier : DungeonFloor.UNKNOWN;
+		insideDungeon = false;
+		insideKuudra = true;
+		awaitingExtraStatsScore = false;
+		awaitingExtraStatsFloor = DungeonFloor.UNKNOWN;
+		awaitingExtraStatsUntilMillis = 0L;
+		pendingScoreGrade = null;
+		pendingSPlusFloor = DungeonFloor.UNKNOWN;
+		pendingSPlusUntilMillis = 0L;
+		runCountedThisDungeon = false;
+		kuudraSignalUntilMillis = now + DUNGEON_SIGNAL_GRACE_MS;
+		cachedChestOffersByTitle.clear();
 		scannedRewardScreens.clear();
 	}
 
@@ -1489,8 +2759,15 @@ public final class DungeonRunTrackerFeature {
 		pendingLootRunTimestamp = now;
 		pendingLootFloor = floor;
 		pendingLootChestTitle = "";
-		pendingLootChestCostCoins = 0L;
+		pendingLootCostBreakdown = new ChestCostBreakdown();
 		pendingLootSeededFromGui = false;
+		pendingLootChestAssigned = false;
+		openedRewardChestsInLootWindow = 0;
+		nextOpenedChestUsesDungeonChestKey = false;
+		nextOpenedChestUsesKismetFeather = false;
+		nextOpenedChestUsesWheelOfFate = false;
+		rewardMenuKismetRerollPending = false;
+		rewardMenuKismetRerolledChestTitle = "";
 		pendingLootEntries.clear();
 	}
 
@@ -1549,11 +2826,23 @@ public final class DungeonRunTrackerFeature {
 		pendingLootRunTimestamp = 0L;
 		pendingLootFloor = DungeonFloor.UNKNOWN;
 		pendingLootChestTitle = "";
-		pendingLootChestCostCoins = 0L;
+		pendingLootCostBreakdown = new ChestCostBreakdown();
 		pendingLootSeededFromGui = false;
+		pendingLootChestAssigned = false;
+		openedRewardChestsInLootWindow = 0;
+		nextOpenedChestUsesDungeonChestKey = false;
+		nextOpenedChestUsesKismetFeather = false;
+		nextOpenedChestUsesWheelOfFate = false;
+		rewardMenuKismetRerollPending = false;
+		rewardMenuKismetRerolledChestTitle = "";
 		pendingLootEntries.clear();
-		cachedChestDataByTitle.clear();
+		cachedChestOffersByTitle.clear();
+		cachedChestOfferFingerprintsByTitle.clear();
 		scannedRewardScreens.clear();
+		lastRewardModifierScanKey = "";
+		lastRewardModifierScanMillis = 0L;
+		lastRewardModifierScanHadKeyRequirement = false;
+		lastRewardModifierScanHadKismetMarker = false;
 		recentLootMessages.clear();
 	}
 
@@ -1562,6 +2851,7 @@ public final class DungeonRunTrackerFeature {
 			startAdHocLootWindow(now);
 		}
 		if (lootWindowUntilMillis <= 0L || now > lootWindowUntilMillis) return;
+		if (handleModifierMessage(cleaned)) return;
 		if (cleaned.startsWith("YOU RECEIVED ")) {
 			lootCollectionUntilMillis = now + LOOT_COLLECTION_MS;
 		} else if (isLootHeader(cleaned)) {
@@ -1587,10 +2877,8 @@ public final class DungeonRunTrackerFeature {
 	private void assignOpenedChest(String cleaned) {
 		for (String title : REWARD_CHEST_TITLES) {
 			if (!cleaned.contains(title)) continue;
-			pendingLootChestTitle = toDisplayChestTitle(title);
-			CachedChestData cached = cachedChestDataByTitle.get(title);
-			if (cached != null) pendingLootChestCostCoins = cached.costCoins;
-			pendingLootSeededFromGui = false;
+			DungeonChestOffer cached = cachedChestOffersByTitle.get(title);
+			assignPendingOpenedChest(title, cached);
 			return;
 		}
 	}
@@ -1655,7 +2943,10 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private boolean isRewardsMenuTitle(String normalizedTitle) {
-		return normalizedTitle.startsWith("CATACOMBS - FLOOR ") || normalizedTitle.startsWith("MASTER CATACOMBS - FLOOR ");
+		return normalizedTitle.startsWith("CATACOMBS - FLOOR ")
+			|| normalizedTitle.startsWith("MASTER CATACOMBS - FLOOR ")
+			|| normalizedTitle.contains("KUUDRA")
+			|| ((insideKuudra || isCurrentFloorKuudra()) && (normalizedTitle.contains("REWARD") || normalizedTitle.contains("CHEST")));
 	}
 
 	private Long parseChestCost(ItemStack stack) {
@@ -1727,22 +3018,40 @@ public final class DungeonRunTrackerFeature {
 		}
 		DrtConfig config = DrtConfigManager.getConfig();
 		long chestValueCoins = DungeonProfitPricing.calculateLootValue(pendingLootEntries, config);
-		long chestProfitCoins = chestValueCoins - pendingLootChestCostCoins;
-		DungeonRunTracker.LOGGER.info("[DRT][FLUSH] entries={} value={} cost={} profit={} floor={} chest='{}'",
-			pendingLootEntries.size(), chestValueCoins, pendingLootChestCostCoins, chestProfitCoins, pendingLootFloor, pendingLootChestTitle);
+		ChestCostBreakdown costBreakdown = pendingLootCostBreakdown == null ? new ChestCostBreakdown() : pendingLootCostBreakdown.copy();
+		if (costBreakdown.usedKismetFeather) costBreakdown.kismetRerolledChestOpened = true;
+		populateKnownModifierCosts(costBreakdown);
+		long chestCostCoins = costBreakdown.totalCostCoins();
+		long chestProfitCoins = chestValueCoins - chestCostCoins;
+		DungeonRunTracker.LOGGER.info(
+			"[DRT][FLUSH] entries={} value={} cost={} base={} key={} kismet={} wheel={} kuudraKey={} profit={} floor={} chest='{}'",
+			pendingLootEntries.size(),
+			chestValueCoins,
+			chestCostCoins,
+			costBreakdown.baseChestCostCoins,
+			costBreakdown.dungeonChestKeyCostCoins,
+			costBreakdown.kismetFeatherCostCoins,
+			costBreakdown.wheelOfFateCostCoins,
+			costBreakdown.kuudraKeyCostCoins,
+			chestProfitCoins,
+			pendingLootFloor,
+			pendingLootChestTitle
+		);
 		String floorName = pendingLootFloor != DungeonFloor.UNKNOWN ? pendingLootFloor.name() : "UNKNOWN";
 		String runGrade = pendingScoreGrade != null ? pendingScoreGrade : lastRecordedGrade;
-		DrtConfigManager.addRunRecord(new DungeonRunRecord(
+		DungeonRunRecord record = new DungeonRunRecord(
 			pendingLootRunTimestamp,
 			pendingLootRunNumber,
 			floorName,
 			runGrade,
 			pendingLootChestTitle,
-			pendingLootChestCostCoins,
+			chestCostCoins,
 			chestValueCoins,
 			chestProfitCoins,
 			pendingLootEntries
-		));
+		);
+		record.applyCostBreakdown(costBreakdown);
+		DrtConfigManager.addRunRecord(record);
 		totalLifetimeProfit += chestProfitCoins;
 		sessionTotalProfit += chestProfitCoins;
 		floorProfitTotals.merge(floorName, chestProfitCoins, Long::sum);
@@ -1754,8 +3063,9 @@ public final class DungeonRunTrackerFeature {
 	private void resetPendingChestState() {
 		lootCollectionUntilMillis = 0L;
 		pendingLootChestTitle = "";
-		pendingLootChestCostCoins = 0L;
+		pendingLootCostBreakdown = new ChestCostBreakdown();
 		pendingLootSeededFromGui = false;
+		pendingLootChestAssigned = false;
 		pendingLootEntries.clear();
 		recentLootMessages.clear();
 	}
@@ -1784,9 +3094,28 @@ public final class DungeonRunTrackerFeature {
 		String alias = ITEM_ID_ALIASES.get(cleanedName);
 		if (alias != null) return alias;
 
+		String generatedKuudraId = generatedKuudraItemId(cleanedName);
+		if (generatedKuudraId != null) return generatedKuudraId;
+
 		List<PriceCache.SearchResult> searchResults = PriceCache.search(cleanedName, 5);
 		if (!searchResults.isEmpty()) return searchResults.getFirst().itemId();
 		return "";
+	}
+
+	private String generatedKuudraItemId(String cleanedName) {
+		if (cleanedName == null || cleanedName.isBlank()) return null;
+		if (cleanedName.endsWith(" SHARD")) {
+			String shardName = cleanedName.substring(0, cleanedName.length() - " SHARD".length()).trim();
+			if (!shardName.isBlank()) return "SHARD_" + toItemIdPart(shardName);
+		}
+		return null;
+	}
+
+	private String toItemIdPart(String name) {
+		return sanitizeLootName(name)
+			.toUpperCase(Locale.ROOT)
+			.replaceAll("[^A-Z0-9]+", "_")
+			.replaceAll("^_+|_+$", "");
 	}
 
 	private String sanitizeLootName(String name) {
@@ -1837,7 +3166,9 @@ public final class DungeonRunTrackerFeature {
 		return normalized.contains("[NPC]") || normalized.contains("EXTRA STATS")
 			|| normalized.contains("TEAM SCORE") || normalized.contains("CLICK")
 			|| normalized.contains("OPEN") || normalized.contains("CROESUS")
-			|| normalized.contains("THE CATACOMBS");
+			|| normalized.contains("THE CATACOMBS") || normalized.contains("KUUDRA DOWN")
+			|| normalized.contains("PERCENTAGE COMPLETE") || normalized.contains("TOKENS EARNED")
+			|| normalized.contains("BITS EARNED") || normalized.startsWith("TIME:");
 	}
 
 	private boolean shouldIgnoreLootName(String value) {
@@ -1852,7 +3183,12 @@ public final class DungeonRunTrackerFeature {
 			|| normalized.contains("FURY") || normalized.contains("BREATH")
 			|| normalized.contains("STONE") || normalized.contains("RECOMBOBULATOR")
 			|| normalized.contains("BOOK") || normalized.contains("DISC")
-			|| normalized.contains("KEY");
+			|| normalized.contains("KEY") || normalized.contains("SHARD")
+			|| normalized.contains("KUUDRA") || normalized.contains("TEETH")
+			|| normalized.contains("EMBERS") || normalized.contains("CORE")
+			|| normalized.contains("DISINTEGRATOR") || normalized.contains("CRIMSON")
+			|| normalized.contains("TERROR") || normalized.contains("AURORA")
+			|| normalized.contains("FERVOR") || normalized.contains("HOLLOW");
 	}
 
 	private String lootKey(DungeonLootEntry entry) {
@@ -1889,6 +3225,8 @@ public final class DungeonRunTrackerFeature {
 		aliases.put("WARPED STONE", "WARPED_STONE");
 		aliases.put("RECOMBOBULATOR 3000", "RECOMBOBULATOR_3000");
 		aliases.put("DUNGEON CHEST KEY", "DUNGEON_CHEST_KEY");
+		aliases.put("KISMET FEATHER", "KISMET_FEATHER");
+		aliases.put("WHEEL OF FATE", "WHEEL_OF_FATE");
 		aliases.put("WITHER CATALYST", "WITHER_CATALYST");
 		aliases.put("NECRON'S HANDLE", "NECRON_HANDLE");
 		aliases.put("SCARF'S STUDIES", "SCARF_STUDIES");
@@ -1937,7 +3275,47 @@ public final class DungeonRunTrackerFeature {
 		aliases.put("ADAPTIVE CHESTPLATE", "ADAPTIVE_CHESTPLATE");
 		aliases.put("ADAPTIVE LEGGINGS", "ADAPTIVE_LEGGINGS");
 		aliases.put("ADAPTIVE BOOTS", "ADAPTIVE_BOOTS");
+		aliases.put("KUUDRA TEETH", "KUUDRA_TEETH");
+		aliases.put("KUUDRA'S TEETH", "KUUDRA_TEETH");
+		aliases.put("BEZAL SHARD", "SHARD_BEZAL");
+		aliases.put("KRAKEN SHARD", "SHARD_KRAKEN");
+		aliases.put("MANA DISINTEGRATOR", "MANA_DISINTEGRATOR");
+		aliases.put("SMOLDERING EMBERS", "SMOLDERING_EMBERS");
+		aliases.put("KUUDRA MANDIBLE", "KUUDRA_MANDIBLE");
+		aliases.put("KUUDRA TENTACLE", "KUUDRA_TENTACLE");
+		aliases.put("AURORA STAFF", "AURORA_STAFF");
+		aliases.put("HOLLOW WAND", "HOLLOW_WAND");
+		aliases.put("MOLTEN BELT", "MOLTEN_BELT");
+		aliases.put("MOLTEN BRACELET", "MOLTEN_BRACELET");
+		aliases.put("MOLTEN CLOAK", "MOLTEN_CLOAK");
+		aliases.put("MOLTEN NECKLACE", "MOLTEN_NECKLACE");
+		aliases.put("TORMENTOR", "TORMENTOR");
+		aliases.put("KUUDRA'S HEART", "KUUDRAS_HEART");
+		aliases.put("KUUDRA HEART", "KUUDRAS_HEART");
+		aliases.put("KUUDRA'S LUNG", "KUUDRAS_LUNG");
+		aliases.put("KUUDRA LUNG", "KUUDRAS_LUNG");
+		aliases.put("KUUDRA'S KIDNEY", "KUUDRAS_KIDNEY");
+		aliases.put("KUUDRA KIDNEY", "KUUDRAS_KIDNEY");
+		aliases.put("BURNING KUUDRA CORE", "BURNING_KUUDRA_CORE");
+		aliases.put("FIERY KUUDRA CORE", "FIERY_KUUDRA_CORE");
+		aliases.put("INFERNAL KUUDRA CORE", "INFERNAL_KUUDRA_CORE");
+		addKuudraArmorAliases(aliases);
 		return Map.copyOf(aliases);
+	}
+
+	private static void addKuudraArmorAliases(Map<String, String> aliases) {
+		String[] sets = {"CRIMSON", "TERROR", "AURORA", "FERVOR", "HOLLOW"};
+		String[] pieces = {"HELMET", "CHESTPLATE", "LEGGINGS", "BOOTS"};
+		String[] tiers = {"HOT", "BURNING", "FIERY", "INFERNAL"};
+		for (String set : sets) {
+			for (String piece : pieces) {
+				String baseName = set + " " + piece;
+				aliases.put(baseName, set + "_" + piece);
+				for (String tier : tiers) {
+					aliases.put(tier + " " + baseName, tier + "_" + set + "_" + piece);
+				}
+			}
+		}
 	}
 
 	private int clamp(int value, int min, int max) {
