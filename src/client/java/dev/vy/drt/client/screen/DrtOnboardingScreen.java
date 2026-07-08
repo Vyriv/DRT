@@ -9,6 +9,7 @@ import java.util.Locale;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.CharacterEvent;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
@@ -44,6 +45,8 @@ public final class DrtOnboardingScreen extends Screen {
 	private boolean kuudraPetEnabled;
 	private String kuudraPetRarity;
 	private int kuudraPetLevel;
+	private String kuudraPetLevelText;
+	private boolean petLevelFocused;
 	private String kuudraFaction;
 	private String bazaarPriceMode;
 	private boolean forceSalvageArmor;
@@ -66,6 +69,12 @@ public final class DrtOnboardingScreen extends Screen {
 	private int salvageDropdownX;
 	private int salvageDropdownY;
 	private int salvageDropdownW;
+	private int petRarityDropdownX;
+	private int petRarityDropdownY;
+	private int petRarityDropdownW;
+	private int petLevelInputX;
+	private int petLevelInputY;
+	private int petLevelInputW;
 
 	public DrtOnboardingScreen(DungeonRunTrackerFeature trackerFeature) {
 		super(Component.literal("DRT Setup"));
@@ -74,6 +83,7 @@ public final class DrtOnboardingScreen extends Screen {
 		kuudraPetEnabled = config.kuudraPetEnabled;
 		kuudraPetRarity = normalizeRarity(config.kuudraPetRarity);
 		kuudraPetLevel = clamp(config.kuudraPetLevel, 1, 100);
+		kuudraPetLevelText = Integer.toString(kuudraPetLevel);
 		kuudraFaction = normalizeFaction(config.kuudraFaction);
 		bazaarPriceMode = normalizeBazaarMode(config.bazaarPriceMode);
 		forceSalvageArmor = config.forceSalvageArmor;
@@ -143,6 +153,10 @@ public final class DrtOnboardingScreen extends Screen {
 				return true;
 			}
 		}
+		if (petLevelFocused) {
+			commitPetLevelInput();
+			petLevelFocused = false;
+		}
 		if (openDropdown != Dropdown.NONE) {
 			openDropdown = Dropdown.NONE;
 			return true;
@@ -152,6 +166,23 @@ public final class DrtOnboardingScreen extends Screen {
 
 	@Override
 	public boolean keyPressed(KeyEvent event) {
+		if (petLevelFocused) {
+			if (event.key() == GLFW.GLFW_KEY_BACKSPACE) {
+				if (!kuudraPetLevelText.isEmpty()) {
+					kuudraPetLevelText = kuudraPetLevelText.substring(0, kuudraPetLevelText.length() - 1);
+				}
+				return true;
+			}
+			if (event.key() == GLFW.GLFW_KEY_DELETE) {
+				kuudraPetLevelText = "";
+				return true;
+			}
+			if (event.key() == GLFW.GLFW_KEY_ENTER || event.key() == GLFW.GLFW_KEY_KP_ENTER) {
+				commitPetLevelInput();
+				petLevelFocused = false;
+				return true;
+			}
+		}
 		if (event.key() == GLFW.GLFW_KEY_ESCAPE) {
 			saveSettings(false);
 			super.onClose();
@@ -163,6 +194,21 @@ public final class DrtOnboardingScreen extends Screen {
 			return true;
 		}
 		return super.keyPressed(event);
+	}
+
+	@Override
+	public boolean charTyped(CharacterEvent event) {
+		if (!petLevelFocused) return super.charTyped(event);
+		String typed = event.codepointAsString();
+		if (typed == null || typed.isBlank()) return true;
+		for (int i = 0; i < typed.length(); i++) {
+			char c = typed.charAt(i);
+			if (!Character.isDigit(c)) continue;
+			if (kuudraPetLevelText.length() < 3) {
+				kuudraPetLevelText += c;
+			}
+		}
+		return true;
 	}
 
 	@Override
@@ -240,19 +286,27 @@ public final class DrtOnboardingScreen extends Screen {
 		drawToggle(g, controlX(46), y + 3, kuudraPetEnabled, () -> {
 			kuudraPetEnabled = !kuudraPetEnabled;
 			openDropdown = Dropdown.NONE;
+			petLevelFocused = false;
 		}, "Include Kuudra pet effects");
 	}
 
 	private void drawPetOptionsRow(GuiGraphicsExtractor g, int mouseX, int mouseY, int y) {
 		drawRowBase(g, mouseX, mouseY, y);
 		g.text(font, "Pet rarity / level", ox + 18, y + 7, TEXT);
-		int levelX = controlX(68);
-		int rarityX = levelX - CONTROL_GAP - 74;
-		drawSmallButton(g, rarityX, y + 3, 74, 16, titleCase(kuudraPetRarity), false, this::cyclePetRarity, "Cycle Kuudra pet rarity");
-		drawStepper(g, levelX, y + 3, 68, 16, Integer.toString(kuudraPetLevel), false,
-			() -> kuudraPetLevel = clamp(kuudraPetLevel - 1, 1, 100),
-			() -> kuudraPetLevel = clamp(kuudraPetLevel + 1, 1, 100),
-			"Set Kuudra pet level");
+		petLevelInputW = 44;
+		petLevelInputX = controlX(petLevelInputW);
+		petLevelInputY = y + 3;
+		petRarityDropdownW = 88;
+		petRarityDropdownX = petLevelInputX - CONTROL_GAP - petRarityDropdownW;
+		petRarityDropdownY = y + 3;
+		drawDropdownButton(g, mouseX, mouseY, petRarityDropdownX, petRarityDropdownY, petRarityDropdownW, 16,
+			titleCase(kuudraPetRarity), openDropdown == Dropdown.PET_RARITY, () -> toggleDropdown(Dropdown.PET_RARITY), "Select Kuudra pet rarity");
+		drawTextInput(g, mouseX, mouseY, petLevelInputX, petLevelInputY, petLevelInputW, 16,
+			petLevelFocused ? kuudraPetLevelText : Integer.toString(kuudraPetLevel), petLevelFocused, () -> {
+				openDropdown = Dropdown.NONE;
+				petLevelFocused = true;
+				kuudraPetLevelText = Integer.toString(kuudraPetLevel);
+			}, "Type Kuudra pet level");
 	}
 
 	private void drawForceSalvageRow(GuiGraphicsExtractor g, int mouseX, int mouseY, int y) {
@@ -282,15 +336,10 @@ public final class DrtOnboardingScreen extends Screen {
 		int y = oy + winH - 30;
 		g.fill(ox + 10, y - 5, ox + winW - 10, y - 4, 0x5535385D);
 		int doneX = controlX(58);
-		int closeX = doneX - CONTROL_GAP - 56;
 		drawSmallButton(g, ox + 18, y, 48, 18, "Skip", false, () -> {
 			saveSettings(true);
 			super.onClose();
 		}, "Use current settings and stop showing setup", DIM);
-		drawSmallButton(g, closeX, y, 56, 18, "Close", false, () -> {
-			saveSettings(false);
-			super.onClose();
-		}, "Save and close");
 		drawSmallButton(g, doneX, y, 58, 18, "Done", false, () -> {
 			saveSettings(true);
 			super.onClose();
@@ -321,6 +370,18 @@ public final class DrtOnboardingScreen extends Screen {
 				bazaarPriceMode = "ORDER";
 				openDropdown = Dropdown.NONE;
 			}, "Use sell offers for loot and buy orders for costs");
+			return;
+		}
+
+		if (openDropdown == Dropdown.PET_RARITY) {
+			int y = petRarityDropdownY + 18;
+			for (int i = 0; i < PET_RARITIES.length; i++) {
+				String option = PET_RARITIES[i];
+				drawDropdownOption(g, mouseX, mouseY, petRarityDropdownX, y + DROPDOWN_ROW_H * i, petRarityDropdownW, titleCase(option), kuudraPetRarity.equals(option), () -> {
+					kuudraPetRarity = option;
+					openDropdown = Dropdown.NONE;
+				}, "Use " + titleCase(option) + " Kuudra pet scaling");
+			}
 			return;
 		}
 
@@ -364,6 +425,10 @@ public final class DrtOnboardingScreen extends Screen {
 	}
 
 	private void toggleDropdown(Dropdown dropdown) {
+		if (petLevelFocused) {
+			commitPetLevelInput();
+			petLevelFocused = false;
+		}
 		openDropdown = openDropdown == dropdown ? Dropdown.NONE : dropdown;
 	}
 
@@ -386,6 +451,20 @@ public final class DrtOnboardingScreen extends Screen {
 		border(g, x, y, w, h, disabled ? 0xFF252842 : BORDER);
 		g.text(font, label, x + (w - font.width(label)) / 2, y + (h - font.lineHeight) / 2, textColor);
 		if (!disabled) clickTargets.add(new ClickTarget(x, y, w, h, 0, onClick, tooltip));
+	}
+
+	private void drawTextInput(GuiGraphicsExtractor g, int mouseX, int mouseY, int x, int y, int w, int h, String value, boolean focused, Runnable onClick, String tooltip) {
+		boolean hovered = contains(x, y, w, h, mouseX, mouseY);
+		g.fill(x, y, x + w, y + h, focused ? 0xFF10172E : hovered ? 0xFF20243D : PANEL_ALT);
+		border(g, x, y, w, h, focused ? BORDER_ACTIVE : hovered ? 0xFF51557E : BORDER);
+		String safeValue = ellipsize(value == null ? "" : value, Math.max(0, w - 8));
+		int textX = x + 4;
+		g.text(font, safeValue, textX, y + (h - font.lineHeight) / 2, focused ? TEXT : MUTED);
+		if (focused && (System.currentTimeMillis() / 500L) % 2L == 0L) {
+			int caretX = Math.min(x + w - 4, textX + font.width(safeValue) + 1);
+			g.fill(caretX, y + 3, caretX + 1, y + h - 3, TEXT);
+		}
+		clickTargets.add(new ClickTarget(x, y, w, h, 0, onClick, tooltip));
 	}
 
 	private void drawStepper(GuiGraphicsExtractor g, int x, int y, int w, int h, String value, boolean disabled, Runnable dec, Runnable inc, String tooltip) {
@@ -420,17 +499,6 @@ public final class DrtOnboardingScreen extends Screen {
 		g.text(font, text, tx, ty, 0xFFCCCCFF, true);
 	}
 
-	private void cyclePetRarity() {
-		int idx = 0;
-		for (int i = 0; i < PET_RARITIES.length; i++) {
-			if (PET_RARITIES[i].equals(kuudraPetRarity)) {
-				idx = i;
-				break;
-			}
-		}
-		kuudraPetRarity = PET_RARITIES[(idx + 1) % PET_RARITIES.length];
-	}
-
 	private String salvageSummary() {
 		int selected = (forceSalvageArmor ? 1 : 0) + (forceSalvageWands ? 1 : 0) + (forceSalvageEquipment ? 1 : 0);
 		if (selected == 0) return "None";
@@ -447,6 +515,7 @@ public final class DrtOnboardingScreen extends Screen {
 	}
 
 	private void saveSettings(boolean complete) {
+		commitPetLevelInput();
 		boolean completed = complete || DrtConfigManager.getConfig().onboardingComplete;
 		DrtConfigManager.updateOnboardingSettings(
 			completed,
@@ -515,6 +584,20 @@ public final class DrtOnboardingScreen extends Screen {
 		return Math.max(min, Math.min(max, value));
 	}
 
+	private void commitPetLevelInput() {
+		kuudraPetLevel = clamp(parseInt(kuudraPetLevelText, kuudraPetLevel), 1, 100);
+		kuudraPetLevelText = Integer.toString(kuudraPetLevel);
+	}
+
+	private static int parseInt(String value, int fallback) {
+		if (value == null || value.isBlank()) return fallback;
+		try {
+			return Integer.parseInt(value.trim());
+		} catch (NumberFormatException ignored) {
+			return fallback;
+		}
+	}
+
 	private static boolean contains(int x, int y, int w, int h, int mx, int my) {
 		return mx >= x && mx < x + w && my >= y && my < y + h;
 	}
@@ -526,7 +609,7 @@ public final class DrtOnboardingScreen extends Screen {
 		g.fill(x + w - 1, y, x + w, y + h, color);
 	}
 
-	private enum Dropdown { NONE, FACTION, PRICE, SALVAGE }
+	private enum Dropdown { NONE, FACTION, PRICE, PET_RARITY, SALVAGE }
 
 	private record ClickTarget(int x, int y, int w, int h, int button, Runnable action, String tooltip) {
 	}

@@ -417,7 +417,11 @@ public final class DungeonLootScreen extends Screen {
 				}
 				drawRightAligned(g, Integer.toString(row.quantity), qtyRight, textY, 0xFFB6C2DF);
 				drawRightAligned(g, formatCoins(row.unitPrice), eachRight, textY, 0xFF7FB98E);
-				drawRightAligned(g, formatCoins(row.totalPrice), totalRight, textY, 0xFF9CE3AC);
+				if (row.forcedSalvage()) {
+					drawRightAlignedWithEssenceIcon(g, formatCoins(row.totalPrice), totalRight, textY, 0xFF9CE3AC);
+				} else {
+					drawRightAligned(g, formatCoins(row.totalPrice), totalRight, textY, 0xFF9CE3AC);
+				}
 				addLootRowTargets(row, drawY);
 			}
 			drawY += ROW_H;
@@ -601,6 +605,7 @@ public final class DungeonLootScreen extends Screen {
 	private List<DisplayRow> buildDisplayRows() {
 		List<DungeonRunRecord> records = currentSelection().records;
 		Map<String, MutableAgg> aggs = new LinkedHashMap<>();
+		var config = DrtConfigManager.getConfig();
 		for (DungeonRunRecord r : records) {
 			if (r == null || r.lootEntries == null) continue;
 			for (DungeonLootEntry e : r.lootEntries) {
@@ -609,12 +614,15 @@ public final class DungeonLootScreen extends Screen {
 				String key = e.itemId != null && !e.itemId.isBlank() ? e.itemId : e.rawName.trim().toUpperCase(Locale.ROOT);
 				MutableAgg agg = aggs.computeIfAbsent(key, k -> new MutableAgg(displayName(e), e.itemId == null ? "" : e.itemId));
 				agg.quantity += Math.max(1, e.quantity);
+				if (DungeonProfitPricing.isForcedSalvageValued(e, config)) {
+					agg.forcedSalvage = true;
+				}
 			}
 		}
 		List<DisplayRow> rows = new ArrayList<>();
 		for (MutableAgg agg : aggs.values()) {
-			long unit = DungeonProfitPricing.resolveUnitPrice(new DungeonLootEntry(agg.label, agg.itemId, 1), DrtConfigManager.getConfig());
-			rows.add(new DisplayRow(agg.label, agg.itemId, agg.quantity, unit, unit * agg.quantity));
+			long unit = DungeonProfitPricing.resolveUnitPrice(new DungeonLootEntry(agg.label, agg.itemId, 1), config);
+			rows.add(new DisplayRow(agg.label, agg.itemId, agg.quantity, unit, unit * agg.quantity, agg.forcedSalvage));
 		}
 		Comparator<DisplayRow> comparator = displayRowComparator();
 		if (comparator != null) {
@@ -1028,6 +1036,18 @@ public final class DungeonLootScreen extends Screen {
 		g.text(font, text, rightX - font.width(text), y, color);
 	}
 
+	private void drawRightAlignedWithEssenceIcon(GuiGraphicsExtractor g, String text, int rightX, int y, int color) {
+		ItemStack icon = forcedSalvageEssenceIcon();
+		int iconX = rightX - 16;
+		g.text(font, text, iconX - 2 - font.width(text), y, color);
+		g.item(icon, iconX, y - 4);
+	}
+
+	private static ItemStack forcedSalvageEssenceIcon() {
+		ItemStack icon = resolveItemIcon("ESSENCE_CRIMSON");
+		return icon.isEmpty() ? new ItemStack(Items.NETHER_STAR) : icon;
+	}
+
 	private void drawCenteredButtonText(GuiGraphicsExtractor g, String text, int x, int y, int w, int h, int color) {
 		g.text(font, text, x + (w - font.width(text)) / 2, y + (h - font.lineHeight) / 2, color);
 	}
@@ -1052,7 +1072,7 @@ public final class DungeonLootScreen extends Screen {
 	// ── Records / inner classes ───────────────────────────────────────────────
 
 	private record ClickTarget(int x, int y, int w, int h, int button, Runnable action) {}
-	private record DisplayRow(String label, String itemId, int quantity, long unitPrice, long totalPrice) {}
+	private record DisplayRow(String label, String itemId, int quantity, long unitPrice, long totalPrice, boolean forcedSalvage) {}
 	private record RunSelection(List<DungeonRunRecord> records, long totalCostCoins, long totalValueCoins, long totalProfitCoins) {}
 	private enum LootSortColumn { ITEM, QUANTITY, EACH, TOTAL }
 	private enum HeaderTextAlign { LEFT, CENTER }
@@ -1061,6 +1081,7 @@ public final class DungeonLootScreen extends Screen {
 		final String label;
 		final String itemId;
 		int quantity;
+		boolean forcedSalvage;
 		MutableAgg(String label, String itemId) { this.label = label; this.itemId = itemId == null ? "" : itemId; }
 	}
 }
