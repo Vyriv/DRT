@@ -40,6 +40,7 @@ public final class PriceCache {
 	private static volatile Map<String, Double> itemIdToPrice = Map.of();
 	private static volatile Map<String, String> itemIdToSource = Map.of();
 	private static volatile Map<String, AuctionPriceData> itemIdToAuctionData = Map.of();
+	private static volatile Map<String, BazaarPriceData> itemIdToBazaarData = Map.of();
 
 	private PriceCache() {
 	}
@@ -63,6 +64,11 @@ public final class PriceCache {
 	public static AuctionPriceData getAuctionHouse(String itemId) {
 		if (itemId == null || itemId.isBlank()) return null;
 		return itemIdToAuctionData.get(itemId);
+	}
+
+	public static BazaarPriceData getBazaar(String itemId) {
+		if (itemId == null || itemId.isBlank()) return null;
+		return itemIdToBazaarData.get(itemId);
 	}
 
 	public static List<SearchResult> search(String query, int limit) {
@@ -110,14 +116,16 @@ public final class PriceCache {
 		Map<String, Double> nextPrices = new ConcurrentHashMap<>();
 		Map<String, String> nextSources = new ConcurrentHashMap<>();
 		Map<String, AuctionPriceData> nextAuctionData = new ConcurrentHashMap<>();
+		Map<String, BazaarPriceData> nextBazaarData = new ConcurrentHashMap<>();
 		loadAuctionHouse(root.getAsJsonObject("auction_house"), nextPrices, nextSources, nextAuctionData);
-		loadBazaar(root.getAsJsonObject("bazaar"), nextPrices, nextSources);
+		loadBazaar(root.getAsJsonObject("bazaar"), nextPrices, nextSources, nextBazaarData);
 		loadCoflFallback("MASTER_SKULL_TIER_1", "MASTER_SKULL_TIER_1", nextPrices, nextSources);
 		loadCoflFallback("PET_SPIRIT", "PET_SPIRIT", nextPrices, nextSources);
 		if (!nextPrices.isEmpty()) {
 			itemIdToPrice = Map.copyOf(nextPrices);
 			itemIdToSource = Map.copyOf(nextSources);
 			itemIdToAuctionData = Map.copyOf(nextAuctionData);
+			itemIdToBazaarData = Map.copyOf(nextBazaarData);
 			DungeonRunTracker.LOGGER.info("[DRT] Loaded {} Athen price entries", nextPrices.size());
 		}
 	}
@@ -143,20 +151,32 @@ public final class PriceCache {
 		}
 	}
 
-	private static void loadBazaar(JsonObject section, Map<String, Double> prices, Map<String, String> sources) {
+	private static void loadBazaar(
+		JsonObject section,
+		Map<String, Double> prices,
+		Map<String, String> sources,
+		Map<String, BazaarPriceData> bazaarData
+	) {
 		if (section == null) return;
 		for (Map.Entry<String, JsonElement> entry : section.entrySet()) {
 			if (!entry.getValue().isJsonObject()) continue;
 			JsonObject priceObject = entry.getValue().getAsJsonObject();
+			Double instantSell = positiveNumber(priceObject, "is");
+			Double sellOffer = positiveNumber(priceObject, "ts");
+			Double instantBuy = positiveNumber(priceObject, "ib");
+			Double buyOrder = positiveNumber(priceObject, "tb");
 			Double price = firstNumber(
-				positiveNumber(priceObject, "ib"),
-				positiveNumber(priceObject, "tb"),
-				positiveNumber(priceObject, "is"),
-				positiveNumber(priceObject, "ts")
+				instantSell,
+				sellOffer,
+				instantBuy,
+				buyOrder
 			);
-			if (price == null || price <= 0.0D || prices.containsKey(entry.getKey())) continue;
-			prices.put(entry.getKey(), price);
-			sources.put(entry.getKey(), "bazaar");
+			if (price == null || price <= 0.0D) continue;
+			bazaarData.put(entry.getKey(), new BazaarPriceData(entry.getKey(), instantSell, sellOffer, instantBuy, buyOrder));
+			if (!prices.containsKey(entry.getKey())) {
+				prices.put(entry.getKey(), price);
+				sources.put(entry.getKey(), "bazaar");
+			}
 		}
 	}
 
@@ -224,6 +244,12 @@ public final class PriceCache {
 
 	public record AuctionPriceData(String itemId, Double lbin, Double p3d, Double p7d) {
 		public AuctionPriceData {
+			Objects.requireNonNull(itemId, "itemId");
+		}
+	}
+
+	public record BazaarPriceData(String itemId, Double instantSell, Double sellOffer, Double instantBuy, Double buyOrder) {
+		public BazaarPriceData {
 			Objects.requireNonNull(itemId, "itemId");
 		}
 	}

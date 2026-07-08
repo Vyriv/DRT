@@ -77,7 +77,7 @@ public final class DungeonLootScreen extends Screen {
 	private int tabBarY;
 
 	public DungeonLootScreen() {
-		super(Component.literal("Dungeon Loot History"));
+		super(Component.literal("DRT Loot History"));
 	}
 
 	@Override
@@ -242,18 +242,27 @@ public final class DungeonLootScreen extends Screen {
 		int border = active ? 0xFF6A6AB0 : hovered ? PANEL_BORDER_HOVER : 0xFF343458;
 		g.fill(x, y, x + w, y + TAB_H, bg);
 		border(g, x, y, w, TAB_H, border);
-		int textColor = active ? TEXT_PRIMARY : hovered ? 0xFFC8CDDD : TEXT_MUTED;
+		int textColor = tabTextColor(label, active, hovered);
 		g.text(font, label, x + 6, y + (TAB_H - font.lineHeight) / 2, textColor);
 		clickTargets.add(new ClickTarget(x, y, w, TAB_H, 0, onClick));
 	}
 
+	private int tabTextColor(String label, boolean active, boolean hovered) {
+		if (label != null && label.startsWith("K")) return 0xFFAA0000;
+		return active ? TEXT_PRIMARY : hovered ? 0xFFC8CDDD : TEXT_MUTED;
+	}
+
 	private void drawHeader(GuiGraphicsExtractor g, int contentY) {
-		g.text(font, "Dungeon Loot", ox + MARGIN, contentY + 3, TEXT_PRIMARY);
-		String subtitle = selectedTab == null ? "All Floors" : selectedTab.name();
-		g.text(font, subtitle, ox + MARGIN, contentY + 17, TEXT_MUTED);
+		g.text(font, "DRT Loot", ox + MARGIN, contentY + 3, TEXT_PRIMARY);
+		String subtitle = selectedTab == null ? "All Runs" : selectedTab.name();
+		int subtitleColor = selectedTab != null && selectedTab.isKuudra() ? 0xFFAA0000 : TEXT_MUTED;
+		g.text(font, subtitle, ox + MARGIN, contentY + 17, subtitleColor);
 
 		RunSelection sel = currentSelection();
-		String summaryPrefix = sel.records.size() + " runs | " + buildDisplayRows().size() + " items | ";
+		int chestCount = sel.records.size();
+		int itemCount = buildDisplayRows().size();
+		String summaryPrefix = chestCount + " " + plural(chestCount, "chest", "chests")
+			+ " | " + itemCount + " " + plural(itemCount, "item", "items") + " | ";
 		String profitText = "Profit " + formatSigned(sel.totalProfitCoins);
 		int totalWidth = font.width(summaryPrefix) + font.width(profitText);
 		int sx = ox + winW - MARGIN - totalWidth;
@@ -263,11 +272,11 @@ public final class DungeonLootScreen extends Screen {
 	}
 
 	private void drawSectionLabels(GuiGraphicsExtractor g, int y) {
-		String runsLabel = "All Runs (" + tabHistory.size() + ")";
-		g.text(font, runsLabel, listX + 2, y + 4, TEXT_SECONDARY);
+		String chestsLabel = "All Chests (" + tabHistory.size() + ")";
+		g.text(font, chestsLabel, listX + 2, y + 4, TEXT_SECONDARY);
 		String tableLabel = selectedRunIndex >= 0 && selectedRunIndex < tabHistory.size()
-			? "Loot Summary, Run #" + tabHistory.get(selectedRunIndex).runNumber
-			: "Loot Summary, All Runs";
+			? "Loot Summary, Chest #" + chestDisplayNumber(tabHistory.get(selectedRunIndex), selectedRunIndex)
+			: "Loot Summary, All Chests";
 		g.text(font, tableLabel, tableX + 2, y + 4, TEXT_SECONDARY);
 	}
 
@@ -276,16 +285,16 @@ public final class DungeonLootScreen extends Screen {
 		g.enableScissor(listX, listY, listX + listW, listY + listH);
 
 		drawRunListRow(g, mouseX, mouseY, -1, ItemStack.EMPTY,
-			"All Runs (" + tabHistory.size() + ")", null, 0,
+			List.of(), "All Chests (" + tabHistory.size() + ")", null, 0,
 			formatSigned(sumProfit(tabHistory)),
 			listY - listScroll);
 
 		for (int i = 0; i < tabHistory.size(); i++) {
 			DungeonRunRecord r = tabHistory.get(i);
-			String runLabel = "#" + r.runNumber;
+			String runLabel = "#" + chestDisplayNumber(r, i);
 			String chestLabel = (r.chestTitle == null || r.chestTitle.isBlank()) ? null : " " + r.chestTitle;
 			ItemStack icon = resolveChestIcon(r.chestTitle);
-			drawRunListRow(g, mouseX, mouseY, i, icon, runLabel, chestLabel, chestColor(r.chestTitle),
+			drawRunListRow(g, mouseX, mouseY, i, icon, modifierIcons(r), runLabel, chestLabel, chestColor(r.chestTitle),
 				formatSigned(r.chestProfitCoins), listY + (i + 1) * ROW_H - listScroll);
 		}
 
@@ -293,7 +302,7 @@ public final class DungeonLootScreen extends Screen {
 		border(g, listX, listY, listW, listH, PANEL_BORDER);
 	}
 
-	private void drawRunListRow(GuiGraphicsExtractor g, int mouseX, int mouseY, int index, ItemStack icon, String runLabel, String chestLabel, int chestLabelColor, String sub, int rowY) {
+	private void drawRunListRow(GuiGraphicsExtractor g, int mouseX, int mouseY, int index, ItemStack icon, List<ItemStack> modifierIcons, String runLabel, String chestLabel, int chestLabelColor, String sub, int rowY) {
 		if (rowY + ROW_H <= listY || rowY >= listY + listH) return;
 		boolean selected = selectedRunIndex == index;
 		boolean hovered = contains(listX, rowY, listW, ROW_H, mouseX, mouseY);
@@ -313,11 +322,22 @@ public final class DungeonLootScreen extends Screen {
 		int textY = rowY + 6;
 		int baseColor = selected ? 0xFFFFFFFF : TEXT_PRIMARY;
 		int profitX = listX + listW - 8 - font.width(sub);
+		List<ItemStack> safeModifierIcons = modifierIcons == null ? List.of() : modifierIcons;
+		int modifierW = safeModifierIcons.size() * 18;
+		int modifierX = profitX - 6 - modifierW;
+		int labelRight = safeModifierIcons.isEmpty() ? profitX : modifierX;
 		g.text(font, runLabel, textX, textY, baseColor);
 		if (chestLabel != null && !chestLabel.isBlank()) {
 			int labelX = textX + font.width(runLabel);
-			String safeChestLabel = ellipsize(chestLabel, Math.max(0, profitX - labelX - 6));
+			String safeChestLabel = ellipsize(chestLabel, Math.max(0, labelRight - labelX - 6));
 			g.text(font, safeChestLabel, labelX, textY, selected ? chestLabelColor : blendColor(chestLabelColor, 0xAA));
+		}
+		if (!safeModifierIcons.isEmpty()) {
+			int iconX = modifierX;
+			for (ItemStack modifierIcon : safeModifierIcons) {
+				if (!modifierIcon.isEmpty()) g.item(modifierIcon, iconX, rowY + 2);
+				iconX += 18;
+			}
 		}
 		int subColor = sub.startsWith("-") ? 0xFFFF7A7A : 0xFF8BCF9A;
 		g.text(font, sub, profitX, textY, subColor);
@@ -533,7 +553,10 @@ public final class DungeonLootScreen extends Screen {
 
 	private void reloadHistory() {
 		allHistory = new ArrayList<>(DrtConfigManager.getRunHistory());
-		allHistory.sort(Comparator.comparingLong((DungeonRunRecord r) -> r.timestampEpochMillis).reversed());
+		allHistory.sort(Comparator
+			.comparingInt((DungeonRunRecord r) -> r.chestNumber)
+			.reversed()
+			.thenComparing(Comparator.comparingLong((DungeonRunRecord r) -> r.timestampEpochMillis).reversed()));
 
 		// Build available tabs from floors that have at least one run
 		availableTabs = new ArrayList<>();
@@ -686,6 +709,15 @@ public final class DungeonLootScreen extends Screen {
 		lootSearchLastTypedMillis = 0L;
 	}
 
+	private int chestDisplayNumber(DungeonRunRecord record, int tabIndex) {
+		if (record != null && record.chestNumber > 0) return record.chestNumber;
+		return tabHistory.size() - tabIndex;
+	}
+
+	private static String plural(int count, String singular, String plural) {
+		return count == 1 ? singular : plural;
+	}
+
 	private String rowKey(DisplayRow row) {
 		return row.itemId() + " " + row.label();
 	}
@@ -744,6 +776,8 @@ public final class DungeonLootScreen extends Screen {
 		if (!cached.isEmpty()) return cached;
 		if (chestTitle == null) return new ItemStack(Items.CHEST);
 		String t = chestTitle.toUpperCase(Locale.ROOT);
+		if (t.contains("PAID"))    return new ItemStack(Items.ENDER_CHEST);
+		if (t.contains("FREE"))    return new ItemStack(Items.CHEST);
 		if (t.contains("WOOD"))    return new ItemStack(Items.CHEST);
 		if (t.contains("GOLD"))    return new ItemStack(Items.GOLD_BLOCK);
 		if (t.contains("DIAMOND")) return new ItemStack(Items.DIAMOND_BLOCK);
@@ -751,6 +785,15 @@ public final class DungeonLootScreen extends Screen {
 		if (t.contains("OBSIDIAN"))return new ItemStack(Items.OBSIDIAN);
 		if (t.contains("BEDROCK")) return new ItemStack(Items.BEDROCK);
 		return new ItemStack(Items.CHEST);
+	}
+
+	private static List<ItemStack> modifierIcons(DungeonRunRecord record) {
+		if (record == null) return List.of();
+		List<ItemStack> icons = new ArrayList<>();
+		if (record.usedDungeonChestKey || record.dungeonChestKeyCostCoins > 0L) icons.add(resolveItemIcon("DUNGEON_CHEST_KEY"));
+		if (record.usedKismetFeather || record.kismetFeatherCostCoins > 0L) icons.add(resolveItemIcon("KISMET_FEATHER"));
+		if (record.usedWheelOfFate || record.wheelOfFateCostCoins > 0L) icons.add(resolveItemIcon("WHEEL_OF_FATE"));
+		return icons;
 	}
 
 	private static ItemStack dyedLeather(net.minecraft.world.item.Item item, int rgb) {
@@ -765,14 +808,23 @@ public final class DungeonLootScreen extends Screen {
 		if (itemId == null || itemId.isBlank()) return ItemStack.EMPTY;
 		String originalId = itemId.toUpperCase(Locale.ROOT);
 		String id = normalizeResolverItemId(originalId);
+		ItemStack deterministicModifierIcon = resolveModifierIcon(id);
+		if (!deterministicModifierIcon.isEmpty()) return deterministicModifierIcon;
 
-		// Enqueue async NEU fetch up-front so skulls have their texture by the next render.
+		// Enqueue async NEU fetch up-front so skulls have their texture by the next extractRenderState.
 		NeuItemResolver.enqueue(id);
+		ItemStack neuStack = NeuItemResolver.getResolvedStack(id);
+		if (neuStack != null && !neuStack.isEmpty() && !neuStack.is(Items.BARRIER)) return neuStack;
 
 		// ── Deterministic non-skull rules ────────────────────────────────────
 		if (id.startsWith("ENCHANTMENT_ULTIMATE_")) return new ItemStack(Items.ENCHANTED_BOOK);
 		if (id.startsWith("ENCHANTMENT_"))          return new ItemStack(Items.ENCHANTED_BOOK);
 		if (id.startsWith("ESSENCE_"))              return new ItemStack(Items.NETHER_STAR);
+		if (id.startsWith("SHARD_"))                return new ItemStack(Items.AMETHYST_SHARD);
+		if (id.equals("KUUDRA_TEETH"))              return new ItemStack(Items.PRISMARINE_SHARD);
+		if (id.equals("SMOLDERING_EMBERS"))         return new ItemStack(Items.BLAZE_POWDER);
+		if (id.equals("MANA_DISINTEGRATOR"))        return new ItemStack(Items.PRISMARINE_CRYSTALS);
+		if (id.startsWith("KUUDRA_") || id.startsWith("KUUDRAS_")) return new ItemStack(Items.NETHER_WART);
 		// Shadow Assassin — black leather (helmet is skull, falls through to NEU)
 		if (id.equals("SHADOW_ASSASSIN_CHESTPLATE")) return dyedLeather(Items.LEATHER_CHESTPLATE, 0x1A1A1A);
 		if (id.equals("SHADOW_ASSASSIN_LEGGINGS"))   return dyedLeather(Items.LEATHER_LEGGINGS, 0x1A1A1A);
@@ -825,15 +877,20 @@ public final class DungeonLootScreen extends Screen {
 		// Misc non-skull
 		if (id.equals("FUMING_POTATO_BOOK"))        return new ItemStack(Items.BOOK);
 		if (id.equals("DUNGEON_CHEST_KEY"))         return new ItemStack(Items.TRIPWIRE_HOOK);
-
-		// ── NEU resolved stack (skull textures and unknown items) ─────────────
-		ItemStack neuStack = NeuItemResolver.getResolvedStack(id);
-		if (neuStack != null && !neuStack.isEmpty()) return neuStack;
+		if (id.equals("KISMET_FEATHER"))            return new ItemStack(Items.FEATHER);
+		if (id.equals("WHEEL_OF_FATE"))             return new ItemStack(Items.CLOCK);
 
 		// Skull placeholder shown while the NEU fetch is still in-flight
 		if (id.equals("WITHER_CATALYST")) return new ItemStack(Items.WITHER_SKELETON_SKULL);
 		if (isKnownSkullFallback(originalId, id)) return new ItemStack(Items.PLAYER_HEAD);
 
+		return ItemStack.EMPTY;
+	}
+
+	private static ItemStack resolveModifierIcon(String id) {
+		if (id.equals("DUNGEON_CHEST_KEY")) return new ItemStack(Items.TRIPWIRE_HOOK);
+		if (id.equals("KISMET_FEATHER")) return new ItemStack(Items.FEATHER);
+		if (id.equals("WHEEL_OF_FATE")) return new ItemStack(Items.CLOCK);
 		return ItemStack.EMPTY;
 	}
 
@@ -847,7 +904,10 @@ public final class DungeonLootScreen extends Screen {
 			case "WARPED_STONE" -> "AOTE_STONE";
 			case "ADAPTIVE_BLADE" -> "STONE_BLADE";
 			case "WITHER_CLOAK_SWORD" -> "WITHER_CLOAK";
-			default -> id;
+			default -> {
+				String attributeShardId = NeuItemResolver.getAttributeShardInternalName(id);
+				yield attributeShardId != null ? attributeShardId : id;
+			}
 		};
 	}
 
@@ -868,12 +928,15 @@ public final class DungeonLootScreen extends Screen {
 			|| resolvedId.equals("RECOMBOBULATOR_3000")
 			|| resolvedId.equals("AOTE_STONE")
 			|| resolvedId.equals("TRAINING_WEIGHTS")
-			|| resolvedId.equals("SCARF_STUDIES");
+			|| resolvedId.equals("SCARF_STUDIES")
+			|| resolvedId.startsWith("ATTRIBUTE_SHARD_");
 	}
 
 	private static int chestColor(String chestTitle) {
 		if (chestTitle == null) return 0xFFDDDDDD;
 		String t = chestTitle.toUpperCase(Locale.ROOT);
+		if (t.contains("PAID")) return 0xFFAA0000;
+		if (t.contains("FREE")) return 0xFF55AA55;
 		if (t.contains("WOOD")) return 0xFFAA8050;
 		if (t.contains("GOLD")) return 0xFFFFAA00;
 		if (t.contains("DIAMOND")) return 0xFF55CCFF;
@@ -896,6 +959,9 @@ public final class DungeonLootScreen extends Screen {
 		if (id.startsWith("ENCHANTMENT_ULTIMATE_")) return 0xFFFF55FF; // Mythic
 		if (id.startsWith("ENCHANTMENT_"))          return 0xFF5555FF; // Rare
 		if (id.startsWith("ESSENCE_"))              return 0xFFAAAAAA; // grey
+		if (id.startsWith("SHARD_"))                return 0xFF5555FF;
+		if (id.equals("KUUDRA_TEETH") || id.equals("MANA_DISINTEGRATOR")) return 0xFF55FF55;
+		if (id.equals("SMOLDERING_EMBERS"))         return 0xFFFFAA00;
 		// Master Skull tier varies
 		if (id.startsWith("MASTER_SKULL_TIER_")) {
 			int tier = 0;

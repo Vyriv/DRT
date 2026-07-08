@@ -12,8 +12,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Set;
 import net.fabricmc.loader.api.FabricLoader;
 
 public final class DrtConfigManager {
@@ -42,10 +44,13 @@ public final class DrtConfigManager {
 				if (loaded.runHistory == null) loaded.runHistory = new ArrayList<>();
 				loaded.hudScale = clampHudScale(loaded.hudScale);
 				loaded.hudVisibilityMode = normalizeHudVisibilityMode(loaded.hudVisibilityMode);
+				normalizeOnboardingSettings(loaded);
 				if (loaded.legacyRunsCompleted > 0 && !loaded.floorRunCounts.containsKey("M5")) {
 					loaded.floorRunCounts.put("M5", loaded.legacyRunsCompleted);
 				}
+				boolean migrated = normalizeRunHistory(loaded);
 				config = loaded;
+				if (migrated) save();
 			} catch (com.google.gson.JsonSyntaxException e) {
 				DungeonRunTracker.LOGGER.error("[DRT] Config file malformed, resetting to defaults", e);
 				config = new DrtConfig();
@@ -91,9 +96,15 @@ public final class DrtConfigManager {
 
 	public static synchronized void addRunRecord(DungeonRunRecord record) {
 		if (record == null || record.lootEntries == null || record.lootEntries.isEmpty()) return;
-		config.runHistory.add(record.copy());
-		int overflow = config.runHistory.size() - 500;
-		if (overflow > 0) config.runHistory.subList(0, overflow).clear();
+		if (config.runHistory == null) config.runHistory = new ArrayList<>();
+		DungeonRunRecord stored = record.copy();
+		if (stored.chestNumber <= 0) {
+			stored.chestNumber = nextChestLogNumber();
+		} else {
+			config.nextChestLogNumber = Math.max(Math.max(1, config.nextChestLogNumber), stored.chestNumber + 1);
+		}
+		stored.normalizeCostBreakdown();
+		config.runHistory.add(stored);
 		save();
 	}
 
@@ -121,10 +132,38 @@ public final class DrtConfigManager {
 		save();
 	}
 
+	public static synchronized void updateOnboardingSettings(
+		boolean onboardingComplete,
+		String kuudraFaction,
+		boolean kuudraPetEnabled,
+		String kuudraPetRarity,
+		int kuudraPetLevel,
+		boolean forceSalvageArmor,
+		boolean forceSalvageWands,
+		boolean forceSalvageEquipment,
+		boolean coolForgedEnabled,
+		int coolForgedLevel,
+		String bazaarPriceMode
+	) {
+		config.onboardingComplete = onboardingComplete;
+		config.kuudraFaction = normalizeKuudraFaction(kuudraFaction);
+		config.kuudraPetEnabled = kuudraPetEnabled;
+		config.kuudraPetRarity = normalizePetRarity(kuudraPetRarity);
+		config.kuudraPetLevel = clamp(kuudraPetLevel, 1, 100);
+		config.forceSalvageArmor = forceSalvageArmor;
+		config.forceSalvageWands = forceSalvageWands;
+		config.forceSalvageEquipment = forceSalvageEquipment;
+		config.coolForgedEnabled = coolForgedEnabled;
+		config.coolForgedLevel = clamp(coolForgedLevel, 1, 5);
+		config.bazaarPriceMode = normalizeBazaarPriceMode(bazaarPriceMode);
+		save();
+	}
+
 	public static synchronized void clearAllData() {
 		if (config.floorRunCounts != null) config.floorRunCounts.clear();
 		config.legacyRunsCompleted = 0;
 		config.runHistory = new ArrayList<>();
+		config.nextChestLogNumber = 1;
 		save();
 	}
 
@@ -146,5 +185,77 @@ public final class DrtConfigManager {
 			case "GLOBAL", "DEFAULT", "DHUB" -> normalized;
 			default -> "DEFAULT";
 		};
+	}
+
+	private static void normalizeOnboardingSettings(DrtConfig loaded) {
+		loaded.kuudraFaction = normalizeKuudraFaction(loaded.kuudraFaction);
+		loaded.kuudraPetRarity = normalizePetRarity(loaded.kuudraPetRarity);
+		loaded.kuudraPetLevel = clamp(loaded.kuudraPetLevel, 1, 100);
+		loaded.coolForgedLevel = clamp(loaded.coolForgedLevel, 1, 5);
+		loaded.bazaarPriceMode = normalizeBazaarPriceMode(loaded.bazaarPriceMode);
+	}
+
+	private static String normalizeKuudraFaction(String faction) {
+		if (faction == null || faction.isBlank()) return "MAGE";
+		String normalized = faction.trim().toUpperCase(java.util.Locale.ROOT);
+		return switch (normalized) {
+			case "MAGE", "BARBARIAN" -> normalized;
+			default -> "MAGE";
+		};
+	}
+
+	private static String normalizePetRarity(String rarity) {
+		if (rarity == null || rarity.isBlank()) return "LEGENDARY";
+		String normalized = rarity.trim().toUpperCase(java.util.Locale.ROOT);
+		return switch (normalized) {
+			case "COMMON", "UNCOMMON", "RARE", "EPIC", "LEGENDARY" -> normalized;
+			default -> "LEGENDARY";
+		};
+	}
+
+	private static String normalizeBazaarPriceMode(String mode) {
+		if (mode == null || mode.isBlank()) return "INSTANT";
+		String normalized = mode.trim().toUpperCase(java.util.Locale.ROOT);
+		return switch (normalized) {
+			case "INSTANT", "INSTANT_SELL", "INSTANT_BUY" -> "INSTANT";
+			case "ORDER", "SELL_OFFER", "BUY_ORDER" -> "ORDER";
+			default -> "INSTANT";
+		};
+	}
+
+	private static int clamp(int value, int min, int max) {
+		return Math.max(min, Math.min(max, value));
+	}
+
+	private static boolean normalizeRunHistory(DrtConfig loaded) {
+		boolean changed = false;
+		if (loaded.nextChestLogNumber <= 0) {
+			loaded.nextChestLogNumber = 1;
+			changed = true;
+		}
+		Set<Integer> used = new HashSet<>();
+		int next = Math.max(1, loaded.nextChestLogNumber);
+		for (DungeonRunRecord record : loaded.runHistory) {
+			if (record == null) continue;
+			if (record.normalizeCostBreakdown()) changed = true;
+			if (record.chestNumber > 0 && used.add(record.chestNumber)) {
+				next = Math.max(next, record.chestNumber + 1);
+				continue;
+			}
+			while (used.contains(next)) next++;
+			record.chestNumber = next++;
+			used.add(record.chestNumber);
+			changed = true;
+		}
+		if (loaded.nextChestLogNumber != next) {
+			loaded.nextChestLogNumber = next;
+			changed = true;
+		}
+		return changed;
+	}
+
+	private static int nextChestLogNumber() {
+		if (config.nextChestLogNumber <= 0) config.nextChestLogNumber = 1;
+		return config.nextChestLogNumber++;
 	}
 }
