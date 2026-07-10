@@ -1,3 +1,5 @@
+[![VyAddons](https://img.shields.io/discord/1487928162636533871?label=Join%20our%20Discord&logo=discord&color=5865F2&logoColor=white)](https://discord.gg/WrKD6wTQYC)
+
 # DungeonRunTracker [DRT]
 
 A Hypixel SkyBlock mod that tracks dungeon runs and loot.
