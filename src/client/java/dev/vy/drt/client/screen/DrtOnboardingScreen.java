@@ -3,6 +3,7 @@ package dev.vy.drt.client.screen;
 import dev.vy.drt.client.tracker.DungeonRunTrackerFeature;
 import dev.vy.drt.config.DrtConfig;
 import dev.vy.drt.config.DrtConfigManager;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -13,6 +14,7 @@ import net.minecraft.client.input.CharacterEvent;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
+import net.minecraft.util.Util;
 import org.lwjgl.glfw.GLFW;
 
 public final class DrtOnboardingScreen extends Screen {
@@ -36,6 +38,7 @@ public final class DrtOnboardingScreen extends Screen {
 	private static final int RIGHT_PAD = 18;
 	private static final int CONTROL_W = 118;
 	private static final int CONTROL_GAP = 8;
+	private static final String DISCORD_INVITE_URL = "https://discord.com/invite/R5NdTVRDpb";
 
 	private static final String[] PET_RARITIES = {"COMMON", "UNCOMMON", "RARE", "EPIC", "LEGENDARY"};
 
@@ -336,14 +339,21 @@ public final class DrtOnboardingScreen extends Screen {
 		int y = oy + winH - 30;
 		g.fill(ox + 10, y - 5, ox + winW - 10, y - 4, 0x5535385D);
 		int doneX = controlX(58);
+		int discordW = 88;
+		int discordX = ox + (winW - discordW) / 2;
 		drawSmallButton(g, ox + 18, y, 48, 18, "Skip", false, () -> {
 			saveSettings(true);
 			super.onClose();
 		}, "Use current settings and stop showing setup", DIM);
+		drawSmallButton(g, discordX, y, discordW, 18, "Join Discord", false, this::openDiscordInvite, "Open the DRT Discord invite", GOLD);
 		drawSmallButton(g, doneX, y, 58, 18, "Done", false, () -> {
 			saveSettings(true);
 			super.onClose();
 		}, "Save and finish onboarding");
+	}
+
+	private void openDiscordInvite() {
+		Util.getPlatform().openUri(URI.create(DISCORD_INVITE_URL));
 	}
 
 	private void drawDropdownMenus(GuiGraphicsExtractor g, int mouseX, int mouseY) {

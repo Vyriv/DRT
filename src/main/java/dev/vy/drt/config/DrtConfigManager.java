@@ -174,6 +174,20 @@ public final class DrtConfigManager {
 		save();
 	}
 
+	public static synchronized boolean removeRunRecord(DungeonRunRecord target) {
+		if (target == null || config.runHistory == null) return false;
+		boolean removed = config.runHistory.removeIf(r -> matchesRunRecord(r, target));
+		if (removed) save();
+		return removed;
+	}
+
+	private static boolean matchesRunRecord(DungeonRunRecord left, DungeonRunRecord right) {
+		if (left == null || right == null) return false;
+		if (left.timestampEpochMillis != right.timestampEpochMillis) return false;
+		if (left.chestNumber != right.chestNumber) return false;
+		return sameText(left.floor, right.floor) && sameText(left.chestTitle, right.chestTitle);
+	}
+
 	private static float clampHudScale(float scale) {
 		if (!Float.isFinite(scale) || scale <= 0.0F) return 1.0F;
 		return Math.max(MIN_HUD_SCALE, Math.min(MAX_HUD_SCALE, scale));

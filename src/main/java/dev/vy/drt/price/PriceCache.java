@@ -41,6 +41,8 @@ public final class PriceCache {
 	private static volatile Map<String, String> itemIdToSource = Map.of();
 	private static volatile Map<String, AuctionPriceData> itemIdToAuctionData = Map.of();
 	private static volatile Map<String, BazaarPriceData> itemIdToBazaarData = Map.of();
+	private static volatile List<SearchResult> searchIndex = List.of();
+	private static volatile int searchIndexSourceSize = -1;
 
 	private PriceCache() {
 	}
@@ -72,26 +74,62 @@ public final class PriceCache {
 	}
 
 	public static List<SearchResult> search(String query, int limit) {
+		return searchIndexed(query, limit);
+	}
+
+	public static List<SearchResult> searchIndexed(String query, int limit) {
+		ensureSearchIndex();
+		if (searchIndex.isEmpty()) return List.of();
+
 		String normalized = query == null ? "" : query.trim().toLowerCase(Locale.ROOT);
 		if (normalized.isEmpty()) return List.of();
 
 		List<SearchResult> results = new ArrayList<>();
-		for (Map.Entry<String, Double> entry : itemIdToPrice.entrySet()) {
-			String itemId = entry.getKey();
-			String displayName = toDisplayName(itemId);
-			String idLower = itemId.toLowerCase(Locale.ROOT);
-			String nameLower = displayName.toLowerCase(Locale.ROOT);
+		for (SearchResult entry : searchIndex) {
+			String idLower = entry.itemId().toLowerCase(Locale.ROOT);
+			String nameLower = entry.displayName().toLowerCase(Locale.ROOT);
 			if (!idLower.contains(normalized) && !nameLower.contains(normalized)) continue;
 			int rank = idLower.startsWith(normalized) || nameLower.startsWith(normalized) ? 0 : 1;
-			results.add(new SearchResult(itemId, displayName, entry.getValue(), itemIdToSource.getOrDefault(itemId, "unknown"), rank));
+			results.add(new SearchResult(entry.itemId(), entry.displayName(), entry.price(), entry.source(), rank));
 		}
-
-		results.sort(Comparator
-			.comparingInt(SearchResult::rank)
-			.thenComparing(SearchResult::displayName)
-			.thenComparing(SearchResult::itemId));
+		if (!normalized.isEmpty()) {
+			results.sort(Comparator
+				.comparingInt(SearchResult::rank)
+				.thenComparing(SearchResult::displayName, String.CASE_INSENSITIVE_ORDER)
+				.thenComparing(SearchResult::itemId));
+		}
 		if (results.size() > limit) return List.copyOf(results.subList(0, limit));
 		return List.copyOf(results);
+	}
+
+	private static void ensureSearchIndex() {
+		Map<String, Double> prices = itemIdToPrice;
+		if (prices.isEmpty()) {
+			searchIndex = List.of();
+			searchIndexSourceSize = 0;
+			return;
+		}
+		if (searchIndexSourceSize == prices.size() && !searchIndex.isEmpty()) return;
+
+		List<SearchResult> built = new ArrayList<>(prices.size());
+		for (Map.Entry<String, Double> entry : prices.entrySet()) {
+			String itemId = entry.getKey();
+			built.add(new SearchResult(
+				itemId,
+				prettyDisplayName(itemId),
+				entry.getValue(),
+				itemIdToSource.getOrDefault(itemId, "unknown"),
+				0
+			));
+		}
+		built.sort(Comparator.comparing(SearchResult::displayName, String.CASE_INSENSITIVE_ORDER));
+		searchIndex = List.copyOf(built);
+		searchIndexSourceSize = prices.size();
+	}
+
+	private static void invalidateSearchIndex() {
+		searchIndex = List.of();
+		searchIndexSourceSize = -1;
 	}
 
 	private static void refreshSafely() {
@@ -119,14 +157,22 @@ public final class PriceCache {
 		Map<String, BazaarPriceData> nextBazaarData = new ConcurrentHashMap<>();
 		loadAuctionHouse(root.getAsJsonObject("auction_house"), nextPrices, nextSources, nextAuctionData);
 		loadBazaar(root.getAsJsonObject("bazaar"), nextPrices, nextSources, nextBazaarData);
-		loadCoflFallback("MASTER_SKULL_TIER_1", "MASTER_SKULL_TIER_1", nextPrices, nextSources);
+		loadMasterSkullFallbacks(nextPrices, nextSources);
 		loadCoflFallback("PET_SPIRIT", "PET_SPIRIT", nextPrices, nextSources);
 		if (!nextPrices.isEmpty()) {
 			itemIdToPrice = Map.copyOf(nextPrices);
 			itemIdToSource = Map.copyOf(nextSources);
 			itemIdToAuctionData = Map.copyOf(nextAuctionData);
 			itemIdToBazaarData = Map.copyOf(nextBazaarData);
+			invalidateSearchIndex();
 			DungeonRunTracker.LOGGER.info("[DRT] Loaded {} Athen price entries", nextPrices.size());
+		}
+	}
+
+	private static void loadMasterSkullFallbacks(Map<String, Double> prices, Map<String, String> sources) {
+		for (int tier = 1; tier <= 10; tier++) {
+			String itemId = "MASTER_SKULL_TIER_" + tier;
+			loadCoflFallback(itemId, itemId, prices, sources);
 		}
 	}
 
@@ -224,12 +270,22 @@ public final class PriceCache {
 		}
 	}
 
+	private static String prettyDisplayName(String itemId) {
+		if (itemId == null || itemId.isBlank()) return "Unknown";
+		String lower = itemId.toLowerCase(Locale.ROOT).replace('_', ' ').replace('-', ' ');
+		String[] parts = lower.split("\\s+");
+		StringBuilder sb = new StringBuilder();
+		for (String part : parts) {
+			if (part.isEmpty()) continue;
+			if (sb.length() > 0) sb.append(' ');
+			sb.append(Character.toUpperCase(part.charAt(0)));
+			if (part.length() > 1) sb.append(part.substring(1));
+		}
+		return sb.isEmpty() ? itemId : sb.toString();
+	}
+
 	private static String toDisplayName(String itemId) {
-		return itemId.toLowerCase(Locale.ROOT)
-			.replace('_', ' ')
-			.replace('-', ' ')
-			.replaceAll("\\s+", " ")
-			.trim();
+		return prettyDisplayName(itemId);
 	}
 
 	public record PriceLookup(String itemId, double price, String source) {

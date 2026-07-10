@@ -253,7 +253,6 @@ public final class DungeonRunTrackerFeature {
 	private int hudX = 10;
 	private int hudY = 10;
 	private float hudScale = 1.0F;
-	private boolean lootScreenPending = false;
 
 	private int refreshCountdown;
 	private boolean insideDungeon;
@@ -389,6 +388,7 @@ public final class DungeonRunTrackerFeature {
 
 		updateDungeonContext(client);
 		captureRewardChestCosts(client);
+		tryConsumeAutoOpenRewardChest(client);
 		handleDragging(client);
 	}
 
@@ -490,7 +490,7 @@ public final class DungeonRunTrackerFeature {
 			} else if (isHoveringRunsLine(client, mouseX, mouseY)) {
 				drawTooltip(client, guiGraphics, buildRunsTooltip(), mouseX, mouseY);
 			} else if (isHoveringProfitLine(client, mouseX, mouseY)) {
-				drawTooltip(client, guiGraphics, "Click to open loot log", mouseX, mouseY);
+				drawTooltip(client, guiGraphics, "Click to view " + (selectedFloor == null ? "all" : selectedFloor.name()) + " loot history", mouseX, mouseY);
 			} else if (isHoveringResetButton(client, mouseX, mouseY, showResetLine)) {
 				drawTooltip(client, guiGraphics, "Click to reset " + floorTag + " tracker", mouseX, mouseY);
 			}
@@ -798,8 +798,9 @@ public final class DungeonRunTrackerFeature {
 	public boolean handleScreenMouseClick(Minecraft client, double mouseX, double mouseY, int button, boolean moveMode) {
 		int mx = (int) mouseX;
 		int my = (int) mouseY;
+		if (button == 0 && !moveMode && handleChestTitleClick(client, mx, my)) return true;
 		if (button == 0 && !moveMode && handleChestKeyModifierClick(client, mx, my)) return true;
-		if (button == 0 && !moveMode && handleCroesusOverlayClick(client, mx, my)) return true;
+		if (!moveMode && (button == 0 || button == 1) && handleCroesusOverlayClick(client, mx, my, button)) return true;
 		if (!isTrackerVisible(client, moveMode) || (button != 0 && button != 1)) return false;
 		if (moveMode) return false;
 		boolean showResetLine = shouldShowResetLine(client, false);
@@ -810,7 +811,10 @@ public final class DungeonRunTrackerFeature {
 		if (isHoveringModeLabel(client, mx, my)) { cycleHudVisibilityMode(); return true; }
 		if (isHoveringFloorLabel(client, mx, my)) { cycleSelectedFloor(); return true; }
 		if (isHoveringRunsHrPart(client, mx, my)) { toggleRunsPerHrPause(); return true; }
-		if (isHoveringProfitLine(client, mx, my)) { lootScreenPending = true; return true; }
+		if (isHoveringProfitLine(client, mx, my)) {
+			requestOpenLootScreen(selectedFloor, null);
+			return true;
+		}
 		if (isHoveringResetButton(client, mx, my, showResetLine)) { resetSelectedFloor(); return true; }
 		return false;
 	}
@@ -860,11 +864,132 @@ public final class DungeonRunTrackerFeature {
 		return pointInRect(mouseX, mouseY, x, keyY - 4, CHEST_OVERLAY_W, lineH + 2);
 	}
 
-	private boolean handleCroesusOverlayClick(Minecraft client, int mouseX, int mouseY) {
+	private long lastChestTitleClickMillis;
+	private String lastChestTitleClicked = "";
+	private long autoOpenRewardChestAtMillis;
+	private long autoOpenRewardChestDeadlineMillis;
+	private static final long AUTO_OPEN_REWARD_CHEST_DELAY_MS = 500L;
+	private static final long AUTO_OPEN_REWARD_CHEST_RETRY_MS = 2000L;
+
+	private boolean handleChestTitleClick(Minecraft client, int mouseX, int mouseY) {
+		OverlayChestData data = currentOverlayChestData(client);
+		if (data == null) return false;
+
+		int screenW = client.getWindow().getGuiScaledWidth();
+		ScreenBounds bounds = currentContainerBounds(client);
+		int x = Math.min(screenW - CHEST_OVERLAY_W - 4, bounds.right() + 8);
+		if (x < bounds.right() + 2) x = Math.max(4, bounds.right() + 2);
+		int y = Math.max(6, Math.min(client.getWindow().getGuiScaledHeight() - 12, bounds.top() + 2));
+
+		int lineH = client.font.lineHeight + 2;
+		if (pointInRect(mouseX, mouseY, x, y - 4, CHEST_OVERLAY_W, lineH + 4)) {
+			long now = System.currentTimeMillis();
+			if (now - lastChestTitleClickMillis < 500 && data.chestTitle.equals(lastChestTitleClicked)) {
+				// Double click: Open chest
+				if (client.screen instanceof AbstractContainerScreen<?> screen) {
+					String normalizedTitle = normalize(screen.getTitle().getString());
+					if (isCroesusChestListTitle(normalizedTitle)) {
+						List<CroesusChestRow> rows = currentCroesusChestRows(client);
+						for (CroesusChestRow row : rows) {
+							if (row.canonicalTitle.equals(canonicalRewardChestTitle(normalize(data.chestTitle)))) {
+								invokeInventoryPickupClick(client, row.menuSlotIndex);
+								lastChestTitleClickMillis = 0;
+								lootScreenPendingMillis = 0; // Cancel delayed loot history opening
+								return true;
+							}
+						}
+					}
+				}
+			}
+
+			// Single click: View history (or first part of double click)
+			lastChestTitleClickMillis = now;
+			lastChestTitleClicked = data.chestTitle;
+			pendingLootScreenFloorFilter = selectedFloor;
+			pendingLootScreenSearchFilter = shortChestName(data.chestTitle);
+			lootScreenPendingMillis = now + 500;
+			return true;
+		}
+		return false;
+	}
+
+	private boolean handleCroesusOverlayClick(Minecraft client, int mouseX, int mouseY, int button) {
 		if (client == null || client.player == null || client.gameMode == null) return false;
 		CroesusChestRow row = croesusOverlayRowAt(client, mouseX, mouseY);
 		if (row == null) return false;
-		return invokeInventoryPickupClick(client, row.menuSlotIndex);
+
+		CroesusChestRow mapped = resolveCroesusChestRow(client, row.canonicalTitle);
+		if (mapped == null) {
+			DungeonRunTracker.LOGGER.debug("[DRT] Croesus overlay click: unmapped chest {}", row.canonicalTitle);
+			return true;
+		}
+
+		lootScreenPendingMillis = 0L;
+		if (button == 1) {
+			scheduleAutoOpenRewardChest();
+		} else {
+			cancelAutoOpenRewardChest();
+		}
+
+		if (!invokeInventoryPickupClick(client, mapped.menuSlotIndex)) {
+			cancelAutoOpenRewardChest();
+		}
+		return true;
+	}
+
+	private CroesusChestRow resolveCroesusChestRow(Minecraft client, String canonicalTitle) {
+		for (CroesusChestRow candidate : currentCroesusChestRows(client)) {
+			if (candidate.canonicalTitle.equals(canonicalTitle)) return candidate;
+		}
+		return null;
+	}
+
+	private void scheduleAutoOpenRewardChest() {
+		long now = System.currentTimeMillis();
+		autoOpenRewardChestAtMillis = now + AUTO_OPEN_REWARD_CHEST_DELAY_MS;
+		autoOpenRewardChestDeadlineMillis = autoOpenRewardChestAtMillis + AUTO_OPEN_REWARD_CHEST_RETRY_MS;
+	}
+
+	private void cancelAutoOpenRewardChest() {
+		autoOpenRewardChestAtMillis = 0L;
+		autoOpenRewardChestDeadlineMillis = 0L;
+	}
+
+	private void tryConsumeAutoOpenRewardChest(Minecraft client) {
+		if (autoOpenRewardChestAtMillis <= 0L) return;
+		long now = System.currentTimeMillis();
+		if (now < autoOpenRewardChestAtMillis) return;
+		if (now > autoOpenRewardChestDeadlineMillis) {
+			cancelAutoOpenRewardChest();
+			return;
+		}
+		if (!(client.screen instanceof AbstractContainerScreen<?> screen) || client.player == null || client.gameMode == null) return;
+		if (canonicalRewardChestTitle(normalize(screen.getTitle().getString())) == null) return;
+
+		int slotIndex = findOpenRewardChestSlotIndex(client.player.containerMenu);
+		if (slotIndex < 0) return;
+		if (invokeInventoryPickupClick(client, slotIndex)) {
+			cancelAutoOpenRewardChest();
+		}
+	}
+
+	private int findOpenRewardChestSlotIndex(AbstractContainerMenu menu) {
+		if (menu == null) return -1;
+		for (int slotIndex = 0; slotIndex < menu.slots.size(); slotIndex++) {
+			if (stackIndicatesOpenRewardChest(menu.getSlot(slotIndex).getItem())) return slotIndex;
+		}
+		return -1;
+	}
+
+	private boolean stackIndicatesOpenRewardChest(ItemStack stack) {
+		if (stack == null || stack.isEmpty()) return false;
+		String name = normalize(cleanText(stack.getHoverName().getString()));
+		if (name.contains("OPEN REWARD CHEST") || name.regionMatches(true, 0, "Click to open", 0, 13)) return true;
+		for (String line : cleanLoreLines(stack)) {
+			String normalized = normalize(line);
+			if (normalized.contains("OPEN REWARD CHEST") || normalized.regionMatches(true, 0, "Click to open", 0, 13)) return true;
+		}
+		return false;
 	}
 
 	private boolean invokeInventoryPickupClick(Minecraft client, int menuSlotIndex) {
@@ -950,10 +1075,45 @@ public final class DungeonRunTrackerFeature {
 		if (save) saveHudLayout();
 	}
 
+	private long lootScreenPendingMillis = 0;
+	private DungeonFloor pendingLootScreenFloorFilter = null;
+	private String pendingLootScreenSearchFilter = null;
+	private boolean openLootScreenRequested;
+
 	public boolean consumeLootScreenPending() {
-		boolean v = lootScreenPending;
-		lootScreenPending = false;
-		return v;
+		if (lootScreenPendingMillis > 0 && System.currentTimeMillis() > lootScreenPendingMillis) {
+			lootScreenPendingMillis = 0;
+			return true;
+		}
+		return false;
+	}
+
+	public void requestOpenLootScreen() {
+		requestOpenLootScreen(selectedFloor, null);
+	}
+
+	public void requestOpenLootScreen(DungeonFloor floorFilter, String searchFilter) {
+		pendingLootScreenFloorFilter = floorFilter;
+		pendingLootScreenSearchFilter = searchFilter;
+		openLootScreenRequested = true;
+	}
+
+	public boolean consumeOpenLootScreenRequest() {
+		if (!openLootScreenRequested) return false;
+		openLootScreenRequested = false;
+		return true;
+	}
+
+	public DungeonFloor getPendingLootScreenFloorFilter() {
+		DungeonFloor f = pendingLootScreenFloorFilter;
+		pendingLootScreenFloorFilter = null;
+		return f;
+	}
+
+	public String getPendingLootScreenSearchFilter() {
+		String s = pendingLootScreenSearchFilter;
+		pendingLootScreenSearchFilter = null;
+		return s;
 	}
 
 	public void clearSession() {
@@ -1239,7 +1399,12 @@ public final class DungeonRunTrackerFeature {
 		if (bestNormal != null) drawSlotHighlight(g, bestNormal, OVERLAY_PROFIT, false);
 		if (bestKey != null) drawSlotHighlight(g, bestKey, 0xFFFFDD55, false);
 		if (hoverRow != null) drawSlotHighlight(g, hoverRow, hoverColor, true);
-		if (tooltipRow != null) drawTooltip(client, g, "Click to view " + tooltipRow.displayName + " Chest", mouseX, mouseY);
+		if (tooltipRow != null) {
+			drawTooltip(client, g, List.of(
+				"Click to open " + tooltipRow.displayName + " chest",
+				"Right-click to open and confirm reward"
+			), mouseX, mouseY);
+		}
 		return true;
 	}
 
@@ -1409,6 +1574,10 @@ public final class DungeonRunTrackerFeature {
 		int x = Math.min(screenW - CHEST_OVERLAY_W - 4, bounds.right() + 8);
 		if (x < bounds.right() + 2) x = Math.max(4, bounds.right() + 2);
 		int y = Math.max(6, Math.min(screenH - 12, bounds.top() + 2));
+
+		if (pointInRect(mouseX, mouseY, x, y - 4, CHEST_OVERLAY_W, lineH + 4)) {
+			drawTooltip(client, g, List.of("Click to view " + data.chestTitle + " in loot history", "Double-click to open chest in Croesus"), mouseX, mouseY);
+		}
 
 		int cursorY = y;
 		ItemStack chestIcon = getChestIcon(data.chestTitle);
@@ -1985,7 +2154,6 @@ public final class DungeonRunTrackerFeature {
 			if (lootWindowUntilMillis <= 0L || now > lootWindowUntilMillis) return;
 			String screenKey = "opened#" + canonicalRewardTitle + "#" + client.player.containerMenu.containerId;
 			refreshRewardModifierScan(client.player.containerMenu, screenKey, now);
-			if (lastRewardModifierScanHadKeyRequirement && shouldApplyDungeonChestKeyModifier(canonicalRewardTitle)) markDungeonChestKeyUsed();
 			if (lastRewardModifierScanHadKismetMarker) markKismetFeatherUsed();
 			if (scannedRewardScreens.add(screenKey)) {
 				DungeonChestOffer cached = cachedChestOffersByTitle.get(canonicalRewardTitle);
@@ -2005,7 +2173,6 @@ public final class DungeonRunTrackerFeature {
 		boolean dueScan = firstScan || !screenKey.equals(lastRewardModifierScanKey) || now - lastRewardModifierScanMillis >= REWARD_MODIFIER_SCAN_INTERVAL_MS;
 		if (!dueScan) return;
 		refreshRewardModifierScan(menu, screenKey, now);
-		if (lastRewardModifierScanHadKeyRequirement && shouldApplyDungeonChestKeyModifier(normalizedTitle)) markDungeonChestKeyUsed();
 		if (lastRewardModifierScanHadKismetMarker) armNextOpenedKismetReroll();
 
 		updateCachedRewardChestOffers(menu);
@@ -2262,9 +2429,6 @@ public final class DungeonRunTrackerFeature {
 			if (lineIndicatesDungeonChestKeyUsed(normalized)) {
 				breakdown.usedDungeonChestKey = true;
 			}
-			if (lineIndicatesDungeonChestKeyRequirement(normalized)) {
-				breakdown.usedDungeonChestKey = true;
-			}
 			if (lineIndicatesKismetUsed(normalized)) {
 				breakdown.usedKismetFeather = true;
 				breakdown.kismetRerolledChestOpened = true;
@@ -2297,9 +2461,10 @@ public final class DungeonRunTrackerFeature {
 
 	private boolean lineIndicatesDungeonChestKeyUsed(String normalized) {
 		if (normalized == null || !normalized.contains("DUNGEON CHEST KEY")) return false;
+		if (normalized.contains("ALREADY OPENED")) return false;
+		if (normalized.contains("REQUIRES") || normalized.contains("REQUIRE") || normalized.contains("NEEDS") || normalized.contains("NEED")) return false;
 		return normalized.contains("USED")
 			|| normalized.contains("CONSUMED")
-			|| normalized.contains("OPENED")
 			|| normalized.contains("UNLOCKED")
 			|| normalized.contains("OPEN ANOTHER")
 			|| normalized.contains("EXTRA CHEST");
@@ -2480,7 +2645,11 @@ public final class DungeonRunTrackerFeature {
 			if (isHoveringModeLabel(client, mouseX, mouseY)) { cycleHudVisibilityMode(); leftMouseDownLastTick = true; return; }
 			if (isHoveringFloorLabel(client, mouseX, mouseY)) { cycleSelectedFloor(); leftMouseDownLastTick = true; return; }
 			if (isHoveringRunsHrPart(client, mouseX, mouseY)) { toggleRunsPerHrPause(); leftMouseDownLastTick = true; return; }
-			if (isHoveringProfitLine(client, mouseX, mouseY)) { lootScreenPending = true; leftMouseDownLastTick = true; return; }
+			if (isHoveringProfitLine(client, mouseX, mouseY)) {
+				requestOpenLootScreen(selectedFloor, null);
+				leftMouseDownLastTick = true;
+				return;
+			}
 		}
 
 		if (!(client.screen instanceof AbstractContainerScreen<?>)) {
@@ -2889,6 +3058,7 @@ public final class DungeonRunTrackerFeature {
 		kuudraSignalUntilMillis = 0L;
 		lastLevelIdentity = null;
 		clearLootWindow();
+		cancelAutoOpenRewardChest();
 		dragging = false;
 		positionDirty = false;
 	}
@@ -2954,6 +3124,43 @@ public final class DungeonRunTrackerFeature {
 		rewardMenuKismetRerollPending = false;
 		rewardMenuKismetRerolledChestTitle = "";
 		pendingLootEntries.clear();
+	}
+
+	public synchronized void recordManualRun(DungeonRunRecord record, long runTimeMs) {
+		if (record == null) return;
+		long now = System.currentTimeMillis();
+		String key = record.floor;
+		String g = record.grade;
+
+		DrtConfigManager.addRunRecord(record);
+
+		int newCount = floorRunCounts.merge(key, 1, Integer::sum);
+		DrtConfigManager.updateFloorRunCount(key, newCount);
+		gradeRunCounts.merge(g, 1, Integer::sum);
+		sessionGradeRuns.merge(g, 1, Integer::sum);
+		lastRecordedGrade = g;
+
+		if (!sessionActive) {
+			sessionActive = true;
+			sessionStartMillis = now;
+		}
+
+		sessionRuns++;
+		sessionFloorRuns.merge(key, 1, Integer::sum);
+
+		long profit = record.chestProfitCoins;
+		sessionTotalProfit += profit;
+		sessionFloorProfitTotals.merge(key, profit, Long::sum);
+		totalLifetimeProfit += profit;
+		floorProfitTotals.merge(key, profit, Long::sum);
+
+		if (runTimeMs > 0L) {
+			sessionTotalRunTimeMs += runTimeMs;
+			sessionFloorRunTimeTotals.merge(key, runTimeMs, Long::sum);
+			sessionInRunMillis += runTimeMs;
+		}
+
+		DungeonRunTracker.LOGGER.info("[DRT] *** MANUAL RUN RECORDED: floor={} grade={} totalForFloor={} profit={} runTimeMs={}", key, g, newCount, profit, runTimeMs);
 	}
 
 	private synchronized void recordCompletedRun(long now, DungeonFloor floor, String grade) {
@@ -3429,6 +3636,10 @@ public final class DungeonRunTrackerFeature {
 		aliases.put("DUNGEON CHEST KEY", "DUNGEON_CHEST_KEY");
 		aliases.put("KISMET FEATHER", "KISMET_FEATHER");
 		aliases.put("WHEEL OF FATE", "WHEEL_OF_FATE");
+		for (int tier = 1; tier <= 10; tier++) {
+			aliases.put("MASTER SKULL TIER " + tier, "MASTER_SKULL_TIER_" + tier);
+			aliases.put("MASTER SKULL - TIER " + tier, "MASTER_SKULL_TIER_" + tier);
+		}
 		aliases.put("WITHER CATALYST", "WITHER_CATALYST");
 		aliases.put("NECRON'S HANDLE", "NECRON_HANDLE");
 		aliases.put("SCARF'S STUDIES", "SCARF_STUDIES");
