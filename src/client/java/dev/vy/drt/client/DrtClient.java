@@ -8,6 +8,7 @@ import dev.vy.drt.client.screen.DrtOnboardingScreen;
 import dev.vy.drt.client.screen.DungeonTrackerPositionScreen;
 import dev.vy.drt.client.tracker.DungeonRunTrackerFeature;
 import dev.vy.drt.config.DrtConfigManager;
+import dev.vy.drt.config.DungeonFloor;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommands;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
@@ -62,6 +63,9 @@ public final class DrtClient implements ClientModInitializer {
 			if (tracker.consumeLootScreenPending()) {
 				openLootScreenNextTick = true;
 			}
+			if (tracker.consumeOpenLootScreenRequest()) {
+				openLootScreenNextTick = true;
+			}
 
 			if (!openLootScreenNextTick && !openMoveBoxNextTick && !openOnboardingNextTick) return;
 			if (client.player == null) {
@@ -79,7 +83,9 @@ public final class DrtClient implements ClientModInitializer {
 
 			if (openLootScreenNextTick) {
 				openLootScreenNextTick = false;
-				client.setScreen(new DungeonLootScreen());
+				DungeonFloor f = tracker.getPendingLootScreenFloorFilter();
+				String s = tracker.getPendingLootScreenSearchFilter();
+				client.setScreen(new DungeonLootScreen(f, s));
 			}
 
 			if (openMoveBoxNextTick) {

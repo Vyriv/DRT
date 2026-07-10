@@ -64,6 +64,8 @@ public final class DungeonLootScreen extends Screen {
 	private int listScroll;
 	private int tableScroll;
 	private long clearConfirmUntilMillis;
+	private int deleteConfirmRunIndex = -1;
+	private long deleteConfirmUntilMillis;
 	private LootSortColumn lootSortColumn;
 	private boolean lootSortAscending;
 
@@ -77,14 +79,30 @@ public final class DungeonLootScreen extends Screen {
 	private int tabBarY;
 
 	public DungeonLootScreen() {
+		this(null, null);
+	}
+
+	public DungeonLootScreen(DungeonFloor floorFilter, String searchFilter) {
 		super(Component.literal("DRT Loot History"));
+		if (floorFilter != null) {
+			this.selectedTab = floorFilter;
+		}
+		if (searchFilter != null) {
+			this.lootSearchBuffer = searchFilter;
+		}
 	}
 
 	@Override
 	protected void init() {
-		String saved = DrtConfigManager.getDungeonSelectedFloor();
-		if (saved != null && !saved.isBlank()) {
-			try { selectedTab = DungeonFloor.valueOf(saved); } catch (IllegalArgumentException ignored) { selectedTab = null; }
+		if (selectedTab == null) {
+			String saved = DrtConfigManager.getDungeonSelectedFloor();
+			if (saved != null && !saved.isBlank()) {
+				try {
+					selectedTab = DungeonFloor.valueOf(saved);
+				} catch (IllegalArgumentException ignored) {
+					selectedTab = null;
+				}
+			}
 		}
 		reloadHistory();
 	}
@@ -112,7 +130,8 @@ public final class DungeonLootScreen extends Screen {
 		clickTargets.clear();
 		drawWindow(g);
 		drawTabs(g, mouseX, mouseY);
-		drawHeader(g, headerContentY());
+		drawAddButton(g, mouseX, mouseY);
+		drawHeader(g, mouseX, mouseY, headerContentY());
 		drawSectionLabels(g, headerContentY() + HEADER_H);
 		drawRunList(g, mouseX, mouseY);
 		drawLootTable(g, mouseX, mouseY);
@@ -151,6 +170,10 @@ public final class DungeonLootScreen extends Screen {
 	@Override
 	public boolean keyPressed(KeyEvent event) {
 		if (event.key() == GLFW.GLFW_KEY_ESCAPE) {
+			if (isDeleteConfirming()) {
+				clearDeleteConfirm();
+				return true;
+			}
 			onClose();
 			return true;
 		}
@@ -252,23 +275,36 @@ public final class DungeonLootScreen extends Screen {
 		return active ? TEXT_PRIMARY : hovered ? 0xFFC8CDDD : TEXT_MUTED;
 	}
 
-	private void drawHeader(GuiGraphicsExtractor g, int contentY) {
+	private void drawHeader(GuiGraphicsExtractor g, int mouseX, int mouseY, int contentY) {
 		g.text(font, "DRT Loot", ox + MARGIN, contentY + 3, TEXT_PRIMARY);
-		String subtitle = selectedTab == null ? "All Runs" : selectedTab.name();
-		int subtitleColor = selectedTab != null && selectedTab.isKuudra() ? 0xFFAA0000 : TEXT_MUTED;
+		String subtitle = getFloorDisplayName(selectedTab);
+		int subtitleColor = getFloorDisplayColor(selectedTab);
 		g.text(font, subtitle, ox + MARGIN, contentY + 17, subtitleColor);
 
-		RunSelection sel = currentSelection();
-		int chestCount = sel.records.size();
-		int itemCount = buildDisplayRows().size();
+		RunSelection filter = filterSelection();
+		int chestCount = tabHistory.size();
+		int itemCount = buildDisplayRowsForRecords(tabHistory).size();
 		String summaryPrefix = chestCount + " " + plural(chestCount, "chest", "chests")
 			+ " | " + itemCount + " " + plural(itemCount, "item", "items") + " | ";
-		String profitText = "Profit " + formatSigned(sel.totalProfitCoins);
+		String profitText = "Profit " + formatSigned(filter.totalProfitCoins);
 		int totalWidth = font.width(summaryPrefix) + font.width(profitText);
 		int sx = ox + winW - MARGIN - totalWidth;
 		int sy = contentY + 10;
 		g.text(font, summaryPrefix, sx, sy, TEXT_SECONDARY);
-		g.text(font, profitText, sx + font.width(summaryPrefix), sy, profitColor(sel.totalProfitCoins));
+		g.text(font, profitText, sx + font.width(summaryPrefix), sy, profitColor(filter.totalProfitCoins));
+	}
+
+	private void drawAddButton(GuiGraphicsExtractor g, int mouseX, int mouseY) {
+		int addSize = 18;
+		int addX = ox + winW - MARGIN - addSize;
+		int addY = tabBarY;
+		boolean addHov = contains(addX, addY, addSize, addSize, mouseX, mouseY);
+		drawButton(g, addX, addY, addSize, addSize, addHov, "+");
+		clickTargets.add(new ClickTarget(addX, addY, addSize, addSize, 0, () -> {
+			if (minecraft != null) {
+				minecraft.setScreen(new ManualRunEntryScreen(this));
+			}
+		}));
 	}
 
 	private void drawSectionLabels(GuiGraphicsExtractor g, int y) {
@@ -305,12 +341,13 @@ public final class DungeonLootScreen extends Screen {
 	private void drawRunListRow(GuiGraphicsExtractor g, int mouseX, int mouseY, int index, ItemStack icon, List<ItemStack> modifierIcons, String runLabel, String chestLabel, int chestLabelColor, String sub, int rowY) {
 		if (rowY + ROW_H <= listY || rowY >= listY + listH) return;
 		boolean selected = selectedRunIndex == index;
+		boolean deleteConfirming = index >= 0 && isDeleteConfirming() && deleteConfirmRunIndex == index;
 		boolean hovered = contains(listX, rowY, listW, ROW_H, mouseX, mouseY);
 		int visualIndex = Math.max(0, (rowY + listScroll - listY) / ROW_H);
-		int bg = selected ? 0xFF1F315D : hovered ? 0xFF1A1A31 : (visualIndex % 2 == 0 ? 0xFF101020 : PANEL_BG_ALT);
+		int bg = deleteConfirming ? 0xFF3A3000 : selected ? 0xFF1F315D : hovered ? 0xFF1A1A31 : (visualIndex % 2 == 0 ? 0xFF101020 : PANEL_BG_ALT);
 		g.fill(listX + 1, rowY, listX + listW - 1, rowY + ROW_H, bg);
-		if (selected) {
-			g.fill(listX + 1, rowY, listX + 3, rowY + ROW_H, 0xFF6A6AB0);
+		if (selected || deleteConfirming) {
+			g.fill(listX + 1, rowY, listX + 3, rowY + ROW_H, deleteConfirming ? 0xFFAA9000 : 0xFF6A6AB0);
 		}
 		g.fill(listX + 5, rowY + ROW_H - 1, listX + listW - 5, rowY + ROW_H, 0x223A3A60);
 
@@ -343,15 +380,58 @@ public final class DungeonLootScreen extends Screen {
 		g.text(font, sub, profitX, textY, subColor);
 		final int idx = index;
 		clickTargets.add(new ClickTarget(listX, rowY, listW, ROW_H, 0, () -> {
+			if (idx != deleteConfirmRunIndex) clearDeleteConfirm();
 			selectedRunIndex = idx;
 			clearLootFocus();
 			tableScroll = 0;
 		}));
+		if (idx >= 0) {
+			clickTargets.add(new ClickTarget(listX, rowY, listW, ROW_H, GLFW.GLFW_MOUSE_BUTTON_RIGHT, () -> handleRunRowRightClick(idx)));
+		}
+	}
+
+	private void handleRunRowRightClick(int index) {
+		if (index < 0 || index >= tabHistory.size()) return;
+		long now = System.currentTimeMillis();
+		if (deleteConfirmRunIndex == index && deleteConfirmUntilMillis > now) {
+			DungeonRunRecord record = tabHistory.get(index);
+			if (DrtConfigManager.removeRunRecord(record)) {
+				clearDeleteConfirm();
+				if (selectedRunIndex == index) selectedRunIndex = -1;
+				else if (selectedRunIndex > index) selectedRunIndex--;
+				clearLootFocus();
+				reloadHistory();
+			}
+			return;
+		}
+		deleteConfirmRunIndex = index;
+		deleteConfirmUntilMillis = now + 3000L;
+		selectedRunIndex = index;
+		clearLootFocus();
+		tableScroll = 0;
+		clearConfirmUntilMillis = 0L;
+	}
+
+	private boolean isDeleteConfirming() {
+		return deleteConfirmRunIndex >= 0 && deleteConfirmUntilMillis > System.currentTimeMillis();
+	}
+
+	private void clearDeleteConfirm() {
+		deleteConfirmRunIndex = -1;
+		deleteConfirmUntilMillis = 0L;
 	}
 
 	private void drawLootTable(GuiGraphicsExtractor g, int mouseX, int mouseY) {
 		g.fill(tableX, tableY, tableX + tableW, tableY + tableH, PANEL_BG);
 		border(g, tableX, tableY, tableW, tableH, PANEL_BORDER);
+
+		if (isDeleteConfirming() && selectedRunIndex == deleteConfirmRunIndex) {
+			String msg = "Right click again to delete";
+			int cx = tableX + (tableW - font.width(msg)) / 2;
+			int cy = tableY + (tableH - font.lineHeight) / 2;
+			g.text(font, msg, cx, cy, 0xFFFFCC00);
+			return;
+		}
 
 		int itemLeft = tableX + 8;
 		int totalRight = tableX + tableW - 10;
@@ -498,10 +578,12 @@ public final class DungeonLootScreen extends Screen {
 					DrtConfigManager.clearFloorData(selectedTab.name());
 				}
 				clearConfirmUntilMillis = 0L;
+				clearDeleteConfirm();
 				clearLootFocus();
 				reloadHistory();
 			} else {
 				clearConfirmUntilMillis = now + 3000L;
+				clearDeleteConfirm();
 			}
 		}));
 	}
@@ -547,6 +629,7 @@ public final class DungeonLootScreen extends Screen {
 	private void selectTab(DungeonFloor floor) {
 		selectedTab = floor;
 		selectedRunIndex = -1;
+		clearDeleteConfirm();
 		clearLootFocus();
 		listScroll = 0;
 		tableScroll = 0;
@@ -594,6 +677,10 @@ public final class DungeonLootScreen extends Screen {
 		}
 	}
 
+	private RunSelection filterSelection() {
+		return new RunSelection(tabHistory, sumCoins(tabHistory, false, true), sumCoins(tabHistory, false, false), sumProfit(tabHistory));
+	}
+
 	private RunSelection currentSelection() {
 		if (selectedRunIndex >= 0 && selectedRunIndex < tabHistory.size()) {
 			DungeonRunRecord r = tabHistory.get(selectedRunIndex);
@@ -603,7 +690,10 @@ public final class DungeonLootScreen extends Screen {
 	}
 
 	private List<DisplayRow> buildDisplayRows() {
-		List<DungeonRunRecord> records = currentSelection().records;
+		return buildDisplayRowsForRecords(currentSelection().records);
+	}
+
+	private List<DisplayRow> buildDisplayRowsForRecords(List<DungeonRunRecord> records) {
 		Map<String, MutableAgg> aggs = new LinkedHashMap<>();
 		var config = DrtConfigManager.getConfig();
 		for (DungeonRunRecord r : records) {
@@ -722,6 +812,28 @@ public final class DungeonLootScreen extends Screen {
 		return tabHistory.size() - tabIndex;
 	}
 
+	private static String getFloorDisplayName(DungeonFloor floor) {
+		if (floor == null) return "All Runs";
+		if (floor.name().startsWith("F")) return "Floor " + floor.floorNumber();
+		if (floor.isMasterMode()) return "Master Mode Floor " + floor.floorNumber();
+		return switch (floor) {
+			case K1 -> "Kuudra Basic";
+			case K2 -> "Kuudra Hot";
+			case K3 -> "Kuudra Burning";
+			case K4 -> "Kuudra Fiery";
+			case K5 -> "Kuudra Infernal";
+			default -> floor.name();
+		};
+	}
+
+	private static int getFloorDisplayColor(DungeonFloor floor) {
+		if (floor == null) return TEXT_MUTED;
+		if (floor.name().startsWith("F")) return 0xFF55FF55;
+		if (floor.isMasterMode()) return 0xFFFF8888;
+		if (floor.isKuudra()) return 0xFFAA0000;
+		return TEXT_MUTED;
+	}
+
 	private static String plural(int count, String singular, String plural) {
 		return count == 1 ? singular : plural;
 	}
@@ -778,6 +890,22 @@ public final class DungeonLootScreen extends Screen {
 	}
 	private String formatSigned(long v) { return (v >= 0 ? "+" : "-") + formatCoins(Math.abs(v)); }
 	private int profitColor(long v) { return v >= 0 ? 0xFF8BCF9A : 0xFFFF7A7A; }
+
+	static ItemStack lootChestIcon(String chestTitle) {
+		return resolveChestIcon(chestTitle);
+	}
+
+	static int lootChestColor(String chestTitle) {
+		return chestColor(chestTitle);
+	}
+
+	static ItemStack lootItemIcon(String itemId) {
+		return resolveItemIcon(itemId);
+	}
+
+	static int lootItemColor(String itemId) {
+		return itemColor(itemId);
+	}
 
 	private static ItemStack resolveChestIcon(String chestTitle) {
 		ItemStack cached = DungeonRunTrackerFeature.getChestIcon(chestTitle);
