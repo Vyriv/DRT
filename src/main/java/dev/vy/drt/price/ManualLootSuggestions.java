@@ -230,14 +230,19 @@ public final class ManualLootSuggestions {
 
 	private static String resolveItemId(String displayName) {
 		if (displayName == null || displayName.isBlank()) return "";
-		String alias = DISPLAY_ALIASES.get(normalizeName(displayName));
+		String normalized = normalizeName(displayName);
+		if (normalized.startsWith("SHINY ")) {
+			normalized = normalized.substring("SHINY ".length()).trim();
+		}
+		String alias = DISPLAY_ALIASES.get(normalized);
 		if (alias != null) return alias;
 		String bookId = resolveEnchantedBookId(displayName);
 		if (bookId != null) return bookId;
-		if (PriceCache.containsItemId(generatedItemId(displayName))) return generatedItemId(displayName);
-		List<PriceCache.SearchResult> hits = PriceCache.searchIndexed(displayName, 1);
+		String generated = generatedItemId(normalized);
+		if (PriceCache.containsItemId(generated)) return generated;
+		List<PriceCache.SearchResult> hits = PriceCache.searchIndexed(normalized, 1);
 		if (!hits.isEmpty()) return hits.getFirst().itemId();
-		return generatedItemId(displayName);
+		return generated;
 	}
 
 	private static String resolveEnchantedBookId(String itemName) {
@@ -346,6 +351,7 @@ public final class ManualLootSuggestions {
 		aliases.put("KUUDRA TEETH", "KUUDRA_TEETH");
 		aliases.put("BEZAL SHARD", "SHARD_BEZAL");
 		aliases.put("KRAKEN SHARD", "SHARD_KRAKEN");
+		aliases.put("APEX DRAGON SHARD", "SHARD_APEX_DRAGON");
 		for (int tier = 1; tier <= 10; tier++) {
 			aliases.put("MASTER SKULL - TIER " + tier, "MASTER_SKULL_TIER_" + tier);
 		}

@@ -299,6 +299,7 @@ public final class DungeonRunTrackerFeature {
 	private long lastRewardModifierScanMillis;
 	private boolean lastRewardModifierScanHadKeyRequirement;
 	private boolean lastRewardModifierScanHadKismetMarker;
+	private String lastViewedOpenedRewardChestTitle = "";
 
 	private boolean sessionActive;
 	private long sessionStartMillis;
@@ -379,6 +380,7 @@ public final class DungeonRunTrackerFeature {
 
 		long now = System.currentTimeMillis();
 		resumeCurrentRunAfterUnavailable(now);
+		captureOpenedRewardChestLootIfViewing(client, now);
 		if (lootCollectionUntilMillis > 0L && now > lootCollectionUntilMillis) {
 			flushPendingLootRecord(lootWindowUntilMillis > 0L && now <= lootWindowUntilMillis);
 		}
@@ -2148,19 +2150,42 @@ public final class DungeonRunTrackerFeature {
 		rememberRunContextFromMenuTitle(normalizedTitle, now);
 
 		if (canonicalRewardTitle != null) {
-			if ((lootWindowUntilMillis <= 0L || now > lootWindowUntilMillis) && (insideDungeon || insideKuudra || isCurrentFloorKuudra())) {
+			if (lootWindowUntilMillis <= 0L || now > lootWindowUntilMillis) {
 				startAdHocLootWindow(now);
 			}
 			if (lootWindowUntilMillis <= 0L || now > lootWindowUntilMillis) return;
-			String screenKey = "opened#" + canonicalRewardTitle + "#" + client.player.containerMenu.containerId;
-			refreshRewardModifierScan(client.player.containerMenu, screenKey, now);
+
+			AbstractContainerMenu menu = client.player.containerMenu;
+			if (isRewardChestPreviewScreen(menu)) {
+				updateCachedRewardChestOffers(menu);
+				if (pendingLootChestAssigned && pendingLootEntries.isEmpty()) {
+					resetPendingChestState();
+				}
+				lastViewedOpenedRewardChestTitle = "";
+				return;
+			}
+
+			DungeonChestOffer cached = cachedChestOffersByTitle.get(canonicalRewardTitle);
+			if (cached != null && cached.alreadyOpened) {
+				updateCachedRewardChestOffers(menu);
+				lastViewedOpenedRewardChestTitle = "";
+				return;
+			}
+
+			String screenKey = "opened#" + canonicalRewardTitle + "#" + menu.containerId;
+			refreshRewardModifierScan(menu, screenKey, now);
 			if (lastRewardModifierScanHadKismetMarker) markKismetFeatherUsed();
 			if (scannedRewardScreens.add(screenKey)) {
-				DungeonChestOffer cached = cachedChestOffersByTitle.get(canonicalRewardTitle);
 				assignPendingOpenedChest(canonicalRewardTitle, cached);
-				if (cached != null) lootCollectionUntilMillis = now + LOOT_COLLECTION_MS;
 			}
+			captureOpenedRewardChestLoot(client, menu, now);
+			lastViewedOpenedRewardChestTitle = canonicalRewardTitle;
 			return;
+		}
+
+		if (!lastViewedOpenedRewardChestTitle.isBlank()) {
+			tryFlushPendingOpenedChest(now);
+			lastViewedOpenedRewardChestTitle = "";
 		}
 
 		if (!isRewardsMenuTitle(normalizedTitle) && !isCroesusChestListTitle(normalizedTitle)) return;
@@ -2318,11 +2343,13 @@ public final class DungeonRunTrackerFeature {
 		String displayTitle = toDisplayChestTitle(normalizedTitle);
 		boolean samePendingChest = pendingLootChestAssigned && displayTitle.equalsIgnoreCase(pendingLootChestTitle);
 		boolean hadPendingEntries = !pendingLootEntries.isEmpty();
-		boolean wasSeededFromGui = pendingLootSeededFromGui;
-		if (pendingLootChestAssigned && hadPendingEntries && !samePendingChest) {
-			flushPendingLootRecord(true);
+		if (pendingLootChestAssigned && !samePendingChest) {
+			if (hadPendingEntries) {
+				flushPendingLootRecord(true);
+			} else {
+				resetPendingChestState();
+			}
 			hadPendingEntries = false;
-			wasSeededFromGui = false;
 			samePendingChest = false;
 		}
 		if (!samePendingChest) {
@@ -2354,11 +2381,60 @@ public final class DungeonRunTrackerFeature {
 		applyKuudraChestCostHint(normalizedTitle, pendingLootCostBreakdown);
 		populateKnownModifierCosts(pendingLootCostBreakdown);
 		suppressDungeonChestKeyForKuudra(normalizedTitle, pendingLootCostBreakdown);
-		if (hadPendingEntries) {
-			pendingLootSeededFromGui = wasSeededFromGui;
-		} else {
-			seedPendingLootEntriesFromGuiOffer(offer);
+		lootCollectionUntilMillis = System.currentTimeMillis() + LOOT_COLLECTION_MS;
+	}
+
+	private boolean isRewardChestPreviewScreen(AbstractContainerMenu menu) {
+		return findOpenRewardChestSlotIndex(menu) >= 0;
+	}
+
+	private void captureOpenedRewardChestLootIfViewing(Minecraft client, long now) {
+		if (!(client.screen instanceof AbstractContainerScreen<?>) || client.player == null) return;
+		String canonical = canonicalRewardChestTitle(normalize(client.screen.getTitle().getString()));
+		if (canonical == null || !pendingLootChestAssigned) return;
+		if (isRewardChestPreviewScreen(client.player.containerMenu)) return;
+		captureOpenedRewardChestLoot(client, client.player.containerMenu, now);
+		lastViewedOpenedRewardChestTitle = canonical;
+	}
+
+	private void captureOpenedRewardChestLoot(Minecraft client, AbstractContainerMenu menu, long now) {
+		if (client == null || client.player == null || menu == null || !pendingLootChestAssigned) return;
+		var playerInventory = client.player.getInventory();
+		boolean found = false;
+		for (Slot slot : menu.slots) {
+			if (slot == null || slot.container == playerInventory) continue;
+			ItemStack stack = slot.getItem();
+			if (stack.isEmpty() || stackIndicatesOpenRewardChest(stack) || isRewardChestUiStack(stack)) continue;
+			if (canonicalChestTitleFromStack(stack) != null) continue;
+
+			String rawName = cleanText(stack.getHoverName().getString());
+			String cleaned = normalize(rawName);
+			if (rawName.isBlank() || shouldIgnoreLootName(rawName) || looksLikeNonLootLine(cleaned)) continue;
+
+			int quantity = Math.max(1, stack.getCount());
+			String itemId = resolveItemId(rawName);
+			if (itemId.isEmpty() && !looksReasonableLootName(rawName)) continue;
+			mergePendingLootEntry(new DungeonLootEntry(rawName, itemId, quantity));
+			found = true;
 		}
+		if (found) {
+			pendingLootSeededFromGui = false;
+			lootCollectionUntilMillis = now + LOOT_COLLECTION_MS;
+		}
+	}
+
+	private boolean isRewardChestUiStack(ItemStack stack) {
+		if (stack == null || stack.isEmpty()) return true;
+		if (stack.is(Items.LIGHT_GRAY_STAINED_GLASS_PANE) || stack.is(Items.GRAY_STAINED_GLASS_PANE)
+			|| stack.is(Items.BLACK_STAINED_GLASS_PANE) || stack.is(Items.BARRIER)
+			|| stack.is(Items.AIR)) return true;
+		String name = normalize(cleanText(stack.getHoverName().getString()));
+		return name.contains("STAINED GLASS");
+	}
+
+	private void tryFlushPendingOpenedChest(long now) {
+		if (!pendingLootChestAssigned || pendingLootEntries.isEmpty() || pendingLootRunNumber <= 0) return;
+		flushPendingLootRecord(lootWindowUntilMillis > 0L && now <= lootWindowUntilMillis);
 	}
 
 	private void seedPendingLootEntriesFromGuiOffer(DungeonChestOffer offer) {
@@ -3108,6 +3184,9 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private void startLootWindow(long now, int runNumber, DungeonFloor floor) {
+		if (pendingLootChestAssigned && !pendingLootEntries.isEmpty() && pendingLootRunNumber > 0) {
+			flushPendingLootRecord(true);
+		}
 		lootWindowUntilMillis = now + LOOT_WINDOW_MS;
 		lootCollectionUntilMillis = 0L;
 		pendingLootRunNumber = runNumber;
@@ -3241,6 +3320,7 @@ public final class DungeonRunTrackerFeature {
 		lastRewardModifierScanMillis = 0L;
 		lastRewardModifierScanHadKeyRequirement = false;
 		lastRewardModifierScanHadKismetMarker = false;
+		lastViewedOpenedRewardChestTitle = "";
 		recentLootMessages.clear();
 	}
 
@@ -3253,7 +3333,7 @@ public final class DungeonRunTrackerFeature {
 		if (cleaned.startsWith("YOU RECEIVED ")) {
 			lootCollectionUntilMillis = now + LOOT_COLLECTION_MS;
 		} else if (isLootHeader(cleaned)) {
-			if (!pendingLootEntries.isEmpty() && !pendingLootSeededFromGui) flushPendingLootRecord(true);
+			if (!pendingLootEntries.isEmpty()) flushPendingLootRecord(true);
 			assignOpenedChest(cleaned);
 			lootCollectionUntilMillis = now + LOOT_COLLECTION_MS;
 			return;
@@ -3500,6 +3580,10 @@ public final class DungeonRunTrackerFeature {
 		if (enchantedBookId != null) return enchantedBookId;
 
 		String cleanedName = sanitizeLootName(rawName).toUpperCase(Locale.ROOT);
+		// Shiny dungeon drops share the base item id/price (e.g. "Shiny Necron's Handle").
+		if (cleanedName.startsWith("SHINY ")) {
+			cleanedName = cleanedName.substring("SHINY ".length()).trim();
+		}
 		String alias = ITEM_ID_ALIASES.get(cleanedName);
 		if (alias != null) return alias;
 
@@ -3593,6 +3677,8 @@ public final class DungeonRunTrackerFeature {
 			|| normalized.contains("STONE") || normalized.contains("RECOMBOBULATOR")
 			|| normalized.contains("BOOK") || normalized.contains("DISC")
 			|| normalized.contains("KEY") || normalized.contains("SHARD")
+			|| normalized.contains("HANDLE") || normalized.contains("SCROLL")
+			|| normalized.contains("CATALYST") || normalized.contains("SHINY")
 			|| normalized.contains("KUUDRA") || normalized.contains("TEETH")
 			|| normalized.contains("EMBERS") || normalized.contains("CORE")
 			|| normalized.contains("DISINTEGRATOR") || normalized.contains("CRIMSON")
@@ -3641,6 +3727,11 @@ public final class DungeonRunTrackerFeature {
 			aliases.put("MASTER SKULL - TIER " + tier, "MASTER_SKULL_TIER_" + tier);
 		}
 		aliases.put("WITHER CATALYST", "WITHER_CATALYST");
+		aliases.put("WITHER HELMET", "WITHER_HELMET");
+		aliases.put("WITHER CHESTPLATE", "WITHER_CHESTPLATE");
+		aliases.put("WITHER LEGGINGS", "WITHER_LEGGINGS");
+		aliases.put("WITHER BOOTS", "WITHER_BOOTS");
+		aliases.put("APEX DRAGON SHARD", "SHARD_APEX_DRAGON");
 		aliases.put("NECRON'S HANDLE", "NECRON_HANDLE");
 		aliases.put("SCARF'S STUDIES", "SCARF_STUDIES");
 		aliases.put("SHADOW WARP", "SHADOW_WARP_SCROLL");
