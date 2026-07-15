@@ -2157,10 +2157,13 @@ public final class DungeonRunTrackerFeature {
 
 			AbstractContainerMenu menu = client.player.containerMenu;
 			if (isRewardChestPreviewScreen(menu)) {
+				String previewKey = "preview#" + canonicalRewardTitle + "#" + menu.containerId;
+				refreshRewardModifierScan(menu, previewKey, now);
 				updateCachedRewardChestOffers(menu);
 				if (pendingLootChestAssigned && pendingLootEntries.isEmpty()) {
 					resetPendingChestState();
 				}
+				// Keep key-requirement from this preview so the subsequent open can bill a key.
 				lastViewedOpenedRewardChestTitle = "";
 				return;
 			}
@@ -2173,18 +2176,22 @@ public final class DungeonRunTrackerFeature {
 			}
 
 			String screenKey = "opened#" + canonicalRewardTitle + "#" + menu.containerId;
+			boolean firstOpenScan = scannedRewardScreens.add(screenKey);
+			// Carry forward key requirement observed on the preview "Open Reward Chest" button.
+			boolean paidWithKey = nextOpenedChestUsesDungeonChestKey || lastRewardModifierScanHadKeyRequirement;
 			refreshRewardModifierScan(menu, screenKey, now);
 			if (lastRewardModifierScanHadKismetMarker) markKismetFeatherUsed();
-			if (scannedRewardScreens.add(screenKey)) {
-				assignPendingOpenedChest(canonicalRewardTitle, cached);
+			if (firstOpenScan) {
+				assignPendingOpenedChest(canonicalRewardTitle, cached, paidWithKey);
 			}
 			captureOpenedRewardChestLoot(client, menu, now);
 			lastViewedOpenedRewardChestTitle = canonicalRewardTitle;
 			return;
 		}
 
+		// Leaving an opened chest GUI: do NOT flush yet. Chat CHEST REWARDS often arrives next;
+		// flushing here was splitting one open into a partial GUI record + a second chat record.
 		if (!lastViewedOpenedRewardChestTitle.isBlank()) {
-			tryFlushPendingOpenedChest(now);
 			lastViewedOpenedRewardChestTitle = "";
 		}
 
@@ -2340,17 +2347,26 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private void assignPendingOpenedChest(String normalizedTitle, DungeonChestOffer offer) {
+		assignPendingOpenedChest(normalizedTitle, offer, false);
+	}
+
+	private void assignPendingOpenedChest(String normalizedTitle, DungeonChestOffer offer, boolean paidWithDungeonChestKey) {
 		String displayTitle = toDisplayChestTitle(normalizedTitle);
 		boolean samePendingChest = pendingLootChestAssigned && displayTitle.equalsIgnoreCase(pendingLootChestTitle);
 		boolean hadPendingEntries = !pendingLootEntries.isEmpty();
+		boolean alreadyChargedKey = samePendingChest && pendingLootCostBreakdown != null && pendingLootCostBreakdown.usedDungeonChestKey;
+		ChestCostBreakdown previousBreakdown = samePendingChest && pendingLootCostBreakdown != null
+			? pendingLootCostBreakdown.copy()
+			: null;
 		if (pendingLootChestAssigned && !samePendingChest) {
 			if (hadPendingEntries) {
 				flushPendingLootRecord(true);
 			} else {
 				resetPendingChestState();
 			}
-			hadPendingEntries = false;
 			samePendingChest = false;
+			alreadyChargedKey = false;
+			previousBreakdown = null;
 		}
 		if (!samePendingChest) {
 			openedRewardChestsInLootWindow++;
@@ -2359,13 +2375,31 @@ public final class DungeonRunTrackerFeature {
 		pendingLootChestAssigned = true;
 		pendingLootChestTitle = displayTitle;
 		pendingLootCostBreakdown = offer == null ? new ChestCostBreakdown() : offer.costBreakdown.copy();
+		// Never inherit key flags from croesus/preview offer lore; only charge when we have evidence.
+		pendingLootCostBreakdown.usedDungeonChestKey = false;
+		pendingLootCostBreakdown.dungeonChestKeyCostCoins = 0L;
+		if (previousBreakdown != null) {
+			if (previousBreakdown.baseChestCostCoins > 0L && pendingLootCostBreakdown.baseChestCostCoins <= 0L) {
+				pendingLootCostBreakdown.baseChestCostCoins = previousBreakdown.baseChestCostCoins;
+			}
+			if (previousBreakdown.usedKismetFeather) {
+				pendingLootCostBreakdown.usedKismetFeather = true;
+				pendingLootCostBreakdown.kismetRerolledChestOpened = previousBreakdown.kismetRerolledChestOpened;
+			}
+			if (previousBreakdown.usedWheelOfFate) pendingLootCostBreakdown.usedWheelOfFate = true;
+			if (previousBreakdown.usedKuudraKey) pendingLootCostBreakdown.usedKuudraKey = true;
+		}
 		DungeonFloor kuudraFloor = currentKuudraFloorForPricing();
 		if (pendingLootFloor == DungeonFloor.UNKNOWN && kuudraFloor != null && kuudraFloor.isKuudra()) {
 			pendingLootFloor = kuudraFloor;
 		}
-		if ((nextOpenedChestUsesDungeonChestKey || openedRewardChestsInLootWindow > 1) && isCatacombsRewardChest(normalizedTitle)) {
+		// Key only when chat/marker said so, or preview open-button required a key for this open.
+		// Do NOT bill a key just because this is the Nth chest in the loot window (breaks Croesus).
+		if ((alreadyChargedKey || paidWithDungeonChestKey || nextOpenedChestUsesDungeonChestKey)
+			&& isCatacombsRewardChest(normalizedTitle)) {
 			pendingLootCostBreakdown.usedDungeonChestKey = true;
 			nextOpenedChestUsesDungeonChestKey = false;
+			lastRewardModifierScanHadKeyRequirement = false;
 		}
 		if (shouldAssignArmedKismetToOpenedChest(normalizedTitle)) {
 			pendingLootCostBreakdown.usedKismetFeather = true;
@@ -2399,6 +2433,10 @@ public final class DungeonRunTrackerFeature {
 
 	private void captureOpenedRewardChestLoot(Minecraft client, AbstractContainerMenu menu, long now) {
 		if (client == null || client.player == null || menu == null || !pendingLootChestAssigned) return;
+		// Chat CHEST REWARDS is authoritative once it starts; keep GUI scan from fighting it.
+		if (!pendingLootSeededFromGui && !pendingLootEntries.isEmpty() && lootCollectionUntilMillis > now) {
+			return;
+		}
 		var playerInventory = client.player.getInventory();
 		boolean found = false;
 		for (Slot slot : menu.slots) {
@@ -2418,7 +2456,7 @@ public final class DungeonRunTrackerFeature {
 			found = true;
 		}
 		if (found) {
-			pendingLootSeededFromGui = false;
+			pendingLootSeededFromGui = true;
 			lootCollectionUntilMillis = now + LOOT_COLLECTION_MS;
 		}
 	}
@@ -2430,11 +2468,6 @@ public final class DungeonRunTrackerFeature {
 			|| stack.is(Items.AIR)) return true;
 		String name = normalize(cleanText(stack.getHoverName().getString()));
 		return name.contains("STAINED GLASS");
-	}
-
-	private void tryFlushPendingOpenedChest(long now) {
-		if (!pendingLootChestAssigned || pendingLootEntries.isEmpty() || pendingLootRunNumber <= 0) return;
-		flushPendingLootRecord(lootWindowUntilMillis > 0L && now <= lootWindowUntilMillis);
 	}
 
 	private void seedPendingLootEntriesFromGuiOffer(DungeonChestOffer offer) {
@@ -3333,8 +3366,21 @@ public final class DungeonRunTrackerFeature {
 		if (cleaned.startsWith("YOU RECEIVED ")) {
 			lootCollectionUntilMillis = now + LOOT_COLLECTION_MS;
 		} else if (isLootHeader(cleaned)) {
-			if (!pendingLootEntries.isEmpty()) flushPendingLootRecord(true);
-			assignOpenedChest(cleaned);
+			String chatChestTitle = chestTitleFromLootHeader(cleaned);
+			boolean sameChest = pendingLootChestAssigned
+				&& chatChestTitle != null
+				&& toDisplayChestTitle(chatChestTitle).equalsIgnoreCase(pendingLootChestTitle);
+			if (sameChest) {
+				// Same open as the GUI capture — chat wins. Replace GUI loot, do not create a second record.
+				pendingLootEntries.clear();
+				pendingLootSeededFromGui = false;
+				recentLootMessages.clear();
+			} else if (!pendingLootEntries.isEmpty()) {
+				flushPendingLootRecord(true);
+				assignOpenedChest(cleaned);
+			} else {
+				assignOpenedChest(cleaned);
+			}
 			lootCollectionUntilMillis = now + LOOT_COLLECTION_MS;
 			return;
 		}
@@ -3343,7 +3389,16 @@ public final class DungeonRunTrackerFeature {
 		DungeonLootEntry parsed = parseLootEntry(rawText, cleaned);
 		if (parsed == null) return;
 		mergePendingLootEntry(parsed);
+		pendingLootSeededFromGui = false;
 		lootCollectionUntilMillis = now + LOOT_COLLECTION_MS;
+	}
+
+	private String chestTitleFromLootHeader(String cleaned) {
+		if (cleaned == null || cleaned.isBlank()) return null;
+		for (String title : REWARD_CHEST_TITLES) {
+			if (cleaned.contains(title)) return title;
+		}
+		return null;
 	}
 
 	private boolean isLootHeader(String cleaned) {
@@ -3661,7 +3716,10 @@ public final class DungeonRunTrackerFeature {
 			|| normalized.contains("OPEN") || normalized.contains("CROESUS")
 			|| normalized.contains("THE CATACOMBS") || normalized.contains("KUUDRA DOWN")
 			|| normalized.contains("PERCENTAGE COMPLETE") || normalized.contains("TOKENS EARNED")
-			|| normalized.contains("BITS EARNED") || normalized.startsWith("TIME:");
+			|| normalized.contains("BITS EARNED") || normalized.startsWith("TIME:")
+			|| normalized.contains("[BAZAAR]") || normalized.contains("BAZAAR")
+			|| normalized.contains("SOLD ") || normalized.contains("BOUGHT ")
+			|| normalized.contains("COINS!") || normalized.contains("RNG METER");
 	}
 
 	private boolean shouldIgnoreLootName(String value) {
