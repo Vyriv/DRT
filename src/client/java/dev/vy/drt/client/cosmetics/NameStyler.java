@@ -685,21 +685,11 @@ public final class NameStyler {
 
 	private static int gradientLoopColor(int startColor, int endColor, float progress) {
 		float loopProgress = progress <= 0.5F ? progress * 2.0F : (1.0F - progress) * 2.0F;
-		return interpolateRgbColor(startColor, endColor, loopProgress);
+		return GradientColors.interpolateRgb(startColor, endColor, loopProgress);
 	}
 
 	private static int interpolateRgbColor(int startColor, int endColor, float progress) {
-		float clamped = clamp(progress, 0.0F, 1.0F);
-		int startRed = (startColor >> 16) & 0xFF;
-		int startGreen = (startColor >> 8) & 0xFF;
-		int startBlue = startColor & 0xFF;
-		int endRed = (endColor >> 16) & 0xFF;
-		int endGreen = (endColor >> 8) & 0xFF;
-		int endBlue = endColor & 0xFF;
-		int red = clampInt((int) (startRed + ((endRed - startRed) * clamped)), 0, 255);
-		int green = clampInt((int) (startGreen + ((endGreen - startGreen) * clamped)), 0, 255);
-		int blue = clampInt((int) (startBlue + ((endBlue - startBlue) * clamped)), 0, 255);
-		return (red << 16) | (green << 8) | blue;
+		return GradientColors.interpolateRgb(startColor, endColor, progress);
 	}
 
 	private static int[] buildLoopGradient(int primaryColor, int secondaryColor, int stepsCount) {
@@ -729,10 +719,6 @@ public final class NameStyler {
 	}
 
 	private static float clamp(float value, float min, float max) {
-		return Math.max(min, Math.min(max, value));
-	}
-
-	private static int clampInt(int value, int min, int max) {
 		return Math.max(min, Math.min(max, value));
 	}
 
