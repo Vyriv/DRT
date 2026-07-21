@@ -96,7 +96,10 @@ public final class ManualLootSuggestions {
 		"Fervor Helmet", "Fervor Chestplate", "Fervor Leggings", "Fervor Boots",
 		"Hollow Helmet", "Hollow Chestplate", "Hollow Leggings", "Hollow Boots", "Hollow Wand",
 		"Terror Helmet", "Terror Chestplate", "Terror Leggings", "Terror Boots",
-		"Crimson Essence", "Kuudra Teeth"
+		"Crimson Essence", "Kuudra Teeth", "Kraken Shard",
+		"Molten Necklace", "Molten Cloak", "Molten Belt", "Molten Bracelet",
+		"Burning Kuudra Core", "Mandraa", "Ananke Feather", "Tormentor", "Hellstorm Wand",
+		"Kuudra Mandible", "Tentacle Dye"
 	);
 	private static final List<String> K1_EXTRAS = List.of(
 		"Enchanted Book (Ferocious Mana I)", "Enchanted Book (Hardened Mana I)",
@@ -120,7 +123,7 @@ public final class ManualLootSuggestions {
 		"Enchanted Book (Mana Vampire IV)", "Enchanted Book (Strong Mana IV)"
 	);
 	private static final List<String> K5_EXTRAS = List.of(
-		"Kraken Shard", "Hellstorm Wand", "Tormentor",
+		"Hellstorm Wand", "Tormentor",
 		"Enchanted Book (Ferocious Mana V)", "Enchanted Book (Hardened Mana V)",
 		"Enchanted Book (Mana Vampire V)", "Enchanted Book (Strong Mana V)",
 		"Bezal Shard", "Magma Slug Shard", "Kada Knight Shard", "Wither Specter Shard",
@@ -148,6 +151,57 @@ public final class ManualLootSuggestions {
 		if (floor.isKuudra()) return kuudraSuggestions(floor.floorNumber());
 		if (floor.isMasterMode()) return masterSuggestions(floor.floorNumber());
 		if (floor.isCatacombs()) return catacombsSuggestions(floor);
+		return List.of();
+	}
+
+	/** Soft allowlist check for live detection warnings (never used to drop loot). */
+	public static boolean isKnownDrop(DungeonFloor floor, String rawName, String itemId) {
+		if (floor == null || floor == DungeonFloor.UNKNOWN) return true;
+		String normalizedName = normalizeName(rawName == null ? "" : rawName);
+		String normalizedId = itemId == null ? "" : itemId.trim().toUpperCase(Locale.ROOT);
+		if (normalizedName.contains("ESSENCE") || normalizedId.contains("ESSENCE")) return true;
+		for (String suggestion : suggestionsForFloor(floor)) {
+			if (normalizeName(suggestion).equals(normalizedName)) return true;
+			String suggestionId = resolveItemId(suggestion);
+			if (!suggestionId.isEmpty() && suggestionId.equalsIgnoreCase(normalizedId)) return true;
+		}
+		if (normalizedName.startsWith("ENCHANTED BOOK") || normalizedId.startsWith("ENCHANTMENT_")) return true;
+		if (normalizedName.contains("SHARD") || normalizedId.contains("SHARD")) return true;
+		return false;
+	}
+
+	/** True if this name/id matches a floor-unique drop from a different floor. */
+	public static boolean isFloorUniqueDropElsewhere(DungeonFloor currentFloor, String rawName, String itemId) {
+		if (currentFloor == null || currentFloor == DungeonFloor.UNKNOWN) return false;
+		String normalizedName = normalizeName(rawName == null ? "" : rawName);
+		String normalizedId = itemId == null ? "" : itemId.trim().toUpperCase(Locale.ROOT);
+		for (DungeonFloor floor : DungeonFloor.values()) {
+			if (floor == DungeonFloor.UNKNOWN || floor == currentFloor) continue;
+			if (floor.isKuudra() != currentFloor.isKuudra()) continue;
+			List<String> uniques = floorUniqueDrops(floor);
+			for (String unique : uniques) {
+				if (normalizeName(unique).equals(normalizedName)) return true;
+				String uniqueId = resolveItemId(unique);
+				if (!uniqueId.isEmpty() && uniqueId.equalsIgnoreCase(normalizedId)) return true;
+			}
+		}
+		return false;
+	}
+
+	private static List<String> floorUniqueDrops(DungeonFloor floor) {
+		if (floor.isKuudra()) {
+			return switch (floor.floorNumber()) {
+				case 1 -> K1_EXTRAS;
+				case 2 -> K2_EXTRAS;
+				case 3 -> K3_EXTRAS;
+				case 4 -> K4_EXTRAS;
+				case 5 -> K5_EXTRAS;
+				default -> List.of();
+			};
+		}
+		if (floor.isCatacombs() || floor.isMasterMode()) {
+			return catacombsFloorDrops(floor);
+		}
 		return List.of();
 	}
 
@@ -317,6 +371,7 @@ public final class ManualLootSuggestions {
 		aliases.put("FEL SKULL", "FEL_SKULL");
 		aliases.put("SOULWEAVER GLOVES", "SOULWEAVER_GLOVES");
 		aliases.put("PRECURSOR EYE", "PRECURSOR_EYE");
+		aliases.put("WITHER CLOAK", "WITHER_CLOAK");
 		aliases.put("WITHER CLOAK SWORD", "WITHER_CLOAK");
 		aliases.put("WITHER BLOOD", "WITHER_BLOOD");
 		aliases.put("PRECURSOR GEAR", "PRECURSOR_GEAR");

@@ -9,10 +9,15 @@ public final class DrtConfig {
 	public boolean enabled = true;
 	public int legacyRunsCompleted;
 	public Map<String, Integer> floorRunCounts = new LinkedHashMap<>();
+	/** Lifetime accumulated run duration per floor, in milliseconds. */
+	public Map<String, Long> floorRunTimeMs = new LinkedHashMap<>();
 	public int hudX = 10;
 	public int hudY = 10;
 	public float hudScale = 1.0F;
 	public String hudVisibilityMode = "DEFAULT";
+	/** null until first load/migration; fresh installs become MODERN, existing configs LEGACY. */
+	public String hudOverlayPreset = null;
+	public String customOverlayLayout = null;
 	public List<DungeonRunRecord> runHistory = new ArrayList<>();
 	public int nextChestLogNumber = 1;
 	public String selectedFloor = null;

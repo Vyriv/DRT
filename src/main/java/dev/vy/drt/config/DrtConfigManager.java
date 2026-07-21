@@ -33,6 +33,7 @@ public final class DrtConfigManager {
 			Files.createDirectories(CONFIG_PATH.getParent());
 			if (Files.notExists(CONFIG_PATH)) {
 				config = new DrtConfig();
+				applyFreshOverlayDefaults(config);
 				save();
 				return;
 			}
@@ -41,6 +42,7 @@ public final class DrtConfigManager {
 				DrtConfig loaded = GSON.fromJson(root, DrtConfig.class);
 				if (loaded == null) loaded = new DrtConfig();
 				if (loaded.floorRunCounts == null) loaded.floorRunCounts = new LinkedHashMap<>();
+				if (loaded.floorRunTimeMs == null) loaded.floorRunTimeMs = new LinkedHashMap<>();
 				if (loaded.runHistory == null) loaded.runHistory = new ArrayList<>();
 				loaded.hudScale = clampHudScale(loaded.hudScale);
 				loaded.hudVisibilityMode = normalizeHudVisibilityMode(loaded.hudVisibilityMode);
@@ -49,16 +51,20 @@ public final class DrtConfigManager {
 					loaded.floorRunCounts.put("M5", loaded.legacyRunsCompleted);
 				}
 				boolean migrated = normalizeRunHistory(loaded);
+				if (migrateOverlayPreset(loaded, root)) migrated = true;
+				if (normalizeCustomOverlayLayout(loaded)) migrated = true;
 				config = loaded;
 				if (migrated) save();
 			} catch (com.google.gson.JsonSyntaxException e) {
 				DungeonRunTracker.LOGGER.error("[DRT] Config file malformed, resetting to defaults", e);
 				config = new DrtConfig();
+				applyFreshOverlayDefaults(config);
 				save();
 			}
 		} catch (IOException e) {
 			DungeonRunTracker.LOGGER.error("[DRT] Failed to load config", e);
 			config = new DrtConfig();
+			applyFreshOverlayDefaults(config);
 		}
 	}
 
@@ -115,6 +121,20 @@ public final class DrtConfigManager {
 		save();
 	}
 
+	public static synchronized void updateFloorRunTimeMs(String floor, long totalMs) {
+		if (config.floorRunTimeMs == null) config.floorRunTimeMs = new LinkedHashMap<>();
+		config.floorRunTimeMs.put(floor, Math.max(0L, totalMs));
+		save();
+	}
+
+	public static synchronized void addFloorRunTimeMs(String floor, long deltaMs) {
+		if (deltaMs <= 0L || floor == null || floor.isBlank()) return;
+		if (config.floorRunTimeMs == null) config.floorRunTimeMs = new LinkedHashMap<>();
+		long next = Math.max(0L, config.floorRunTimeMs.getOrDefault(floor, 0L) + deltaMs);
+		config.floorRunTimeMs.put(floor, next);
+		save();
+	}
+
 	public static synchronized void updateHudPosition(int x, int y) {
 		config.hudX = Math.max(0, x);
 		config.hudY = Math.max(0, y);
@@ -130,6 +150,24 @@ public final class DrtConfigManager {
 
 	public static synchronized void updateHudVisibilityMode(String mode) {
 		config.hudVisibilityMode = normalizeHudVisibilityMode(mode);
+		save();
+	}
+
+	public static synchronized void updateHudOverlayPreset(String preset) {
+		config.hudOverlayPreset = normalizeOverlayPreset(preset, false);
+		save();
+	}
+
+	public static synchronized void updateCustomOverlayLayout(String layout) {
+		config.customOverlayLayout = layout == null ? "" : layout.replace("\r\n", "\n").replace('\r', '\n');
+		save();
+	}
+
+	public static synchronized void updateOverlaySettings(String preset, String customLayout) {
+		config.hudOverlayPreset = normalizeOverlayPreset(preset, false);
+		if (customLayout != null) {
+			config.customOverlayLayout = customLayout.replace("\r\n", "\n").replace('\r', '\n');
+		}
 		save();
 	}
 
@@ -162,6 +200,7 @@ public final class DrtConfigManager {
 
 	public static synchronized void clearAllData() {
 		if (config.floorRunCounts != null) config.floorRunCounts.clear();
+		if (config.floorRunTimeMs != null) config.floorRunTimeMs.clear();
 		config.legacyRunsCompleted = 0;
 		config.runHistory = new ArrayList<>();
 		config.nextChestLogNumber = 1;
@@ -170,6 +209,7 @@ public final class DrtConfigManager {
 
 	public static synchronized void clearFloorData(String floor) {
 		if (config.floorRunCounts != null) config.floorRunCounts.remove(floor);
+		if (config.floorRunTimeMs != null) config.floorRunTimeMs.remove(floor);
 		if (config.runHistory != null) config.runHistory.removeIf(r -> r != null && floor.equals(r.floor));
 		save();
 	}
@@ -177,8 +217,52 @@ public final class DrtConfigManager {
 	public static synchronized boolean removeRunRecord(DungeonRunRecord target) {
 		if (target == null || config.runHistory == null) return false;
 		boolean removed = config.runHistory.removeIf(r -> matchesRunRecord(r, target));
-		if (removed) save();
+		if (removed) {
+			decrementFloorRunCount(target.floor);
+			save();
+		}
 		return removed;
+	}
+
+	/**
+	 * Replaces the history entry matching {@code matchKey} with {@code replacement}.
+	 * Identity fields (timestamp, chest number, floor, chest title) stay from the match key
+	 * so the row remains addressable; loot/costs/profit come from the replacement.
+	 */
+	public static synchronized boolean updateRunRecord(DungeonRunRecord matchKey, DungeonRunRecord replacement) {
+		if (matchKey == null || replacement == null || config.runHistory == null) return false;
+		for (int i = 0; i < config.runHistory.size(); i++) {
+			DungeonRunRecord existing = config.runHistory.get(i);
+			if (!matchesRunRecord(existing, matchKey)) continue;
+			DungeonRunRecord stored = replacement.copy();
+			stored.timestampEpochMillis = existing.timestampEpochMillis;
+			stored.chestNumber = existing.chestNumber;
+			stored.runNumber = existing.runNumber;
+			stored.normalizeCostBreakdown();
+			config.runHistory.set(i, stored);
+			String oldFloor = existing.floor == null ? "UNKNOWN" : existing.floor;
+			String newFloor = stored.floor == null ? "UNKNOWN" : stored.floor;
+			if (!oldFloor.equals(newFloor)) {
+				decrementFloorRunCount(oldFloor);
+				incrementFloorRunCount(newFloor);
+			}
+			save();
+			return true;
+		}
+		return false;
+	}
+
+	private static void decrementFloorRunCount(String floor) {
+		if (floor == null || floor.isBlank() || config.floorRunCounts == null) return;
+		int current = config.floorRunCounts.getOrDefault(floor, 0);
+		if (current <= 1) config.floorRunCounts.remove(floor);
+		else config.floorRunCounts.put(floor, current - 1);
+	}
+
+	private static void incrementFloorRunCount(String floor) {
+		if (floor == null || floor.isBlank()) return;
+		if (config.floorRunCounts == null) config.floorRunCounts = new LinkedHashMap<>();
+		config.floorRunCounts.merge(floor, 1, Integer::sum);
 	}
 
 	private static boolean matchesRunRecord(DungeonRunRecord left, DungeonRunRecord right) {
@@ -208,6 +292,64 @@ public final class DrtConfigManager {
 		loaded.kuudraPetLevel = clamp(loaded.kuudraPetLevel, 1, 100);
 		loaded.coolForgedLevel = clamp(loaded.coolForgedLevel, 1, 5);
 		loaded.bazaarPriceMode = normalizeBazaarPriceMode(loaded.bazaarPriceMode);
+	}
+
+	private static void applyFreshOverlayDefaults(DrtConfig cfg) {
+		cfg.hudOverlayPreset = "MODERN";
+		if (cfg.customOverlayLayout == null || cfg.customOverlayLayout.isBlank()) {
+			cfg.customOverlayLayout = defaultCustomOverlayLayout();
+		}
+	}
+
+	private static boolean migrateOverlayPreset(DrtConfig loaded, JsonObject root) {
+		boolean missingField = root == null || !root.has("hudOverlayPreset");
+		String current = loaded.hudOverlayPreset;
+		if (!missingField && current != null && !current.isBlank()) {
+			String normalized = normalizeOverlayPreset(current, false);
+			if (!normalized.equals(current)) {
+				loaded.hudOverlayPreset = normalized;
+				return true;
+			}
+			return false;
+		}
+		// Existing installs without the field keep Legacy; brand-new empty configs use Modern.
+		boolean hasPriorData = loaded.onboardingComplete
+			|| loaded.legacyRunsCompleted > 0
+			|| (loaded.floorRunCounts != null && !loaded.floorRunCounts.isEmpty())
+			|| (loaded.runHistory != null && !loaded.runHistory.isEmpty())
+			|| loaded.hudX != 10
+			|| loaded.hudY != 10
+			|| Math.abs(loaded.hudScale - 1.0F) > 0.001F;
+		loaded.hudOverlayPreset = hasPriorData ? "LEGACY" : "MODERN";
+		return true;
+	}
+
+	private static boolean normalizeCustomOverlayLayout(DrtConfig loaded) {
+		if (loaded.customOverlayLayout != null && !loaded.customOverlayLayout.isBlank()) {
+			String normalized = loaded.customOverlayLayout.replace("\r\n", "\n").replace('\r', '\n');
+			if (!normalized.equals(loaded.customOverlayLayout)) {
+				loaded.customOverlayLayout = normalized;
+				return true;
+			}
+			return false;
+		}
+		loaded.customOverlayLayout = defaultCustomOverlayLayout();
+		return true;
+	}
+
+	private static String normalizeOverlayPreset(String preset, boolean freshDefault) {
+		if (preset == null || preset.isBlank()) return freshDefault ? "MODERN" : "LEGACY";
+		String normalized = preset.trim().toUpperCase(java.util.Locale.ROOT);
+		return switch (normalized) {
+			case "LEGACY", "MODERN", "SESSION", "DETAILED", "CLASSIC", "CUSTOM" -> normalized;
+			default -> freshDefault ? "MODERN" : "LEGACY";
+		};
+	}
+
+	private static String defaultCustomOverlayLayout() {
+		return "DRT [{floor}]\n"
+			+ "Session: {runs.session} runs | {runs.avg} avg | {runs.hour}/hr\n"
+			+ "Profit: {profit.session} | {profit.run}/run | {profit.hour}/hr";
 	}
 
 	private static String normalizeKuudraFaction(String faction) {
