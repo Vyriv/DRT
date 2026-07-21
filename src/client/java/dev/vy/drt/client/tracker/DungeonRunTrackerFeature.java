@@ -2,6 +2,16 @@ package dev.vy.drt.client.tracker;
 
 import dev.vy.drt.DungeonRunTracker;
 import dev.vy.drt.config.ChestCostBreakdown;
+import dev.vy.drt.client.overlay.OverlayColors;
+import dev.vy.drt.client.overlay.OverlayFormat;
+import dev.vy.drt.client.overlay.OverlayLayout;
+import dev.vy.drt.client.overlay.OverlayLine;
+import dev.vy.drt.client.overlay.OverlayLineClick;
+import dev.vy.drt.client.overlay.OverlayLineHover;
+import dev.vy.drt.client.overlay.OverlayLayouts;
+import dev.vy.drt.client.overlay.OverlayPreset;
+import dev.vy.drt.client.overlay.OverlaySegment;
+import dev.vy.drt.client.overlay.OverlayStats;
 import dev.vy.drt.config.DrtConfig;
 import dev.vy.drt.config.DrtConfigManager;
 import dev.vy.drt.config.DungeonChestOffer;
@@ -10,6 +20,7 @@ import dev.vy.drt.config.DungeonLootEntry;
 import dev.vy.drt.config.DungeonRunRecord;
 import dev.vy.drt.mixin.AbstractContainerScreenAccessor;
 import dev.vy.drt.price.DungeonProfitPricing;
+import dev.vy.drt.price.LootFloorGuards;
 import dev.vy.drt.price.PriceCache;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -38,7 +49,6 @@ import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
-import net.minecraft.world.item.component.CustomData;
 import net.minecraft.world.item.component.ItemLore;
 import net.minecraft.world.item.component.ResolvableProfile;
 import net.minecraft.world.scores.DisplaySlot;
@@ -68,6 +78,7 @@ public final class DungeonRunTrackerFeature {
 	private static final Pattern SHORT_FLOOR_PATTERN = Pattern.compile("(?:^|[^A-Z0-9])([FM])\\s*([1-7])(?:$|[^A-Z0-9])");
 	private static final Pattern KUUDRA_SHORT_TIER_PATTERN = Pattern.compile("(?:^|[^A-Z0-9])(?:K|T)\\s*([1-5])(?:$|[^A-Z0-9])", Pattern.CASE_INSENSITIVE);
 	private static final Pattern KUUDRA_TIER_WORD_PATTERN = Pattern.compile("\\bTIER\\s*(?:-|:)?\\s*(I{1,3}|IV|V|[1-5])\\b", Pattern.CASE_INSENSITIVE);
+	private static final Pattern KUUDRA_PAREN_TIER_PATTERN = Pattern.compile("\\(\\s*[KT]\\s*([1-5])\\s*\\)", Pattern.CASE_INSENSITIVE);
 	private static final Pattern SCORE_GRADE_PATTERN = Pattern.compile("\\bSCORE\\b.*(?:\\((S\\+|S|A|B|C|D)\\)|(?:^|\\s)(S\\+|S|A|B|C|D)\\s*$)", Pattern.CASE_INSENSITIVE);
 	private static final Set<String> REWARD_CHEST_TITLES = Set.of(
 		"WOOD CHEST", "GOLD CHEST", "DIAMOND CHEST", "EMERALD CHEST", "OBSIDIAN CHEST", "BEDROCK CHEST",
@@ -78,12 +89,22 @@ public final class DungeonRunTrackerFeature {
 		"EMERALD", "EMERALD CHEST", "OBSIDIAN", "OBSIDIAN CHEST", "BEDROCK", "BEDROCK CHEST",
 		"FREE", "FREE CHEST", "PAID", "PAID CHEST"
 	);
-	private static final Map<String, DungeonFloor> KUUDRA_TIER_NAMES = Map.of(
-		"BASIC", DungeonFloor.K1,
-		"HOT", DungeonFloor.K2,
-		"BURNING", DungeonFloor.K3,
-		"FIERY", DungeonFloor.K4,
-		"INFERNAL", DungeonFloor.K5
+	/** Longest / most specific names first so Infernal cannot lose to a weaker token. */
+	private static final List<Map.Entry<String, DungeonFloor>> KUUDRA_TIER_NAMES = List.of(
+		Map.entry("INFERNAL", DungeonFloor.K5),
+		Map.entry("BURNING", DungeonFloor.K3),
+		Map.entry("FIERY", DungeonFloor.K4),
+		Map.entry("BASIC", DungeonFloor.K1),
+		Map.entry("HOT", DungeonFloor.K2)
+	);
+	/** Paid-chest Cost lines name the key; longest first so "HOT KUUDRA KEY" beats bare "KUUDRA KEY". */
+	private static final List<Map.Entry<String, DungeonFloor>> KUUDRA_KEY_NAMES = List.of(
+		Map.entry("INFERNAL KUUDRA KEY", DungeonFloor.K5),
+		Map.entry("FIERY KUUDRA KEY", DungeonFloor.K4),
+		Map.entry("BURNING KUUDRA KEY", DungeonFloor.K3),
+		Map.entry("HOT KUUDRA KEY", DungeonFloor.K2),
+		Map.entry("BASIC KUUDRA KEY", DungeonFloor.K1),
+		Map.entry("KUUDRA KEY", DungeonFloor.K1)
 	);
 	private static final Set<String> ULTIMATE_ENCHANTS = Set.of(
 		"LEGION", "ULTIMATE_WISE", "LAST_STAND", "SOUL_EATER", "SWARM", "COMBO", "REND",
@@ -234,22 +255,15 @@ public final class DungeonRunTrackerFeature {
 		}
 	}
 
-	private static String getSkyblockId(ItemStack stack) {
-		CustomData cd = stack.get(DataComponents.CUSTOM_DATA);
-		if (cd == null) return null;
-		return cd.copyTag()
-			.getCompound("ExtraAttributes")
-			.flatMap(ea -> ea.getString("id"))
-			.filter(s -> !s.isEmpty())
-			.orElse(null);
-	}
-
 	private final Map<String, Integer> floorRunCounts = new LinkedHashMap<>();
+	private final Map<String, Long> floorRunTimeMs = new LinkedHashMap<>();
 	private final Map<String, Long> floorProfitTotals = new LinkedHashMap<>();
 	private DungeonFloor selectedFloor = null;
 
 	private boolean enabled;
 	private HudVisibilityMode hudVisibilityMode = HudVisibilityMode.DEFAULT;
+	private OverlayPreset overlayPreset = OverlayPreset.LEGACY;
+	private String customOverlayLayout = OverlayLayouts.DEFAULT_CUSTOM_LAYOUT;
 	private int hudX = 10;
 	private int hudY = 10;
 	private float hudScale = 1.0F;
@@ -329,6 +343,7 @@ public final class DungeonRunTrackerFeature {
 	private boolean leftMouseDownLastTick;
 	private final Deque<PacketCapturedMessage> recentSystemMessages = new ArrayDeque<>();
 	private final Deque<PacketCapturedMessage> recentLootMessages = new ArrayDeque<>();
+	private final Set<String> lootGuardWarnedKeys = new HashSet<>();
 	private boolean positionDirty;
 	private int dragOffsetX;
 	private int dragOffsetY;
@@ -336,6 +351,67 @@ public final class DungeonRunTrackerFeature {
 	public void applyConfig(DrtConfig config) {
 		enabled = config.enabled;
 		hudVisibilityMode = HudVisibilityMode.fromConfig(config.hudVisibilityMode);
+		OverlayPreset loadedPreset = OverlayPreset.fromConfig(config.hudOverlayPreset);
+		overlayPreset = loadedPreset == null ? OverlayPreset.LEGACY : loadedPreset;
+		customOverlayLayout = config.customOverlayLayout == null || config.customOverlayLayout.isBlank()
+			? OverlayLayouts.DEFAULT_CUSTOM_LAYOUT
+			: config.customOverlayLayout;
+		hudX = Math.max(0, config.hudX);
+		hudY = Math.max(0, config.hudY);
+		hudScale = clampHudScale(config.hudScale);
+		String savedFloor = config.selectedFloor;
+		if (savedFloor != null && !savedFloor.isBlank()) {
+			try { selectedFloor = DungeonFloor.valueOf(savedFloor); } catch (IllegalArgumentException ignored) { selectedFloor = null; }
+		} else {
+			selectedFloor = null;
+		}
+		rebuildLifetimeMaps(config);
+	}
+
+	/** Re-derives lifetime overlay maps from persisted config (run history + floor counts/times). */
+	public synchronized void resyncLifetimeFromConfig() {
+		rebuildLifetimeMaps(DrtConfigManager.getConfig());
+	}
+
+	public synchronized void notifyRunRemoved(DungeonRunRecord removed) {
+		resyncLifetimeFromConfig();
+		applySessionRemoval(removed);
+	}
+
+	public synchronized void notifyHistoryCleared(List<DungeonRunRecord> removed) {
+		resyncLifetimeFromConfig();
+		if (removed == null) return;
+		for (DungeonRunRecord record : removed) {
+			applySessionRemoval(record);
+		}
+	}
+
+	public synchronized void notifyRunUpdated(DungeonRunRecord before, DungeonRunRecord after) {
+		resyncLifetimeFromConfig();
+		if (!sessionActive || before == null || after == null || sessionStartMillis <= 0L) return;
+		if (before.timestampEpochMillis < sessionStartMillis) return;
+		String oldKey = before.floor == null ? "UNKNOWN" : before.floor;
+		String newKey = after.floor == null ? "UNKNOWN" : after.floor;
+		long profitDelta = after.chestProfitCoins - before.chestProfitCoins;
+		sessionTotalProfit += profitDelta;
+		if (oldKey.equals(newKey)) {
+			sessionFloorProfitTotals.merge(oldKey, profitDelta, Long::sum);
+		} else {
+			sessionFloorProfitTotals.merge(oldKey, -before.chestProfitCoins, Long::sum);
+			sessionFloorProfitTotals.merge(newKey, after.chestProfitCoins, Long::sum);
+			adjustSessionFloorRun(oldKey, -1);
+			adjustSessionFloorRun(newKey, 1);
+		}
+		String oldGrade = before.grade == null || before.grade.isBlank() ? "S+" : before.grade;
+		String newGrade = after.grade == null || after.grade.isBlank() ? "S+" : after.grade;
+		if (!oldGrade.equals(newGrade)) {
+			adjustSessionGrade(oldGrade, -1);
+			adjustSessionGrade(newGrade, 1);
+		}
+	}
+
+	private void rebuildLifetimeMaps(DrtConfig config) {
+		if (config == null) config = new DrtConfig();
 		floorRunCounts.clear();
 		if (config.floorRunCounts != null) {
 			config.floorRunCounts.forEach((k, v) -> {
@@ -345,14 +421,11 @@ public final class DungeonRunTrackerFeature {
 		if (config.legacyRunsCompleted > 0 && !floorRunCounts.containsKey("M5")) {
 			floorRunCounts.put("M5", config.legacyRunsCompleted);
 		}
-		hudX = Math.max(0, config.hudX);
-		hudY = Math.max(0, config.hudY);
-		hudScale = clampHudScale(config.hudScale);
-		String savedFloor = config.selectedFloor;
-		if (savedFloor != null && !savedFloor.isBlank()) {
-			try { selectedFloor = DungeonFloor.valueOf(savedFloor); } catch (IllegalArgumentException ignored) { selectedFloor = null; }
-		} else {
-			selectedFloor = null;
+		floorRunTimeMs.clear();
+		if (config.floorRunTimeMs != null) {
+			config.floorRunTimeMs.forEach((k, v) -> {
+				if (k != null && v != null) floorRunTimeMs.put(k, Math.max(0L, v));
+			});
 		}
 		floorProfitTotals.clear();
 		gradeRunCounts.clear();
@@ -368,6 +441,30 @@ public final class DungeonRunTrackerFeature {
 				}
 			}
 		}
+	}
+
+	private void applySessionRemoval(DungeonRunRecord removed) {
+		if (!sessionActive || removed == null || sessionStartMillis <= 0L) return;
+		if (removed.timestampEpochMillis < sessionStartMillis) return;
+		String key = removed.floor == null ? "UNKNOWN" : removed.floor;
+		sessionTotalProfit -= removed.chestProfitCoins;
+		sessionFloorProfitTotals.merge(key, -removed.chestProfitCoins, Long::sum);
+		sessionRuns = Math.max(0, sessionRuns - 1);
+		adjustSessionFloorRun(key, -1);
+		String g = removed.grade == null || removed.grade.isBlank() ? "S+" : removed.grade;
+		adjustSessionGrade(g, -1);
+	}
+
+	private void adjustSessionFloorRun(String key, int delta) {
+		if (key == null || delta == 0) return;
+		sessionFloorRuns.merge(key, delta, (a, b) -> Math.max(0, a + b));
+		if (sessionFloorRuns.getOrDefault(key, 0) == 0) sessionFloorRuns.remove(key);
+	}
+
+	private void adjustSessionGrade(String grade, int delta) {
+		if (grade == null || delta == 0) return;
+		sessionGradeRuns.merge(grade, delta, (a, b) -> Math.max(0, a + b));
+		if (sessionGradeRuns.getOrDefault(grade, 0) == 0) sessionGradeRuns.remove(grade);
 	}
 
 	public void tick(Minecraft client) {
@@ -413,21 +510,6 @@ public final class DungeonRunTrackerFeature {
 		submitMessage(message, true);
 	}
 
-	private static final int C_BG       = 0xCC0D0D14;
-	private static final int C_ACCENT   = 0xFF1A2A4A;
-	private static final int C_TITLE    = 0xFF7A7A8A;
-	private static final int C_BRACKET  = 0xFF445566;
-	private static final int C_FLOOR    = 0xFF55CCFF;
-	private static final int C_LABEL    = 0xFFAAAAAA;
-	private static final int C_VALUE    = 0xFFFFFFFF;
-	private static final int C_SEP      = 0xFF4A5060;
-	private static final int C_DIM      = 0xFF777788;
-	private static final int C_RATE     = 0xFFDDDDEE;
-	private static final int C_PAUSED   = 0xFFFFAA00;
-	private static final int C_RESET    = 0xFFFF4455;
-	private static final int OVERLAY_BG = 0xDD0B0C14;
-	private static final int OVERLAY_BG_ALT = 0xEE111320;
-	private static final int OVERLAY_BORDER = 0xFF323858;
 	private static final int OVERLAY_TEXT = 0xFFE5E7F0;
 	private static final int OVERLAY_MUTED = 0xFF8993AE;
 	private static final int OVERLAY_VALUE = 0xFF8FE39F;
@@ -447,105 +529,48 @@ public final class DungeonRunTrackerFeature {
 	public void extractRenderState(Minecraft client, GuiGraphicsExtractor guiGraphics, int mouseX, int mouseY, boolean moveMode) {
 		if (!isTrackerVisible(client, moveMode)) return;
 		boolean showResetLine = shouldShowResetLine(client, moveMode);
-
-		String floorTag = selectedFloor == null ? "All" : selectedFloor.name();
-		long lifetimeProfit = selectedFloor == null
-			? totalLifetimeProfit
-			: floorProfitTotals.getOrDefault(selectedFloor.name(), 0L);
-		int sessionRunCount = displaySessionRuns();
-		long sessionProfit = displaySessionProfit();
-		long sessionRunTimeMs = displaySessionRunTimeMs();
-		long inRunElapsedMs = activeInRunElapsedMs();
-		double hoursElapsed = inRunElapsedMs / 3_600_000.0;
-		long profitPerHr = hoursElapsed > 0.001 ? (long) (sessionProfit / hoursElapsed) : 0L;
-		double runsPerHr = hoursElapsed > 0.001 ? sessionRunCount / hoursElapsed : 0.0;
-		long avgRunTimeMs = sessionRunCount > 0 ? sessionRunTimeMs / sessionRunCount : 0L;
-		long avgProfitPerRun = sessionRunCount > 0 ? sessionProfit / sessionRunCount : 0L;
-		int totalRuns = selectedFloor == null
-			? totalRunsCompleted()
-			: floorRunCounts.getOrDefault(selectedFloor.name(), 0);
-
-		int lineH = client.font.lineHeight + 2;
+		OverlayLayout layout = buildHudLayout(client, showResetLine);
 
 		Matrix3x2fStack pose = guiGraphics.pose();
 		pose.pushMatrix();
 		try {
 			pose.translate(hudX, hudY);
 			pose.scale(hudScale);
-			extractRenderStateHudTitleLine(client, guiGraphics, 0, 0, floorTag);
-			extractRenderStateHudRunsLine(client, guiGraphics, 0, lineH, totalRuns, sessionRunCount, runsPerHr, avgRunTimeMs);
-			extractRenderStateHudProfitLine(client, guiGraphics, 0, lineH * 2, lifetimeProfit, sessionProfit, profitPerHr, avgProfitPerRun);
-			if (showResetLine) {
-				seg(client, guiGraphics, "Reset " + floorTag, 0, lineH * 3, C_RESET);
+			for (OverlayLine line : layout.lines) {
+				int x = 0;
+				for (OverlaySegment segment : line.segments) {
+					int drawX = segment.positioned() ? segment.x : x;
+					seg(client, guiGraphics, segment.text, drawX, line.y, segment.color);
+					x = drawX + client.font.width(segment.text);
+				}
 			}
 		} finally {
 			pose.popMatrix();
 		}
 
 		if (client.screen != null && !moveMode) {
-			if (isHoveringModeLabel(client, mouseX, mouseY)) {
-				drawTooltip(client, guiGraphics, "Mode: " + hudVisibilityMode.displayName, mouseX, mouseY);
-			} else if (isHoveringFloorLabel(client, mouseX, mouseY)) {
-				drawTooltip(client, guiGraphics, "Left/right click to cycle floors", mouseX, mouseY);
-			} else if (isHoveringRunsHrPart(client, mouseX, mouseY)) {
-				drawTooltip(client, guiGraphics, runsPerHrPaused ? "Click to resume /hr timer" : "Click to pause /hr timer", mouseX, mouseY);
-			} else if (isHoveringRunsLine(client, mouseX, mouseY)) {
-				drawTooltip(client, guiGraphics, buildRunsTooltip(), mouseX, mouseY);
-			} else if (isHoveringProfitLine(client, mouseX, mouseY)) {
-				drawTooltip(client, guiGraphics, "Click to view " + (selectedFloor == null ? "all" : selectedFloor.name()) + " loot history", mouseX, mouseY);
-			} else if (isHoveringResetButton(client, mouseX, mouseY, showResetLine)) {
-				drawTooltip(client, guiGraphics, "Click to reset " + floorTag + " tracker", mouseX, mouseY);
+			OverlayLayout.HitResult hit = hitTestHud(client, mouseX, mouseY, false);
+			if (hit.hit()) {
+				switch (hit.hover()) {
+					case MODE -> drawTooltip(client, guiGraphics, "Mode: " + hudVisibilityMode.displayName, mouseX, mouseY);
+					case FLOOR -> drawTooltip(client, guiGraphics, "Left/right click to cycle floors", mouseX, mouseY);
+					case RUNS_HR -> drawTooltip(client, guiGraphics, runsPerHrPaused ? "Click to resume /hr timer" : "Click to pause /hr timer", mouseX, mouseY);
+					case RUNS -> drawTooltip(client, guiGraphics, buildRunsHoverTooltip(), mouseX, mouseY);
+					case PROFIT -> drawTooltip(client, guiGraphics, buildProfitHoverTooltip(), mouseX, mouseY);
+					case RESET -> {
+						String floorTag = selectedFloor == null ? "All" : selectedFloor.name();
+						drawTooltip(client, guiGraphics, "Click to reset " + floorTag + " tracker", mouseX, mouseY);
+					}
+					case NONE -> { }
+				}
 			}
 		}
-
 	}
 
 	public void extractChestOverlayRenderState(Minecraft client, GuiGraphicsExtractor guiGraphics, int mouseX, int mouseY) {
 		if (extractRenderStateCroesusChestOverlay(client, guiGraphics, mouseX, mouseY)) return;
 		extractRenderStateCroesusMainMenuHighlights(client, guiGraphics);
 		extractRenderStateChestBreakdownOverlay(client, guiGraphics, mouseX, mouseY);
-	}
-
-	private void extractRenderStateHudTitleLine(Minecraft client, GuiGraphicsExtractor g, int x, int y, String floorTag) {
-		int floorColor = floorTagColor(floorTag);
-		x = seg(client, g, "DRT ", x, y, C_TITLE);
-		x = seg(client, g, "[", x, y, C_BRACKET);
-		x = seg(client, g, floorTag, x, y, floorColor);
-		seg(client, g, "]", x, y, C_BRACKET);
-	}
-
-	private static int floorTagColor(String tag) {
-		if (tag == null) return C_FLOOR;
-		if (tag.startsWith("F")) return 0xFF55CC66;
-		if (tag.startsWith("M")) return 0xFFFF5555;
-		if (tag.startsWith("K")) return 0xFFAA0000;
-		return C_FLOOR;
-	}
-
-	private void extractRenderStateHudRunsLine(Minecraft client, GuiGraphicsExtractor g, int x, int y, int totalRuns, int sessionRunCount, double runsPerHr, long avgRunTimeMs) {
-		x = seg(client, g, "Runs ", x, y, C_LABEL);
-		x = seg(client, g, String.valueOf(totalRuns), x, y, C_VALUE);
-		x = seg(client, g, " | ", x, y, C_SEP);
-		x = seg(client, g, String.valueOf(sessionRunCount), x, y, C_VALUE);
-		x = seg(client, g, " | ", x, y, C_SEP);
-		x = seg(client, g, formatDuration(avgRunTimeMs), x, y, C_VALUE);
-		x = seg(client, g, " | ", x, y, C_SEP);
-		x = seg(client, g, formatRate(runsPerHr), x, y, C_RATE);
-		x = seg(client, g, "/hr", x, y, C_DIM);
-		if (runsPerHrPaused) seg(client, g, " [paused]", x, y, C_PAUSED);
-	}
-
-	private void extractRenderStateHudProfitLine(Minecraft client, GuiGraphicsExtractor g, int x, int y,
-			long lifetime, long session, long perHr, long avgProfitPerRun) {
-		x = seg(client, g, "Profit ", x, y, C_LABEL);
-		x = seg(client, g, formatCoins(lifetime), x, y, profitColor(lifetime));
-		x = seg(client, g, " | ", x, y, C_SEP);
-		x = seg(client, g, formatCoins(session), x, y, profitColor(session));
-		x = seg(client, g, " | ", x, y, C_SEP);
-		x = seg(client, g, formatCoins(avgProfitPerRun), x, y, profitColor(avgProfitPerRun));
-		x = seg(client, g, "/run | ", x, y, C_DIM);
-		x = seg(client, g, formatCoins(perHr), x, y, profitColor(perHr));
-		seg(client, g, "/hr", x, y, C_DIM);
 	}
 
 	private int seg(Minecraft client, GuiGraphicsExtractor g, String text, int x, int y, int color) {
@@ -588,29 +613,28 @@ public final class DungeonRunTrackerFeature {
 		return lines;
 	}
 
-	private static final int[] PROFIT_GRADIENT = {
-		0xFF0000, 0xF70909, 0xEF1212, 0xE71B1B, 0xDF2424, 0xD72D2D,
-		0xCF3636, 0xC73F3F, 0xBF4848, 0xB75151, 0xAF5A5A, 0xA76363,
-		0x9F6C6C, 0x977575, 0x8F7E7E, 0x888888, 0x7E8F7E, 0x759775,
-		0x6C9F6C, 0x63A763, 0x5AAF5A, 0x51B751, 0x48BF48, 0x3FC73F,
-		0x36CF36, 0x2DD72D, 0x24DF24, 0x1BE71B, 0x12EF12, 0x09F709, 0x00FF00
-	};
-	private static final long PROFIT_GRADIENT_MAX = 100_000_000L;
-
-	private int profitColor(long coins) {
-		float t = (float) Math.max(-1.0, Math.min(1.0, (double) coins / PROFIT_GRADIENT_MAX));
-		float idx = (t + 1f) / 2f * (PROFIT_GRADIENT.length - 1);
-		int lo = (int) idx;
-		int hi = Math.min(lo + 1, PROFIT_GRADIENT.length - 1);
-		float frac = idx - lo;
-		return lerpRgb(PROFIT_GRADIENT[lo], PROFIT_GRADIENT[hi], frac) | 0xFF000000;
+	private List<String> buildRunsHoverTooltip() {
+		if (overlayPreset == OverlayPreset.LEGACY) return buildRunsTooltip();
+		OverlayStats stats = currentOverlayStats();
+		List<String> lines = new ArrayList<>();
+		lines.add("Total runs: " + stats.totalRuns);
+		lines.add("S+: " + stats.sPlusCount);
+		lines.add("S: " + stats.sCount);
+		return lines;
 	}
 
-	private int lerpRgb(int from, int to, float t) {
-		int r = (int) ((((from >> 16) & 0xFF) * (1f - t)) + (((to >> 16) & 0xFF) * t));
-		int g = (int) ((((from >> 8) & 0xFF) * (1f - t)) + (((to >> 8) & 0xFF) * t));
-		int b = (int) (((from & 0xFF) * (1f - t)) + ((to & 0xFF) * t));
-		return (r << 16) | (g << 8) | b;
+	private List<String> buildProfitHoverTooltip() {
+		if (overlayPreset == OverlayPreset.LEGACY) {
+			return List.of("Click to view " + (selectedFloor == null ? "all" : selectedFloor.name()) + " loot history");
+		}
+		OverlayStats stats = currentOverlayStats();
+		List<String> lines = new ArrayList<>();
+		lines.add("Total profit: " + OverlayFormat.coins(stats.totalProfit));
+		if (stats.totalRuns > 0) {
+			lines.add("Total profit per run: " + OverlayFormat.coins(stats.lifetimeProfitPerRun));
+		}
+		lines.add("Click to view " + (selectedFloor == null ? "all" : selectedFloor.name()) + " loot history");
+		return lines;
 	}
 
 	public boolean isEnabled() {
@@ -629,32 +653,107 @@ public final class DungeonRunTrackerFeature {
 		return enabled;
 	}
 
-	private List<String> getDisplayLines(boolean includeResetLine) {
-		String floorTag = selectedFloor == null ? "All" : selectedFloor.name();
-		String resetLine = "Reset " + floorTag;
+	public OverlayPreset getOverlayPreset() {
+		return overlayPreset;
+	}
 
-		int totalRuns = selectedFloor == null
-			? totalRunsCompleted()
-			: floorRunCounts.getOrDefault(selectedFloor.name(), 0);
+	public void setOverlayPreset(OverlayPreset preset) {
+		if (preset == null) return;
+		overlayPreset = preset;
+		DrtConfigManager.updateHudOverlayPreset(preset.name());
+	}
+
+	public String getCustomOverlayLayout() {
+		return customOverlayLayout;
+	}
+
+	public void setCustomOverlayLayout(String layout, boolean activateCustom) {
+		customOverlayLayout = layout == null || layout.isBlank()
+			? OverlayLayouts.DEFAULT_CUSTOM_LAYOUT
+			: layout.replace("\r\n", "\n").replace('\r', '\n');
+		if (activateCustom) {
+			overlayPreset = OverlayPreset.CUSTOM;
+			DrtConfigManager.updateOverlaySettings(OverlayPreset.CUSTOM.name(), customOverlayLayout);
+		} else {
+			DrtConfigManager.updateCustomOverlayLayout(customOverlayLayout);
+		}
+	}
+
+	public void resetCustomOverlayLayout() {
+		setCustomOverlayLayout(OverlayLayouts.DEFAULT_CUSTOM_LAYOUT, overlayPreset == OverlayPreset.CUSTOM);
+	}
+
+	public OverlayStats currentOverlayStats() {
+		String floorTag = selectedFloor == null ? "All" : selectedFloor.name();
 		long lifetimeProfit = selectedFloor == null
 			? totalLifetimeProfit
 			: floorProfitTotals.getOrDefault(selectedFloor.name(), 0L);
 		int sessionRunCount = displaySessionRuns();
 		long sessionProfit = displaySessionProfit();
 		long sessionRunTimeMs = displaySessionRunTimeMs();
-
+		long totalRunTimeMs = displayTotalRunTimeMs();
 		long inRunElapsedMs = activeInRunElapsedMs();
 		double hoursElapsed = inRunElapsedMs / 3_600_000.0;
+		long profitPerHr = hoursElapsed > 0.001 ? (long) (sessionProfit / hoursElapsed) : 0L;
 		double runsPerHr = hoursElapsed > 0.001 ? sessionRunCount / hoursElapsed : 0.0;
-		double profitPerHr = hoursElapsed > 0.001 ? sessionProfit / hoursElapsed : 0.0;
 		long avgRunTimeMs = sessionRunCount > 0 ? sessionRunTimeMs / sessionRunCount : 0L;
 		long avgProfitPerRun = sessionRunCount > 0 ? sessionProfit / sessionRunCount : 0L;
+		int totalRuns = selectedFloor == null
+			? totalRunsCompleted()
+			: floorRunCounts.getOrDefault(selectedFloor.name(), 0);
+		return new OverlayStats(
+			floorTag,
+			totalRuns,
+			sessionRunCount,
+			avgRunTimeMs,
+			sessionRunTimeMs,
+			totalRunTimeMs,
+			runsPerHr,
+			gradeRunCounts.getOrDefault("S", 0),
+			gradeRunCounts.getOrDefault("S+", 0),
+			lifetimeProfit,
+			sessionProfit,
+			avgProfitPerRun,
+			profitPerHr,
+			runsPerHrPaused,
+			"Reset " + floorTag
+		);
+	}
 
-		String runsLine = "Runs " + totalRuns + " | " + sessionRunCount + " | " + formatDuration(avgRunTimeMs) + " | " + formatRate(runsPerHr) + "/hr"
-			+ (runsPerHrPaused ? " [paused]" : "");
-		String profitLine = "Profit " + formatCoins(lifetimeProfit) + " | " + formatCoins(sessionProfit) + " | " + formatCoins(avgProfitPerRun) + "/run | " + formatCoins((long) profitPerHr) + "/hr";
-		if (includeResetLine) return List.of("DRT [" + floorTag + "]", runsLine, profitLine, resetLine);
-		return List.of("DRT [" + floorTag + "]", runsLine, profitLine);
+	public OverlayLayout buildHudLayout(Minecraft client, boolean includeResetLine) {
+		return OverlayLayouts.build(
+			overlayPreset,
+			currentOverlayStats(),
+			text -> client.font.width(text),
+			client.font.lineHeight,
+			customOverlayLayout,
+			includeResetLine
+		);
+	}
+
+	public OverlayLayout buildPreviewLayout(Minecraft client, OverlayPreset preset, String customText) {
+		OverlayPreset safe = preset == null ? OverlayPreset.LEGACY : preset;
+		return OverlayLayouts.build(
+			safe,
+			OverlayStats.previewSample(),
+			text -> client.font.width(text),
+			client.font.lineHeight,
+			customText == null ? customOverlayLayout : customText,
+			false
+		);
+	}
+
+	private OverlayLayout.HitResult hitTestHud(Minecraft client, int mouseX, int mouseY, boolean includeResetLine) {
+		if (client == null) return OverlayLayout.HitResult.miss();
+		double localX = toHudLocalX(mouseX);
+		double localY = toHudLocalY(mouseY);
+		OverlayLayout layout = buildHudLayout(client, includeResetLine);
+		int width = layout.width;
+		int height = layout.height;
+		if (localX < -3 || localX > width + 3 || localY < -2 || localY > height + 2) {
+			return OverlayLayout.HitResult.miss();
+		}
+		return layout.hitTest(text -> client.font.width(text), localX, localY);
 	}
 
 	private int displaySessionRuns() {
@@ -669,9 +768,25 @@ public final class DungeonRunTrackerFeature {
 		return selectedFloor == null ? sessionTotalRunTimeMs : sessionFloorRunTimeTotals.getOrDefault(selectedFloor.name(), 0L);
 	}
 
+	private long displayTotalRunTimeMs() {
+		if (selectedFloor != null) {
+			return floorRunTimeMs.getOrDefault(selectedFloor.name(), 0L);
+		}
+		long total = 0L;
+		for (long value : floorRunTimeMs.values()) total += Math.max(0L, value);
+		return total;
+	}
+
+	private void accumulateLifetimeRunTime(String floorKey, long runTimeMs) {
+		if (runTimeMs <= 0L || floorKey == null || floorKey.isBlank()) return;
+		long next = floorRunTimeMs.merge(floorKey, runTimeMs, Long::sum);
+		DrtConfigManager.updateFloorRunTimeMs(floorKey, next);
+	}
+
 	private void resetSelectedFloor() {
 		if (selectedFloor == null) {
 			floorRunCounts.clear();
+			floorRunTimeMs.clear();
 			totalLifetimeProfit = 0L;
 			floorProfitTotals.clear();
 			gradeRunCounts.clear();
@@ -681,6 +796,7 @@ public final class DungeonRunTrackerFeature {
 			String key = selectedFloor.name();
 			totalLifetimeProfit -= floorProfitTotals.getOrDefault(key, 0L);
 			floorRunCounts.remove(key);
+			floorRunTimeMs.remove(key);
 			floorProfitTotals.remove(key);
 			DrtConfigManager.clearFloorData(key);
 			selectedFloor = null;
@@ -728,19 +844,6 @@ public final class DungeonRunTrackerFeature {
 		return String.valueOf(coins);
 	}
 
-	private String formatRate(double rate) {
-		if (rate >= 100) return String.format("%.1f", rate);
-		return String.format("%.2f", rate);
-	}
-
-	private String formatDuration(long millis) {
-		if (millis <= 0L) return "0:00";
-		long totalSeconds = Math.max(0L, millis / 1000L);
-		long minutes = totalSeconds / 60L;
-		long seconds = totalSeconds % 60L;
-		return minutes + ":" + String.format("%02d", seconds);
-	}
-
 	public int getHudX() { return hudX; }
 	public int getHudY() { return hudY; }
 
@@ -767,12 +870,28 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private int getBaseDisplayWidth(Minecraft client, boolean includeResetLine) {
-		return getDisplayLines(includeResetLine).stream().mapToInt(l -> client.font.width(l)).max().orElse(0);
+		return buildHudLayout(client, includeResetLine).width;
 	}
 
 	private int getBaseDisplayHeight(Minecraft client, boolean includeResetLine) {
-		List<String> lines = getDisplayLines(includeResetLine);
-		return lines.size() * (client.font.lineHeight + 2) - 2;
+		return buildHudLayout(client, includeResetLine).height;
+	}
+
+	private boolean handleOverlayClick(OverlayLayout.HitResult hit) {
+		if (hit == null || !hit.hit()) return false;
+		OverlayLineClick click = hit.click();
+		if (click == OverlayLineClick.NONE && hit.hover() == OverlayLineHover.FLOOR) {
+			click = OverlayLineClick.CYCLE_FLOOR;
+		}
+		switch (click) {
+			case CYCLE_MODE -> { cycleHudVisibilityMode(); return true; }
+			case CYCLE_FLOOR -> { cycleSelectedFloor(); return true; }
+			case TOGGLE_RUNS_HR -> { toggleRunsPerHrPause(); return true; }
+			case OPEN_LOOT -> { requestOpenLootScreen(selectedFloor, null); return true; }
+			case RESET -> { resetSelectedFloor(); return true; }
+			case NONE -> { return false; }
+		}
+		return false;
 	}
 
 	private int scaledHudSize(int baseSize) {
@@ -806,19 +925,16 @@ public final class DungeonRunTrackerFeature {
 		if (!isTrackerVisible(client, moveMode) || (button != 0 && button != 1)) return false;
 		if (moveMode) return false;
 		boolean showResetLine = shouldShowResetLine(client, false);
+		OverlayLayout.HitResult hit = hitTestHud(client, mx, my, showResetLine);
+		if (!hit.hit()) return false;
 		if (button == 1) {
-			if (isHoveringFloorLabel(client, mx, my)) { cycleSelectedFloorBackward(); return true; }
+			if (hit.click() == OverlayLineClick.CYCLE_FLOOR || hit.hover() == OverlayLineHover.FLOOR) {
+				cycleSelectedFloorBackward();
+				return true;
+			}
 			return false;
 		}
-		if (isHoveringModeLabel(client, mx, my)) { cycleHudVisibilityMode(); return true; }
-		if (isHoveringFloorLabel(client, mx, my)) { cycleSelectedFloor(); return true; }
-		if (isHoveringRunsHrPart(client, mx, my)) { toggleRunsPerHrPause(); return true; }
-		if (isHoveringProfitLine(client, mx, my)) {
-			requestOpenLootScreen(selectedFloor, null);
-			return true;
-		}
-		if (isHoveringResetButton(client, mx, my, showResetLine)) { resetSelectedFloor(); return true; }
-		return false;
+		return handleOverlayClick(hit);
 	}
 
 	private boolean handleChestKeyModifierClick(Minecraft client, int mouseX, int mouseY) {
@@ -1153,10 +1269,6 @@ public final class DungeonRunTrackerFeature {
 		return Math.max(0L, elapsed + currentElapsed);
 	}
 
-	private long completedRunElapsedMs() {
-		return Math.max(0L, sessionTotalRunTimeMs);
-	}
-
 	private void startCurrentRunTiming(long now) {
 		if (currentRunActive) finishCurrentRunTiming(now);
 		if (!sessionActive) {
@@ -1457,30 +1569,71 @@ public final class DungeonRunTrackerFeature {
 		if (menu == null) return List.of();
 
 		String normalizedTitle = normalize(screen.getTitle().getString());
-		boolean kuudraContext = isKuudraRewardContext(normalizedTitle);
-		Map<String, CroesusChestRow> byTitle = new HashMap<>();
+		// Infer from the chests actually in this menu. Sticky Kuudra state after dungeon->kuudra->dungeon
+		// used to force FREE/PAID filtering and hide all Catacombs chests in Croesus.
+		boolean sawDungeonChest = false;
+		boolean sawKuudraChest = false;
+		Map<String, ItemStack> stacksByTitle = new LinkedHashMap<>();
+		Map<String, Integer> slotsByTitle = new HashMap<>();
 		ScreenBounds bounds = currentContainerBounds(client);
 		for (int slotIndex = 0; slotIndex < menu.slots.size(); slotIndex++) {
 			Slot slot = menu.slots.get(slotIndex);
 			ItemStack stack = slot.getItem();
 			if (stack.isEmpty()) continue;
 			String canonicalKey = canonicalChestTitleFromStack(stack);
-			if (canonicalKey == null || !isTrackedRewardChest(canonicalKey, kuudraContext)) continue;
+			if (canonicalKey == null) continue;
+			if (canonicalKey.equals("FREE CHEST") || canonicalKey.equals("PAID CHEST")) sawKuudraChest = true;
+			if (isCatacombsRewardChest(canonicalKey)) sawDungeonChest = true;
+			stacksByTitle.putIfAbsent(canonicalKey, stack.copy());
+			slotsByTitle.putIfAbsent(canonicalKey, slotIndex);
+		}
+		boolean kuudraContext = sawKuudraChest && !sawDungeonChest;
+		if (!sawDungeonChest && !sawKuudraChest) {
+			kuudraContext = isKuudraRewardContext(normalizedTitle);
+		}
+
+		Map<String, CroesusChestRow> byTitle = new HashMap<>();
+		for (Map.Entry<String, ItemStack> entry : stacksByTitle.entrySet()) {
+			String canonicalKey = entry.getKey();
+			if (!isTrackedRewardChest(canonicalKey, kuudraContext)) continue;
+			ItemStack stack = entry.getValue();
+			int slotIndex = slotsByTitle.getOrDefault(canonicalKey, 0);
+			Slot slot = slotIndex >= 0 && slotIndex < menu.slots.size() ? menu.slots.get(slotIndex) : null;
 
 			CHEST_ICON_CACHE.putIfAbsent(canonicalKey, stack.copy());
 			DungeonChestOffer offer = cachedChestOffersByTitle.get(canonicalKey);
-			if (offer == null) continue;
+			if (offer == null) {
+				offer = parseChestOffer(canonicalKey, stack);
+				cachedChestOffersByTitle.put(canonicalKey, offer);
+				cachedChestOfferFingerprintsByTitle.put(canonicalKey, chestOfferFingerprint(stack));
+			} else {
+				adoptKuudraKeyTier(detectKuudraKeyTierFromLore(cleanLoreLines(stack)));
+			}
 			List<DungeonLootEntry> entries = offer.lootEntries == null ? List.of() : offer.lootEntries;
 			long value = offerValueCoins(canonicalKey, entries, offer.valueCoins);
 			ChestCostBreakdown breakdown = offer.costBreakdown == null ? new ChestCostBreakdown() : offer.costBreakdown.copy();
-			applyKuudraChestCostHint(canonicalKey, breakdown);
+			if (breakdown.usedKuudraKey) breakdown.kuudraKeyCostCoins = 0L;
+			applyKuudraChestCostHint(canonicalKey, breakdown, cleanLoreLines(stack));
 			populateKnownModifierCosts(breakdown);
 			suppressDungeonChestKeyForKuudra(canonicalKey, breakdown);
 			long keyCost = isCatacombsRewardChest(canonicalKey) ? resolveModifierItemCost(ITEM_DUNGEON_CHEST_KEY) : 0L;
 			boolean kismetRerolled = breakdown.usedKismetFeather;
 			String display = shortChestName(toDisplayChestTitle(canonicalKey));
 			long normalProfit = value - breakdown.totalCostCoins();
-			byTitle.put(canonicalKey, new CroesusChestRow(canonicalKey, display, stack.copy(), slotIndex, bounds.left + slot.x, bounds.top + slot.y, normalProfit, keyCost > 0L ? normalProfit - keyCost : Long.MIN_VALUE, offer.alreadyOpened, kismetRerolled));
+			int slotX = slot == null ? bounds.left : bounds.left + slot.x;
+			int slotY = slot == null ? bounds.top : bounds.top + slot.y;
+			byTitle.put(canonicalKey, new CroesusChestRow(
+				canonicalKey,
+				display,
+				stack.copy(),
+				slotIndex,
+				slotX,
+				slotY,
+				normalProfit,
+				keyCost > 0L ? normalProfit - keyCost : Long.MIN_VALUE,
+				offer.alreadyOpened,
+				kismetRerolled
+			));
 		}
 
 		List<CroesusChestRow> rows = new ArrayList<>();
@@ -1785,6 +1938,9 @@ public final class DungeonRunTrackerFeature {
 		}
 		if (offer == null || offer.lootEntries == null || offer.lootEntries.isEmpty()) return null;
 
+		// Paid-chest Cost lines name the key; use that over sticky Hot/K2 floor for open cost.
+		rememberKuudraKeyTierFromMenu(client.player == null ? null : client.player.containerMenu);
+
 		ChestCostBreakdown breakdown = offer.costBreakdown == null ? new ChestCostBreakdown() : offer.costBreakdown.copy();
 		if (pendingLootChestAssigned && toDisplayChestTitle(canonicalTitle).equalsIgnoreCase(pendingLootChestTitle)) {
 			ChestCostBreakdown pending = pendingLootCostBreakdown == null ? new ChestCostBreakdown() : pendingLootCostBreakdown.copy();
@@ -1804,12 +1960,13 @@ public final class DungeonRunTrackerFeature {
 			}
 			if (pending.usedKuudraKey) {
 				breakdown.usedKuudraKey = true;
-				breakdown.kuudraKeyCostCoins = pending.kuudraKeyCostCoins;
+				// Do not copy a stale Hot-key price; re-resolve from the best known tier below.
+				breakdown.kuudraKeyCostCoins = 0L;
 			}
 		} else if (isCatacombsRewardChest(canonicalTitle) && shouldPreviewArmedKismetForChest(canonicalTitle)) {
 			applyArmedRewardModifiersForPreview(breakdown);
 		}
-		applyKuudraChestCostHint(canonicalTitle, breakdown);
+		applyKuudraChestCostHint(canonicalTitle, breakdown, null);
 		populateKnownModifierCosts(breakdown);
 		suppressDungeonChestKeyForKuudra(canonicalTitle, breakdown);
 		List<DungeonLootEntry> entries = new ArrayList<>();
@@ -2034,15 +2191,22 @@ public final class DungeonRunTrackerFeature {
 	private boolean handleKuudraLine(String cleaned, long now) {
 		if (cleaned == null || cleaned.isBlank()) return false;
 
-		DungeonFloor lineTier = detectKuudraTierFromLine(cleaned, insideKuudra || isCurrentFloorKuudra());
-		rememberKuudraTier(lineTier);
+		boolean entry = isKuudraEntryMessage(cleaned);
+		boolean completion = isKuudraCompletionMessage(cleaned);
+		boolean strongLine = entry || completion || hasStrongKuudraTierSignal(cleaned);
+		DungeonFloor lineTier = detectKuudraTierFromLine(cleaned, strongLine || insideKuudra || isCurrentFloorKuudra());
 
-		if (isKuudraEntryMessage(cleaned)) {
-			beginNewKuudraRun(now, bestKuudraTier(lineTier));
-			return false;
+		// Never let arbitrary mid-run chat overwrite a known Infernal/T5 with a weak false positive.
+		if (strongLine && lineTier.isKuudra()) {
+			rememberKuudraTier(lineTier, true);
 		}
 
-		if (!isKuudraCompletionMessage(cleaned)) return false;
+		if (entry) {
+			beginNewKuudraRun(now, bestKuudraTier(lineTier));
+			return true;
+		}
+
+		if (!completion) return false;
 
 		DungeonFloor tier = bestKuudraTier(lineTier);
 		if (!currentRunActive && !runCountedThisDungeon) {
@@ -2123,18 +2287,31 @@ public final class DungeonRunTrackerFeature {
 
 		if (!insideDungeon && !insideKuudra) {
 			finishCurrentRunTiming(now);
+			// Leaving Kuudra/hub entirely: drop sticky tier so the next Hollow visit cannot
+			// inherit a previous Hot (K2) run when Infernal detection is briefly unavailable.
+			if (wasKuudra || (lastKnownKuudraFloor != null && lastKnownKuudraFloor.isKuudra())) {
+				if (!currentRunActive) lastKnownKuudraFloor = DungeonFloor.UNKNOWN;
+			}
 			resetDungeonRuntimeState();
 			return;
 		}
 
 		if (insideDungeon) {
+			// Returning to dungeons after Kuudra must clear sticky Kuudra UI/pricing state.
+			if (wasKuudra || (lastKnownKuudraFloor != null && lastKnownKuudraFloor.isKuudra())) {
+				lastKnownKuudraFloor = DungeonFloor.UNKNOWN;
+				insideKuudra = false;
+				kuudraSignalUntilMillis = 0L;
+			}
 			DungeonFloor detected = detectFloorFromLines(scoreboardLines);
 			if (detected == DungeonFloor.UNKNOWN) detected = detectFloorFromLines(tabLines);
 			if (detected != DungeonFloor.UNKNOWN && detected != currentFloor) currentFloor = detected;
 		}
 
-		if (insideKuudra) {
-			rememberKuudraTier(detectedKuudraTier);
+		if (insideKuudra && !insideDungeon) {
+			if (detectedKuudraTier.isKuudra()) {
+				rememberKuudraTier(detectedKuudraTier, true);
+			}
 			if (!wasKuudra && !currentRunActive && !runCountedThisDungeon) {
 				beginNewKuudraRun(now, bestKuudraTier(detectedKuudraTier));
 			}
@@ -2180,6 +2357,7 @@ public final class DungeonRunTrackerFeature {
 			// Carry forward key requirement observed on the preview "Open Reward Chest" button.
 			boolean paidWithKey = nextOpenedChestUsesDungeonChestKey || lastRewardModifierScanHadKeyRequirement;
 			refreshRewardModifierScan(menu, screenKey, now);
+			rememberKuudraKeyTierFromMenu(menu);
 			if (lastRewardModifierScanHadKismetMarker) markKismetFeatherUsed();
 			if (firstOpenScan) {
 				assignPendingOpenedChest(canonicalRewardTitle, cached, paidWithKey);
@@ -2216,7 +2394,7 @@ public final class DungeonRunTrackerFeature {
 		if (normalizedTitle == null || normalizedTitle.isBlank()) return;
 		DungeonFloor kuudraTier = detectKuudraTierFromLine(normalizedTitle, normalizedTitle.contains("KUUDRA") || insideKuudra || isCurrentFloorKuudra());
 		if (kuudraTier != DungeonFloor.UNKNOWN) {
-			rememberKuudraTier(kuudraTier);
+			rememberKuudraTier(kuudraTier, hasStrongKuudraTierSignal(normalizedTitle));
 			insideKuudra = true;
 			kuudraSignalUntilMillis = Math.max(kuudraSignalUntilMillis, now + DUNGEON_SIGNAL_GRACE_MS);
 			if (pendingLootFloor == DungeonFloor.UNKNOWN && lootWindowUntilMillis > 0L && now <= lootWindowUntilMillis) {
@@ -2337,7 +2515,7 @@ public final class DungeonRunTrackerFeature {
 		}
 		ChestCostBreakdown breakdown = new ChestCostBreakdown(costCoins);
 		applyModifierLoreHints(lore, breakdown);
-		applyKuudraChestCostHint(normalizedTitle, breakdown);
+		applyKuudraChestCostHint(normalizedTitle, breakdown, lore);
 		populateKnownModifierCosts(breakdown);
 		suppressDungeonChestKeyForKuudra(normalizedTitle, breakdown);
 		DungeonChestOffer offer = new DungeonChestOffer(toDisplayChestTitle(normalizedTitle), breakdown, valueCoins, entries);
@@ -2413,6 +2591,7 @@ public final class DungeonRunTrackerFeature {
 			nextOpenedChestUsesWheelOfFate = false;
 		}
 		applyKuudraChestCostHint(normalizedTitle, pendingLootCostBreakdown);
+		if (pendingLootCostBreakdown.usedKuudraKey) pendingLootCostBreakdown.kuudraKeyCostCoins = 0L;
 		populateKnownModifierCosts(pendingLootCostBreakdown);
 		suppressDungeonChestKeyForKuudra(normalizedTitle, pendingLootCostBreakdown);
 		lootCollectionUntilMillis = System.currentTimeMillis() + LOOT_COLLECTION_MS;
@@ -2470,14 +2649,6 @@ public final class DungeonRunTrackerFeature {
 		return name.contains("STAINED GLASS");
 	}
 
-	private void seedPendingLootEntriesFromGuiOffer(DungeonChestOffer offer) {
-		if (offer == null || offer.lootEntries == null || offer.lootEntries.isEmpty() || !pendingLootEntries.isEmpty()) return;
-		for (DungeonLootEntry entry : offer.lootEntries) {
-			if (entry != null) pendingLootEntries.add(entry.copy());
-		}
-		pendingLootSeededFromGui = !pendingLootEntries.isEmpty();
-	}
-
 	private boolean shouldAssignArmedKismetToOpenedChest(String normalizedTitle) {
 		if (!nextOpenedChestUsesKismetFeather && !rewardMenuKismetRerollPending) return false;
 		if (rewardMenuKismetRerolledChestTitle == null || rewardMenuKismetRerolledChestTitle.isBlank()) return true;
@@ -2508,10 +2679,6 @@ public final class DungeonRunTrackerFeature {
 		return isCatacombsRewardChest(canonicalTitle);
 	}
 
-	private boolean shouldApplyDungeonChestKeyModifier(String normalizedTitle) {
-		return !isKuudraRewardContext(normalizedTitle);
-	}
-
 	private void suppressDungeonChestKeyForKuudra(String normalizedTitle, ChestCostBreakdown breakdown) {
 		if (breakdown == null || !isKuudraRewardChest(normalizedTitle)) return;
 		breakdown.usedDungeonChestKey = false;
@@ -2519,15 +2686,78 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private boolean isKuudraRewardContext(String normalizedTitle) {
-		if (normalizedTitle != null && (normalizedTitle.contains("VESUVIUS") || normalizedTitle.contains("KUUDRA"))) return true;
-		if (insideKuudra) return true;
-		DungeonFloor pricingFloor = currentKuudraFloorForPricing();
-		return pricingFloor != null && pricingFloor.isKuudra();
+		if (normalizedTitle != null && !normalizedTitle.isBlank()) {
+			if (normalizedTitle.contains("VESUVIUS")) return true;
+			if (normalizedTitle.contains("KUUDRA") && !normalizedTitle.contains("CATACOMBS")) return true;
+			// Croesus / Catacombs reward menus are dungeon chests even if Kuudra state is sticky.
+			if (normalizedTitle.contains("CROESUS") || normalizedTitle.contains("CATACOMBS")) return false;
+		}
+		// Never let a leftover lastKnownKuudraFloor flip dungeon Croesus into FREE/PAID mode.
+		return insideKuudra && !insideDungeon;
 	}
 
 	private void applyKuudraChestCostHint(String canonicalTitle, ChestCostBreakdown breakdown) {
+		applyKuudraChestCostHint(canonicalTitle, breakdown, null);
+	}
+
+	private void applyKuudraChestCostHint(String canonicalTitle, ChestCostBreakdown breakdown, List<String> lore) {
 		if (breakdown == null || !isKuudraPaidRewardChest(canonicalTitle)) return;
 		breakdown.usedKuudraKey = true;
+		DungeonFloor keyTier = detectKuudraKeyTierFromLore(lore);
+		if (keyTier.isKuudra()) {
+			adoptKuudraKeyTier(keyTier);
+		}
+	}
+
+	private void rememberKuudraKeyTierFromMenu(AbstractContainerMenu menu) {
+		if (menu == null) return;
+		DungeonFloor best = DungeonFloor.UNKNOWN;
+		for (Slot slot : menu.slots) {
+			if (slot == null) continue;
+			ItemStack stack = slot.getItem();
+			if (stack.isEmpty()) continue;
+			DungeonFloor fromName = detectKuudraKeyTierFromText(cleanText(stack.getHoverName().getString()));
+			if (kuudraTierNumber(fromName) > kuudraTierNumber(best)) best = fromName;
+			for (String line : cleanLoreLines(stack)) {
+				DungeonFloor fromLine = detectKuudraKeyTierFromText(line);
+				if (kuudraTierNumber(fromLine) > kuudraTierNumber(best)) best = fromLine;
+			}
+		}
+		if (best.isKuudra()) adoptKuudraKeyTier(best);
+	}
+
+	private void adoptKuudraKeyTier(DungeonFloor keyTier) {
+		if (keyTier == null || !keyTier.isKuudra()) return;
+		rememberKuudraTier(keyTier, true);
+		if (pendingLootFloor == null
+			|| !pendingLootFloor.isKuudra()
+			|| kuudraTierNumber(keyTier) > kuudraTierNumber(pendingLootFloor)) {
+			pendingLootFloor = keyTier;
+		}
+	}
+
+	private DungeonFloor detectKuudraKeyTierFromLore(List<String> lore) {
+		if (lore == null || lore.isEmpty()) return DungeonFloor.UNKNOWN;
+		DungeonFloor best = DungeonFloor.UNKNOWN;
+		for (String line : lore) {
+			DungeonFloor tier = detectKuudraKeyTierFromText(line);
+			if (kuudraTierNumber(tier) > kuudraTierNumber(best)) best = tier;
+		}
+		return best;
+	}
+
+	private DungeonFloor detectKuudraKeyTierFromText(String text) {
+		if (text == null || text.isBlank()) return DungeonFloor.UNKNOWN;
+		String upper = normalize(text);
+		// Strip quantity prefixes like "1x Infernal Kuudra Key".
+		Matcher pre = QUANTITY_PREFIX_PATTERN.matcher(upper);
+		if (pre.matches()) upper = pre.group(2).trim();
+		Matcher suf = QUANTITY_SUFFIX_PATTERN.matcher(upper);
+		if (suf.matches()) upper = suf.group(1).trim();
+		for (Map.Entry<String, DungeonFloor> entry : KUUDRA_KEY_NAMES) {
+			if (upper.contains(entry.getKey())) return entry.getValue();
+		}
+		return DungeonFloor.UNKNOWN;
 	}
 
 	private void applyModifierLoreHints(List<String> lore, ChestCostBreakdown breakdown) {
@@ -2700,8 +2930,11 @@ public final class DungeonRunTrackerFeature {
 		if (breakdown.usedWheelOfFate && breakdown.wheelOfFateCostCoins <= 0L) {
 			breakdown.wheelOfFateCostCoins = resolveModifierItemCost(ITEM_WHEEL_OF_FATE);
 		}
-		if (breakdown.usedKuudraKey && breakdown.kuudraKeyCostCoins <= 0L) {
-			breakdown.kuudraKeyCostCoins = DungeonProfitPricing.resolveKuudraKeyCost(currentKuudraFloorForPricing(), DrtConfigManager.getConfig());
+		if (breakdown.usedKuudraKey) {
+			// Always re-resolve from the best known tier so a sticky Hot/K2 price cannot stick
+			// after Infernal is learned from chest Cost lore or scoreboard.
+			long resolved = DungeonProfitPricing.resolveKuudraKeyCost(currentKuudraFloorForPricing(), DrtConfigManager.getConfig());
+			if (resolved > 0L) breakdown.kuudraKeyCostCoins = resolved;
 		}
 		breakdown.normalize();
 	}
@@ -2751,11 +2984,9 @@ public final class DungeonRunTrackerFeature {
 		}
 
 		if (leftMouseDown && !leftMouseDownLastTick && client.screen != null) {
-			if (isHoveringModeLabel(client, mouseX, mouseY)) { cycleHudVisibilityMode(); leftMouseDownLastTick = true; return; }
-			if (isHoveringFloorLabel(client, mouseX, mouseY)) { cycleSelectedFloor(); leftMouseDownLastTick = true; return; }
-			if (isHoveringRunsHrPart(client, mouseX, mouseY)) { toggleRunsPerHrPause(); leftMouseDownLastTick = true; return; }
-			if (isHoveringProfitLine(client, mouseX, mouseY)) {
-				requestOpenLootScreen(selectedFloor, null);
+			boolean showResetLine = shouldShowResetLine(client, false);
+			OverlayLayout.HitResult hit = hitTestHud(client, mouseX, mouseY, showResetLine);
+			if (hit.hit() && handleOverlayClick(hit)) {
 				leftMouseDownLastTick = true;
 				return;
 			}
@@ -2830,73 +3061,6 @@ public final class DungeonRunTrackerFeature {
 		return !moveMode && client != null && client.screen instanceof InventoryScreen;
 	}
 
-	private boolean isHoveringRunsLine(Minecraft client, int mouseX, int mouseY) {
-		double localX = toHudLocalX(mouseX);
-		double localY = toHudLocalY(mouseY);
-		int lineH = client.font.lineHeight + 2;
-		int lineW = client.font.width(getDisplayLines(false).get(1));
-		return localX >= -3 && localX <= lineW + 3
-			&& localY >= lineH - 2 && localY <= lineH + client.font.lineHeight + 2;
-	}
-
-	private boolean isHoveringRunsHrPart(Minecraft client, int mouseX, int mouseY) {
-		if (!isHoveringRunsLine(client, mouseX, mouseY)) return false;
-		double localX = toHudLocalX(mouseX);
-		String runsLine = getDisplayLines(false).get(1);
-		int firstSep = runsLine.indexOf(" | ");
-		if (firstSep < 0) return false;
-		int secondSep = runsLine.indexOf(" | ", firstSep + 3);
-		if (secondSep < 0) return false;
-		int thirdSep = runsLine.indexOf(" | ", secondSep + 3);
-		if (thirdSep < 0) return false;
-		String visibleRunsLine = runsLine.replace(" [paused]", "");
-		int startX = client.font.width(runsLine.substring(0, thirdSep + 3));
-		int endX = client.font.width(visibleRunsLine);
-		return localX >= startX && localX <= endX;
-	}
-
-	private boolean isHoveringModeLabel(Minecraft client, int mouseX, int mouseY) {
-		double localX = toHudLocalX(mouseX);
-		double localY = toHudLocalY(mouseY);
-		int drtWidth = client.font.width("DRT");
-		int lineH = client.font.lineHeight + 2;
-		return localX >= -3 && localX <= drtWidth + 3
-			&& localY >= -2 && localY <= lineH;
-	}
-
-	private boolean isHoveringFloorLabel(Minecraft client, int mouseX, int mouseY) {
-		double localX = toHudLocalX(mouseX);
-		double localY = toHudLocalY(mouseY);
-		List<String> lines = getDisplayLines(false);
-		int labelStart = client.font.width("DRT ");
-		int labelWidth = client.font.width(lines.get(0));
-		int lineH = client.font.lineHeight + 2;
-		return localX >= labelStart - 3 && localX <= labelWidth + 3
-			&& localY >= -2 && localY <= lineH;
-	}
-
-	private boolean isHoveringProfitLine(Minecraft client, int mouseX, int mouseY) {
-		double localX = toHudLocalX(mouseX);
-		double localY = toHudLocalY(mouseY);
-		int lineH = client.font.lineHeight + 2;
-		int lineW = client.font.width(getDisplayLines(false).get(2));
-		return localX >= -3 && localX <= lineW + 3
-			&& localY >= lineH * 2 - 2 && localY <= lineH * 2 + client.font.lineHeight + 2;
-	}
-
-	private boolean isHoveringResetButton(Minecraft client, int mouseX, int mouseY, boolean includeResetLine) {
-		if (!includeResetLine) return false;
-		double localX = toHudLocalX(mouseX);
-		double localY = toHudLocalY(mouseY);
-		List<String> lines = getDisplayLines(true);
-		int lastIdx = lines.size() - 1;
-		int lineH = client.font.lineHeight + 2;
-		int resetY = lastIdx * lineH;
-		int resetWidth = client.font.width(lines.get(lastIdx));
-		return localX >= -3 && localX <= resetWidth + 3
-			&& localY >= resetY - 2 && localY <= resetY + client.font.lineHeight + 2;
-	}
-
 	private double toHudLocalX(double mouseX) {
 		return (mouseX - hudX) / hudScale;
 	}
@@ -2952,52 +3116,110 @@ public final class DungeonRunTrackerFeature {
 			if (line.contains("KUUDRA'S HOLLOW") || line.contains("KUUDRA HOLLOW")) return true;
 			if (line.startsWith("AREA:") && line.contains("KUUDRA")) return true;
 			if (line.contains("KUUDRA DOWN") || line.contains("KUUDRA DEFEATED")) return true;
-			if (line.contains("KUUDRA") && (line.contains("TIER") || line.contains("BASIC") || line.contains("HOT")
-				|| line.contains("BURNING") || line.contains("FIERY") || line.contains("INFERNAL"))) return true;
+			if (line.contains("KUUDRA") && !line.contains("CORE") && (line.contains("TIER") || kuudraTierNameFromLine(line) != DungeonFloor.UNKNOWN)) {
+				return true;
+			}
 		}
 		return false;
 	}
 
 	private DungeonFloor detectKuudraTierFromLines(List<String> lines) {
-		boolean kuudraContext = lines.stream().anyMatch(line -> line.contains("KUUDRA"));
+		boolean kuudraContext = lines.stream().anyMatch(line ->
+			line.contains("KUUDRA") || line.contains("HOLLOW"));
+		DungeonFloor best = DungeonFloor.UNKNOWN;
+		int bestScore = -1;
 		for (String line : lines) {
 			DungeonFloor tier = detectKuudraTierFromLine(line, kuudraContext);
-			if (tier != DungeonFloor.UNKNOWN) return tier;
+			if (!tier.isKuudra()) continue;
+			int score = kuudraTierConfidence(line, tier);
+			if (score > bestScore || (score == bestScore && kuudraTierNumber(tier) > kuudraTierNumber(best))) {
+				best = tier;
+				bestScore = score;
+			}
 		}
-		return DungeonFloor.UNKNOWN;
+		return best;
 	}
 
 	private DungeonFloor detectKuudraTierFromLine(String line, boolean kuudraContext) {
 		if (line == null || line.isBlank()) return DungeonFloor.UNKNOWN;
 		boolean hasKuudra = line.contains("KUUDRA");
+		boolean hasHollow = line.contains("HOLLOW");
+		boolean strongContext = hasKuudra || hasHollow || line.contains("TIER");
 
-		Matcher shortMatcher = KUUDRA_SHORT_TIER_PATTERN.matcher(line);
-		if ((hasKuudra || kuudraContext) && shortMatcher.find()) {
-			return kuudraTier(parsePositiveInt(shortMatcher.group(1), -1));
-		}
-
-		Matcher wordMatcher = KUUDRA_TIER_WORD_PATTERN.matcher(line);
-		if ((hasKuudra || kuudraContext || line.startsWith("TIER")) && wordMatcher.find()) {
-			return kuudraTier(parseTierNumber(wordMatcher.group(1)));
-		}
-
-		boolean tierNameContext = line.startsWith("TIER:")
+		// Named tiers first — "Infernal Tier!" must beat any later short-pattern noise.
+		boolean tierNameContext = strongContext
+			|| line.startsWith("TIER:")
 			|| line.startsWith("TIER ")
-			|| line.contains("KUUDRA'S HOLLOW")
-			|| line.contains("KUUDRA HOLLOW")
-			|| (hasKuudra && !line.contains("CORE"))
-			|| kuudraContext;
+			|| (kuudraContext && isLikelyStandaloneKuudraTierLine(line));
 		if (tierNameContext) {
 			DungeonFloor namedTier = kuudraTierNameFromLine(line);
 			if (namedTier != DungeonFloor.UNKNOWN) return namedTier;
 		}
+
+		Matcher parenMatcher = KUUDRA_PAREN_TIER_PATTERN.matcher(line);
+		if ((strongContext || kuudraContext) && parenMatcher.find()) {
+			return kuudraTier(parsePositiveInt(parenMatcher.group(1), -1));
+		}
+
+		Matcher wordMatcher = KUUDRA_TIER_WORD_PATTERN.matcher(line);
+		if ((strongContext || line.startsWith("TIER") || kuudraContext) && wordMatcher.find()) {
+			return kuudraTier(parseTierNumber(wordMatcher.group(1)));
+		}
+
+		// Short T5/K5 only with line-local Kuudra/Hollow context — never from ambient
+		// "we're in Kuudra" alone (that falsely matched digits in unrelated chat/scoreboard).
+		Matcher shortMatcher = KUUDRA_SHORT_TIER_PATTERN.matcher(line);
+		if (strongContext && shortMatcher.find()) {
+			return kuudraTier(parsePositiveInt(shortMatcher.group(1), -1));
+		}
+		if (kuudraContext && isLikelyStandaloneKuudraTierLine(line) && shortMatcher.reset().find()) {
+			return kuudraTier(parsePositiveInt(shortMatcher.group(1), -1));
+		}
 		return DungeonFloor.UNKNOWN;
+	}
+
+	private boolean isLikelyStandaloneKuudraTierLine(String line) {
+		if (line == null || line.isBlank()) return false;
+		String compact = line.replaceAll("[^A-Z0-9()]+", "");
+		if (compact.length() <= 8) return true;
+		return KUUDRA_PAREN_TIER_PATTERN.matcher(line).find()
+			|| KUUDRA_TIER_WORD_PATTERN.matcher(line).find()
+			|| kuudraTierNameFromLine(line) != DungeonFloor.UNKNOWN;
+	}
+
+	private boolean hasStrongKuudraTierSignal(String line) {
+		if (line == null || line.isBlank()) return false;
+		if (!(line.contains("KUUDRA") || line.contains("HOLLOW") || line.contains("TIER"))) return false;
+		return detectKuudraTierFromLine(line, true) != DungeonFloor.UNKNOWN;
+	}
+
+	private int kuudraTierConfidence(String line, DungeonFloor tier) {
+		if (tier == null || !tier.isKuudra()) return -1;
+		int score = 10;
+		if (line.contains("KUUDRA") || line.contains("HOLLOW")) score += 40;
+		if (line.contains("TIER")) score += 20;
+		if (kuudraTierNameFromLine(line) == tier) score += 30;
+		if (KUUDRA_PAREN_TIER_PATTERN.matcher(line).find()) score += 25;
+		score += kuudraTierNumber(tier);
+		return score;
+	}
+
+	private int kuudraTierNumber(DungeonFloor tier) {
+		if (tier == null) return -1;
+		return switch (tier) {
+			case K1 -> 1;
+			case K2 -> 2;
+			case K3 -> 3;
+			case K4 -> 4;
+			case K5 -> 5;
+			default -> -1;
+		};
 	}
 
 	private DungeonFloor kuudraTierNameFromLine(String line) {
 		if (line == null || line.isBlank()) return DungeonFloor.UNKNOWN;
 		String padded = " " + line.replaceAll("[^A-Z0-9]+", " ").trim() + " ";
-		for (Map.Entry<String, DungeonFloor> entry : KUUDRA_TIER_NAMES.entrySet()) {
+		for (Map.Entry<String, DungeonFloor> entry : KUUDRA_TIER_NAMES) {
 			if (padded.contains(" " + entry.getKey() + " ")) return entry.getValue();
 		}
 		return DungeonFloor.UNKNOWN;
@@ -3103,10 +3325,17 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private boolean isKuudraEntryMessage(String cleaned) {
-		return cleaned.contains("KUUDRA'S HOLLOW")
-			|| cleaned.contains("KUUDRA HOLLOW")
-			|| (cleaned.contains("KUUDRA") && !cleaned.contains("CORE") && (cleaned.contains("STARTING") || cleaned.contains("TIER") || cleaned.contains("BASIC")
-				|| cleaned.contains("HOT") || cleaned.contains("BURNING") || cleaned.contains("FIERY") || cleaned.contains("INFERNAL")));
+		if (cleaned == null || cleaned.isBlank()) return false;
+		if (cleaned.contains("KUUDRA'S HOLLOW") || cleaned.contains("KUUDRA HOLLOW")) return true;
+		if (!cleaned.contains("KUUDRA") || cleaned.contains("CORE")) return false;
+		if (cleaned.contains("STARTING") || cleaned.contains("TIER")) return true;
+		// Word-boundary style checks — avoid matching HOT inside SHOT/PHOTO.
+		String padded = " " + cleaned.replaceAll("[^A-Z0-9]+", " ").trim() + " ";
+		return padded.contains(" BASIC ")
+			|| padded.contains(" HOT ")
+			|| padded.contains(" BURNING ")
+			|| padded.contains(" FIERY ")
+			|| padded.contains(" INFERNAL ");
 	}
 
 	private boolean isKuudraCompletionMessage(String cleaned) {
@@ -3120,8 +3349,16 @@ public final class DungeonRunTrackerFeature {
 		return currentFloor != null && currentFloor.isKuudra();
 	}
 
-	private void rememberKuudraTier(DungeonFloor tier) {
+	private void rememberKuudraTier(DungeonFloor tier, boolean trusted) {
 		if (tier == null || !tier.isKuudra()) return;
+		// Weak detections must not downgrade/overwrite a known tier mid-run (K5 -> K2).
+		if (!trusted
+			&& currentFloor != null
+			&& currentFloor.isKuudra()
+			&& currentFloor != tier
+			&& (currentRunActive || insideKuudra)) {
+			return;
+		}
 		currentFloor = tier;
 		lastKnownKuudraFloor = tier;
 	}
@@ -3199,9 +3436,16 @@ public final class DungeonRunTrackerFeature {
 	private void beginNewKuudraRun(long now, DungeonFloor tier) {
 		flushPendingLootRecord();
 		startCurrentRunTiming(now);
-		DungeonFloor runTier = tier != null && tier.isKuudra() ? tier : lastKnownKuudraFloor;
-		currentFloor = runTier != null && runTier.isKuudra() ? runTier : DungeonFloor.UNKNOWN;
-		rememberKuudraTier(currentFloor);
+		// Prefer a freshly detected tier. Do not silently inherit a sticky Hot (K2) floor from
+		// earlier farming when this Hollow visit has not announced Infernal/T5 yet.
+		DungeonFloor runTier = tier != null && tier.isKuudra() ? tier : DungeonFloor.UNKNOWN;
+		currentFloor = runTier;
+		lastKnownKuudraFloor = runTier.isKuudra() ? runTier : DungeonFloor.UNKNOWN;
+		if (runTier.isKuudra()) {
+			DungeonRunTracker.LOGGER.info("[DRT] Kuudra run started: tier={}", runTier.name());
+		} else {
+			DungeonRunTracker.LOGGER.info("[DRT] Kuudra run started: tier=UNKNOWN (waiting for Infernal/T5 signal)");
+		}
 		insideDungeon = false;
 		insideKuudra = true;
 		awaitingExtraStatsScore = false;
@@ -3263,15 +3507,15 @@ public final class DungeonRunTrackerFeature {
 		long profit = record.chestProfitCoins;
 		sessionTotalProfit += profit;
 		sessionFloorProfitTotals.merge(key, profit, Long::sum);
-		totalLifetimeProfit += profit;
-		floorProfitTotals.merge(key, profit, Long::sum);
 
 		if (runTimeMs > 0L) {
 			sessionTotalRunTimeMs += runTimeMs;
 			sessionFloorRunTimeTotals.merge(key, runTimeMs, Long::sum);
 			sessionInRunMillis += runTimeMs;
+			accumulateLifetimeRunTime(key, runTimeMs);
 		}
 
+		resyncLifetimeFromConfig();
 		DungeonRunTracker.LOGGER.info("[DRT] *** MANUAL RUN RECORDED: floor={} grade={} totalForFloor={} profit={} runTimeMs={}", key, g, newCount, profit, runTimeMs);
 	}
 
@@ -3310,6 +3554,7 @@ public final class DungeonRunTrackerFeature {
 		long runTimeMs = currentRunBossTimeMs > 0L ? currentRunBossTimeMs : wallRunTimeMs;
 		sessionTotalRunTimeMs += runTimeMs;
 		sessionFloorRunTimeTotals.merge(key, runTimeMs, Long::sum);
+		accumulateLifetimeRunTime(key, runTimeMs);
 		currentRunBossTimeMs = 0L;
 		lastFinishedRunTimeMs = 0L;
 		sessionRuns++;
@@ -3346,6 +3591,7 @@ public final class DungeonRunTrackerFeature {
 		rewardMenuKismetRerollPending = false;
 		rewardMenuKismetRerolledChestTitle = "";
 		pendingLootEntries.clear();
+		lootGuardWarnedKeys.clear();
 		cachedChestOffersByTitle.clear();
 		cachedChestOfferFingerprintsByTitle.clear();
 		scannedRewardScreens.clear();
@@ -3529,18 +3775,55 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private void mergePendingLootEntry(DungeonLootEntry incoming) {
+		if (incoming == null) return;
 		String incomingKey = lootKey(incoming);
+		DungeonLootEntry target = null;
 		for (DungeonLootEntry existing : pendingLootEntries) {
 			if (lootKey(existing).equals(incomingKey)) {
 				if (pendingLootSeededFromGui) {
 					existing.quantity = Math.max(existing.quantity, incoming.quantity);
-					return;
+				} else {
+					existing.quantity += incoming.quantity;
 				}
-				existing.quantity += incoming.quantity;
-				return;
+				target = existing;
+				break;
 			}
 		}
-		pendingLootEntries.add(incoming);
+		if (target == null) {
+			pendingLootEntries.add(incoming);
+			target = incoming;
+		}
+		warnLootGuardsForEntry(target);
+	}
+
+	private void warnLootGuardsForEntry(DungeonLootEntry entry) {
+		if (entry == null) return;
+		for (String reason : LootFloorGuards.evaluate(pendingLootFloor, pendingLootChestTitle, entry)) {
+			String key = lootKey(entry) + "|" + reason;
+			if (!lootGuardWarnedKeys.add(key)) continue;
+			DungeonRunTracker.LOGGER.warn(
+				"[DRT][LOOT-GUARD] floor={} chest='{}' item='{}' id={} qty={} reason={} (kept)",
+				pendingLootFloor == null ? "UNKNOWN" : pendingLootFloor.name(),
+				pendingLootChestTitle == null ? "" : pendingLootChestTitle,
+				entry.rawName,
+				entry.itemId,
+				entry.quantity,
+				reason
+			);
+		}
+	}
+
+	private void warnLootGuardsForChest(List<DungeonLootEntry> entries) {
+		for (String reason : LootFloorGuards.evaluateChest(pendingLootFloor, pendingLootChestTitle, entries)) {
+			String key = "chest|" + reason;
+			if (!lootGuardWarnedKeys.add(key)) continue;
+			DungeonRunTracker.LOGGER.warn(
+				"[DRT][LOOT-GUARD] floor={} chest='{}' reason={} (kept)",
+				pendingLootFloor == null ? "UNKNOWN" : pendingLootFloor.name(),
+				pendingLootChestTitle == null ? "" : pendingLootChestTitle,
+				reason
+			);
+		}
 	}
 
 	private void flushPendingLootRecord() {
@@ -3554,6 +3837,10 @@ public final class DungeonRunTrackerFeature {
 			return;
 		}
 		DrtConfig config = DrtConfigManager.getConfig();
+		for (DungeonLootEntry entry : pendingLootEntries) {
+			warnLootGuardsForEntry(entry);
+		}
+		warnLootGuardsForChest(pendingLootEntries);
 		long chestValueCoins = DungeonProfitPricing.calculateLootValue(pendingLootEntries, config);
 		ChestCostBreakdown costBreakdown = pendingLootCostBreakdown == null ? new ChestCostBreakdown() : pendingLootCostBreakdown.copy();
 		if (costBreakdown.usedKismetFeather) costBreakdown.kismetRerolledChestOpened = true;
@@ -3596,10 +3883,9 @@ public final class DungeonRunTrackerFeature {
 		);
 		record.applyCostBreakdown(costBreakdown);
 		DrtConfigManager.addRunRecord(record);
-		totalLifetimeProfit += chestProfitCoins;
 		sessionTotalProfit += chestProfitCoins;
-		floorProfitTotals.merge(floorName, chestProfitCoins, Long::sum);
 		sessionFloorProfitTotals.merge(floorName, chestProfitCoins, Long::sum);
+		resyncLifetimeFromConfig();
 		if (keepWindow) resetPendingChestState();
 		else clearLootWindow();
 	}
@@ -3611,6 +3897,7 @@ public final class DungeonRunTrackerFeature {
 		pendingLootSeededFromGui = false;
 		pendingLootChestAssigned = false;
 		pendingLootEntries.clear();
+		lootGuardWarnedKeys.clear();
 		recentLootMessages.clear();
 	}
 
@@ -3737,6 +4024,7 @@ public final class DungeonRunTrackerFeature {
 			|| normalized.contains("KEY") || normalized.contains("SHARD")
 			|| normalized.contains("HANDLE") || normalized.contains("SCROLL")
 			|| normalized.contains("CATALYST") || normalized.contains("SHINY")
+			|| normalized.contains("CLOAK") || normalized.contains("SWORD")
 			|| normalized.contains("KUUDRA") || normalized.contains("TEETH")
 			|| normalized.contains("EMBERS") || normalized.contains("CORE")
 			|| normalized.contains("DISINTEGRATOR") || normalized.contains("CRIMSON")
@@ -3789,6 +4077,8 @@ public final class DungeonRunTrackerFeature {
 		aliases.put("WITHER CHESTPLATE", "WITHER_CHESTPLATE");
 		aliases.put("WITHER LEGGINGS", "WITHER_LEGGINGS");
 		aliases.put("WITHER BOOTS", "WITHER_BOOTS");
+		aliases.put("WITHER CLOAK", "WITHER_CLOAK");
+		aliases.put("WITHER CLOAK SWORD", "WITHER_CLOAK");
 		aliases.put("APEX DRAGON SHARD", "SHARD_APEX_DRAGON");
 		aliases.put("NECRON'S HANDLE", "NECRON_HANDLE");
 		aliases.put("SCARF'S STUDIES", "SCARF_STUDIES");

@@ -49,7 +49,7 @@ public final class DungeonTrackerPositionScreen extends Screen {
 
 		String line1 = "Drag the DRT tracker to position it.";
 		String line2 = "Scroll or press +/- to resize (" + trackerFeature.getHudScalePercent() + "%). Press 0 for 100%.";
-		String line3 = "Press Enter or Esc to save and close.";
+		String line3 = "Press Enter or Esc to save and exit.";
 		int centerX = width / 2;
 		guiGraphics.centeredText(font, line1, centerX, 24, 0xFFFFFFFF);
 		guiGraphics.centeredText(font, line2, centerX, 38, 0xFFB6C2DF);
@@ -125,6 +125,23 @@ public final class DungeonTrackerPositionScreen extends Screen {
 		super.onClose();
 	}
 
+	private void closeFully() {
+		trackerFeature.setHudPosition(Minecraft.getInstance(), trackerFeature.getHudX(), trackerFeature.getHudY(), true);
+		if (parent instanceof DrtOverlayEditorScreen overlay) {
+			overlay.closeFully();
+			return;
+		}
+		if (parent instanceof DrtOnboardingScreen onboarding) {
+			onboarding.onClose();
+			return;
+		}
+		if (minecraft != null) {
+			minecraft.setScreen(null);
+			return;
+		}
+		super.onClose();
+	}
+
 	@Override
 	public boolean keyPressed(KeyEvent event) {
 		if (event.key() == GLFW.GLFW_KEY_EQUAL || event.key() == GLFW.GLFW_KEY_KP_ADD) {
@@ -139,9 +156,12 @@ public final class DungeonTrackerPositionScreen extends Screen {
 			trackerFeature.setHudScale(Minecraft.getInstance(), 1.0F, true, false);
 			return true;
 		}
-		if (event.key() == GLFW.GLFW_KEY_ESCAPE || event.key() == GLFW.GLFW_KEY_ENTER || event.key() == GLFW.GLFW_KEY_KP_ENTER) {
-			trackerFeature.setHudPosition(Minecraft.getInstance(), trackerFeature.getHudX(), trackerFeature.getHudY(), true);
-			onClose();
+		if (event.key() == GLFW.GLFW_KEY_ESCAPE) {
+			closeFully();
+			return true;
+		}
+		if (event.key() == GLFW.GLFW_KEY_ENTER || event.key() == GLFW.GLFW_KEY_KP_ENTER) {
+			closeFully();
 			return true;
 		}
 		return super.keyPressed(event);

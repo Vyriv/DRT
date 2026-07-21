@@ -47,6 +47,8 @@ public final class ManualRunEntryScreen extends Screen {
 	private static final int SEARCH_HEADER_H = 28;
 	private static final int SEARCH_POPUP_GAP = 4;
 	private static final int SEARCH_POPUP_PAD = 6;
+	private static final int DEFAULT_LOOT_SLOTS = 4;
+	private static final int MAX_LOOT_SLOTS = 8;
 
 	private static final DungeonFloor[] FLOOR_OPTIONS = {
 		DungeonFloor.F1, DungeonFloor.F2, DungeonFloor.F3, DungeonFloor.F4, DungeonFloor.F5, DungeonFloor.F6, DungeonFloor.F7,
@@ -56,6 +58,7 @@ public final class ManualRunEntryScreen extends Screen {
 	private static final String[] SCORE_OPTIONS = {"S+", "S", "A"};
 
 	private final Screen parent;
+	private final DungeonRunRecord editingOriginal;
 	private int ox, oy;
 	private int winH;
 	private int btnY;
@@ -68,6 +71,7 @@ public final class ManualRunEntryScreen extends Screen {
 	private String costStr = "0";
 	private String witherEssenceStr = "0";
 	private String undeadEssenceStr = "0";
+	private String slotQtyStr = "1";
 
 	private final List<ManualLootSlot> lootSlots = new ArrayList<>();
 	private int selectedSlot = -1;
@@ -75,7 +79,7 @@ public final class ManualRunEntryScreen extends Screen {
 	private final List<PriceCache.SearchResult> searchResults = new ArrayList<>();
 	private int searchScroll = 0;
 
-	private int activeInput = 0; // 0=none, 1=time, 2=cost, 3=search, 4=wither, 5=undead
+	private int activeInput = 0; // 0=none, 1=time, 2=cost, 3=search, 4=wither, 5=undead, 6=slotQty
 	private OpenDropdown openDropdown = OpenDropdown.NONE;
 
 	private int contentW;
@@ -90,11 +94,125 @@ public final class ManualRunEntryScreen extends Screen {
 	private int lootRowY;
 
 	public ManualRunEntryScreen(Screen parent) {
-		super(Component.literal("Manual Run Entry"));
+		this(parent, null);
+	}
+
+	public ManualRunEntryScreen(Screen parent, DungeonRunRecord editing) {
+		super(Component.literal(editing == null ? "Manual Run Entry" : "Edit Run"));
 		this.parent = parent;
-		for (int i = 0; i < 4; i++) {
+		this.editingOriginal = editing == null ? null : editing.copy();
+		ensureLootSlotCount(DEFAULT_LOOT_SLOTS);
+		if (this.editingOriginal != null) {
+			prefillFromRecord(this.editingOriginal);
+		}
+	}
+
+	private void prefillFromRecord(DungeonRunRecord record) {
+		DungeonFloor parsedFloor = DungeonFloor.UNKNOWN;
+		try {
+			if (record.floor != null) parsedFloor = DungeonFloor.valueOf(record.floor);
+		} catch (IllegalArgumentException ignored) {
+		}
+		if (parsedFloor != DungeonFloor.UNKNOWN) floor = parsedFloor;
+		score = record.grade == null || record.grade.isBlank() ? "S+" : record.grade;
+		chestType = chestTypeFromTitle(record.chestTitle);
+		costStr = Long.toString(Math.max(0L, record.chestCostCoins));
+		timeStr = "";
+
+		int wither = 0;
+		int undead = 0;
+		List<DungeonLootEntry> other = new ArrayList<>();
+		if (record.lootEntries != null) {
+			for (DungeonLootEntry entry : record.lootEntries) {
+				if (entry == null) continue;
+				String id = entry.itemId == null ? "" : entry.itemId.toUpperCase(Locale.ROOT);
+				String name = entry.rawName == null ? "" : entry.rawName.toUpperCase(Locale.ROOT);
+				if (id.contains("ESSENCE_WITHER") || name.contains("WITHER ESSENCE")) {
+					wither += Math.max(1, entry.quantity);
+				} else if (id.contains("ESSENCE_UNDEAD") || name.contains("UNDEAD ESSENCE")) {
+					undead += Math.max(1, entry.quantity);
+				} else {
+					other.add(entry.copy());
+				}
+			}
+		}
+		witherEssenceStr = Integer.toString(wither);
+		undeadEssenceStr = Integer.toString(undead);
+		lootSlots.clear();
+		for (DungeonLootEntry entry : other) {
+			ManualLootSlot slot = new ManualLootSlot();
+			slot.itemId = entry.itemId == null ? "" : entry.itemId;
+			slot.displayName = entry.rawName == null ? "" : entry.rawName;
+			slot.quantity = Math.max(1, entry.quantity);
+			lootSlots.add(slot);
+		}
+		// Edit mode: only the existing items, plus one empty slot to add a single item.
+		if (lootSlots.size() < MAX_LOOT_SLOTS) {
 			lootSlots.add(new ManualLootSlot());
 		}
+	}
+
+	private static String chestTypeFromTitle(String title) {
+		if (title == null || title.isBlank()) return "Bedrock";
+		String cleaned = title.trim();
+		if (cleaned.toLowerCase(Locale.ROOT).endsWith(" chest")) {
+			cleaned = cleaned.substring(0, cleaned.length() - " chest".length()).trim();
+		}
+		if (cleaned.isBlank()) return "Bedrock";
+		return cleaned;
+	}
+
+	private void ensureLootSlotCount(int count) {
+		int minSlots = isEditing() ? 1 : DEFAULT_LOOT_SLOTS;
+		int target = Math.max(minSlots, Math.min(MAX_LOOT_SLOTS, count));
+		while (lootSlots.size() < target) lootSlots.add(new ManualLootSlot());
+		while (lootSlots.size() > target) {
+			ManualLootSlot last = lootSlots.get(lootSlots.size() - 1);
+			if (!last.itemId.isEmpty() && lootSlots.size() <= Math.max(minSlots, filledSlotCount())) break;
+			if (!last.itemId.isEmpty()) break;
+			lootSlots.remove(lootSlots.size() - 1);
+		}
+	}
+
+	private int filledSlotCount() {
+		int n = 0;
+		for (ManualLootSlot slot : lootSlots) {
+			if (!slot.itemId.isEmpty()) n++;
+		}
+		return n;
+	}
+
+	/** Keep filled slots, then at most one trailing empty for adding (edit) or pad to default (new). */
+	private void compactLootSlots() {
+		List<ManualLootSlot> filled = new ArrayList<>();
+		for (ManualLootSlot slot : lootSlots) {
+			if (!slot.itemId.isEmpty()) filled.add(slot);
+		}
+		lootSlots.clear();
+		lootSlots.addAll(filled);
+		if (isEditing()) {
+			if (lootSlots.size() < MAX_LOOT_SLOTS) lootSlots.add(new ManualLootSlot());
+			if (lootSlots.isEmpty()) lootSlots.add(new ManualLootSlot());
+		} else {
+			while (lootSlots.size() < DEFAULT_LOOT_SLOTS) lootSlots.add(new ManualLootSlot());
+			if (filledSlotCount() == lootSlots.size() && lootSlots.size() < MAX_LOOT_SLOTS) {
+				lootSlots.add(new ManualLootSlot());
+			}
+		}
+		if (selectedSlot >= lootSlots.size()) {
+			selectedSlot = -1;
+			activeInput = 0;
+		}
+		layoutFields();
+	}
+
+	private void clearLootSlot(int index) {
+		if (index < 0 || index >= lootSlots.size()) return;
+		if (lootSlots.get(index).itemId.isEmpty()) return;
+		lootSlots.remove(index);
+		selectedSlot = -1;
+		activeInput = 0;
+		compactLootSlots();
 	}
 
 	@Override
@@ -115,7 +233,8 @@ public final class ManualRunEntryScreen extends Screen {
 
 	private void layoutFields() {
 		contentW = WIN_W - MARGIN * 2;
-		lootSlotW = (contentW - LOOT_GAP * 3) / 4;
+		int slotCount = Math.max(1, lootSlots.size());
+		lootSlotW = (contentW - LOOT_GAP * Math.max(0, slotCount - 1)) / slotCount;
 
 		int left = ox + MARGIN;
 		int y = oy + TITLE_H;
@@ -161,6 +280,10 @@ public final class ManualRunEntryScreen extends Screen {
 		searchPopupH = Math.min(desiredH, Math.max(SEARCH_HEADER_H + SEARCH_ROW_H + SEARCH_POPUP_PAD, maxH));
 	}
 
+	private boolean isEditing() {
+		return editingOriginal != null;
+	}
+
 	@Override
 	public void extractRenderState(GuiGraphicsExtractor g, int mouseX, int mouseY, float partialTick) {
 		if (parent != null) {
@@ -171,7 +294,7 @@ public final class ManualRunEntryScreen extends Screen {
 		g.fill(ox, oy, ox + WIN_W, oy + winH, PANEL_BG);
 		border(g, ox, oy, WIN_W, winH, PANEL_BORDER);
 
-		g.text(font, "Manual Run Entry", ox + MARGIN, oy + 11, TEXT_PRIMARY);
+		g.text(font, isEditing() ? "Edit Run" : "Manual Run Entry", ox + MARGIN, oy + 11, TEXT_PRIMARY);
 
 		drawFieldLabel(g, "Floor", floorFieldX, floorFieldY - LABEL_H);
 		drawDropdownField(g, floorFieldX, floorFieldY, floorFieldW, floor.name(),
@@ -184,7 +307,7 @@ public final class ManualRunEntryScreen extends Screen {
 		drawFieldLabel(g, "Score", scoreFieldX, scoreFieldY - LABEL_H);
 		drawDropdownField(g, scoreFieldX, scoreFieldY, scoreFieldW, score, TEXT_PRIMARY, null, mouseX, mouseY, false);
 
-		drawFieldLabel(g, "Time", timeFieldX, timeFieldY - LABEL_H);
+		drawFieldLabel(g, isEditing() ? "Time (optional)" : "Time", timeFieldX, timeFieldY - LABEL_H);
 		drawTextField(g, timeFieldX, timeFieldY, timeFieldW, timeStr, activeInput == 1, mouseX, mouseY);
 
 		drawFieldLabel(g, "Cost", costFieldX, costFieldY - LABEL_H);
@@ -197,7 +320,7 @@ public final class ManualRunEntryScreen extends Screen {
 			drawTextField(g, undeadFieldX, undeadFieldY, undeadFieldW, undeadEssenceStr, activeInput == 5, mouseX, mouseY);
 		}
 
-		g.text(font, "Loot", ox + MARGIN, lootRowY - LABEL_H, TEXT_SECONDARY);
+		g.text(font, "Loot (scroll qty · click × to remove)", ox + MARGIN, lootRowY - LABEL_H, TEXT_SECONDARY);
 		for (int i = 0; i < lootSlots.size(); i++) {
 			int sx = ox + MARGIN + i * (lootSlotW + LOOT_GAP);
 			drawLootSlot(g, sx, lootRowY, lootSlots.get(i), i == selectedSlot, mouseX, mouseY);
@@ -254,15 +377,23 @@ public final class ManualRunEntryScreen extends Screen {
 		g.fill(x, y, x + lootSlotW, y + FIELD_H, selected ? 0x771F315D : hov ? 0x441A1A31 : FIELD_BG);
 		border(g, x, y, lootSlotW, FIELD_H, selected ? 0xFF6A6AB0 : hov ? FIELD_BORDER_HOVER : FIELD_BORDER);
 		if (slot.itemId.isEmpty()) {
-			g.text(font, "(Empty)", x + 6, y + 5, TEXT_MUTED);
+			g.text(font, "(Add)", x + 6, y + 5, TEXT_MUTED);
 			return;
 		}
 		ItemStack icon = DungeonLootScreen.lootItemIcon(slot.itemId);
 		if (!icon.isEmpty()) {
 			g.item(icon, x + 3, y + 1);
 		}
+		int removeW = font.width("×") + 6;
+		int removeX = x + lootSlotW - removeW - 2;
+		boolean removeHov = contains(removeX, y, removeW, FIELD_H, mx, my);
+		g.text(font, "×", removeX + 3, y + 5, removeHov ? 0xFFFF5555 : 0xFFE78A8A);
+		String qty = "x" + Math.max(1, slot.quantity);
+		int qtyW = font.width(qty);
+		int qtyX = removeX - qtyW - 4;
+		g.text(font, qty, qtyX, y + 5, TEXT_SECONDARY);
 		String label = slot.displayName.isEmpty() ? formatItemId(slot.itemId) : slot.displayName;
-		int maxLabelW = lootSlotW - 24;
+		int maxLabelW = Math.max(0, qtyX - (x + 20) - 2);
 		if (isUltimateItem(slot.itemId)) {
 			Component comp = Component.literal(font.plainSubstrByWidth(label, maxLabelW))
 				.withStyle(Style.EMPTY.withBold(true).withColor(TextColor.fromRgb(0xFF55FF)));
@@ -323,8 +454,16 @@ public final class ManualRunEntryScreen extends Screen {
 		g.fill(sx, sy, sx + sw, sy + sh, 0xFF111120);
 		border(g, sx, sy, sw, sh, 0xFF6A6AB0);
 
-		g.text(font, "Search Item", sx + 8, sy + 8, TEXT_MUTED);
-		drawTextField(g, sx + 78, sy + 4, sw - 86, itemSearchQuery, activeInput == 3, mx, my);
+		g.text(font, "Search", sx + 8, sy + 8, TEXT_MUTED);
+		drawTextField(g, sx + 52, sy + 4, sw - 160, itemSearchQuery, activeInput == 3, mx, my);
+		g.text(font, "Qty", sx + sw - 102, sy + 8, TEXT_MUTED);
+		drawTextField(g, sx + sw - 82, sy + 4, 28, slotQtyStr, activeInput == 6, mx, my);
+		boolean canRemove = selectedSlot >= 0 && selectedSlot < lootSlots.size() && !lootSlots.get(selectedSlot).itemId.isEmpty();
+		if (canRemove) {
+			boolean remHov = contains(sx + sw - 48, sy + 4, 40, FIELD_H, mx, my);
+			drawButton(g, sx + sw - 48, sy + 4, 40, FIELD_H, "Del", mx, my);
+			if (remHov) { /* hover drawn by drawButton */ }
+		}
 
 		int listY = sy + SEARCH_HEADER_H;
 		int visibleRows = Math.max(1, (sh - SEARCH_HEADER_H - 4) / SEARCH_ROW_H);
@@ -360,17 +499,39 @@ public final class ManualRunEntryScreen extends Screen {
 
 	@Override
 	public boolean mouseClicked(MouseButtonEvent event, boolean isRepeat) {
-		if (event.button() != 0) return super.mouseClicked(event, isRepeat);
 		int mx = (int) event.x();
 		int my = (int) event.y();
+		int button = event.button();
+
+		if (button == GLFW.GLFW_MOUSE_BUTTON_RIGHT || button == 1) {
+			for (int i = 0; i < lootSlots.size(); i++) {
+				int sx = ox + MARGIN + i * (lootSlotW + LOOT_GAP);
+				if (contains(sx, lootRowY, lootSlotW, FIELD_H, mx, my)) {
+					clearLootSlot(i);
+					return true;
+				}
+			}
+			return super.mouseClicked(event, isRepeat);
+		}
+
+		if (button != 0) return super.mouseClicked(event, isRepeat);
 
 		if (selectedSlot != -1) {
 			int sx = searchPopupX;
 			int sy = searchPopupY;
 			int sw = searchPopupW;
 			int sh = searchPopupH;
-			if (contains(sx + 78, sy + 4, sw - 86, FIELD_H, mx, my)) {
+			boolean canRemove = selectedSlot < lootSlots.size() && !lootSlots.get(selectedSlot).itemId.isEmpty();
+			if (canRemove && contains(sx + sw - 48, sy + 4, 40, FIELD_H, mx, my)) {
+				clearLootSlot(selectedSlot);
+				return true;
+			}
+			if (contains(sx + 52, sy + 4, sw - 160, FIELD_H, mx, my)) {
 				activeInput = 3;
+				return true;
+			}
+			if (contains(sx + sw - 82, sy + 4, 28, FIELD_H, mx, my)) {
+				activeInput = 6;
 				return true;
 			}
 			int listY = sy + SEARCH_HEADER_H;
@@ -381,8 +542,11 @@ public final class ManualRunEntryScreen extends Screen {
 				int ry = listY + i * SEARCH_ROW_H;
 				if (contains(sx + 4, ry, sw - 8, SEARCH_ROW_H - 1, mx, my)) {
 					PriceCache.SearchResult res = searchResults.get(idx);
-					lootSlots.get(selectedSlot).itemId = res.itemId();
-					lootSlots.get(selectedSlot).displayName = res.displayName();
+					ManualLootSlot slot = lootSlots.get(selectedSlot);
+					slot.itemId = res.itemId();
+					slot.displayName = res.displayName();
+					slot.quantity = Math.max(1, (int) parseLong(slotQtyStr));
+					maybeGrowSlots();
 					selectedSlot = -1;
 					activeInput = 0;
 					return true;
@@ -454,19 +618,32 @@ public final class ManualRunEntryScreen extends Screen {
 
 		for (int i = 0; i < lootSlots.size(); i++) {
 			int sx = ox + MARGIN + i * (lootSlotW + LOOT_GAP);
-			if (contains(sx, lootRowY, lootSlotW, FIELD_H, mx, my)) {
-				selectedSlot = i;
-				activeInput = 3;
-				itemSearchQuery = "";
-				searchScroll = 0;
-				refreshSearchResults();
-				openDropdown = OpenDropdown.NONE;
-				return true;
+			if (!contains(sx, lootRowY, lootSlotW, FIELD_H, mx, my)) continue;
+			ManualLootSlot slot = lootSlots.get(i);
+			if (!slot.itemId.isEmpty()) {
+				int removeW = font.width("×") + 6;
+				int removeX = sx + lootSlotW - removeW - 2;
+				if (contains(removeX, lootRowY, removeW, FIELD_H, mx, my)) {
+					clearLootSlot(i);
+					return true;
+				}
 			}
+			selectedSlot = i;
+			activeInput = 3;
+			itemSearchQuery = "";
+			slotQtyStr = Integer.toString(Math.max(1, slot.quantity));
+			searchScroll = 0;
+			refreshSearchResults();
+			openDropdown = OpenDropdown.NONE;
+			return true;
 		}
 
 		activeInput = 0;
 		return super.mouseClicked(event, isRepeat);
+	}
+
+	private void maybeGrowSlots() {
+		compactLootSlots();
 	}
 
 	private boolean handleFloorDropdownClick(int mx, int my) {
@@ -569,6 +746,16 @@ public final class ManualRunEntryScreen extends Screen {
 			}
 			return true;
 		}
+		if (activeInput == 6) {
+			for (int i = 0; i < typed.length(); i++) {
+				char c = typed.charAt(i);
+				if (Character.isDigit(c)) slotQtyStr += c;
+			}
+			if (selectedSlot >= 0 && selectedSlot < lootSlots.size() && !lootSlots.get(selectedSlot).itemId.isEmpty()) {
+				lootSlots.get(selectedSlot).quantity = Math.max(1, (int) parseLong(slotQtyStr));
+			}
+			return true;
+		}
 		return super.charTyped(event);
 	}
 
@@ -582,6 +769,12 @@ public final class ManualRunEntryScreen extends Screen {
 				refreshSearchResults();
 			} else if (activeInput == 4 && !witherEssenceStr.isEmpty()) witherEssenceStr = witherEssenceStr.substring(0, witherEssenceStr.length() - 1);
 			else if (activeInput == 5 && !undeadEssenceStr.isEmpty()) undeadEssenceStr = undeadEssenceStr.substring(0, undeadEssenceStr.length() - 1);
+			else if (activeInput == 6 && !slotQtyStr.isEmpty()) {
+				slotQtyStr = slotQtyStr.substring(0, slotQtyStr.length() - 1);
+				if (selectedSlot >= 0 && selectedSlot < lootSlots.size() && !lootSlots.get(selectedSlot).itemId.isEmpty()) {
+					lootSlots.get(selectedSlot).quantity = Math.max(1, (int) parseLong(slotQtyStr));
+				}
+			}
 			return true;
 		}
 		if (event.key() == GLFW.GLFW_KEY_ESCAPE) {
@@ -600,6 +793,17 @@ public final class ManualRunEntryScreen extends Screen {
 
 	@Override
 	public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
+		for (int i = 0; i < lootSlots.size(); i++) {
+			int sx = ox + MARGIN + i * (lootSlotW + LOOT_GAP);
+			if (contains(sx, lootRowY, lootSlotW, FIELD_H, (int) mouseX, (int) mouseY)) {
+				ManualLootSlot slot = lootSlots.get(i);
+				if (slot.itemId.isEmpty()) return true;
+				int delta = scrollY > 0 ? 1 : scrollY < 0 ? -1 : 0;
+				slot.quantity = Math.max(1, slot.quantity + delta);
+				if (selectedSlot == i) slotQtyStr = Integer.toString(slot.quantity);
+				return true;
+			}
+		}
 		if (selectedSlot != -1) {
 			if (scrollY > 0) searchScroll = Math.max(0, searchScroll - 1);
 			else if (scrollY < 0) searchScroll = Math.min(Math.max(0, searchResults.size() - SEARCH_VISIBLE_ROWS), searchScroll + 1);
@@ -619,12 +823,31 @@ public final class ManualRunEntryScreen extends Screen {
 		for (ManualLootSlot slot : lootSlots) {
 			if (!slot.itemId.isEmpty()) {
 				String name = slot.displayName.isEmpty() ? formatItemId(slot.itemId) : slot.displayName;
-				entries.add(new DungeonLootEntry(name, slot.itemId, 1));
+				entries.add(new DungeonLootEntry(name, slot.itemId, Math.max(1, slot.quantity)));
 			}
 		}
 
 		long value = DungeonProfitPricing.calculateLootValue(entries, DrtConfigManager.getConfig());
 		long profit = value - cost;
+
+		if (isEditing()) {
+			DungeonRunRecord updated = editingOriginal.copy();
+			updated.floor = floor.name();
+			updated.grade = score;
+			updated.chestTitle = chestDisplayTitle();
+			updated.chestCostCoins = cost;
+			updated.baseChestCostCoins = cost;
+			updated.chestValueCoins = value;
+			updated.chestProfitCoins = profit;
+			updated.lootEntries = new ArrayList<>();
+			for (DungeonLootEntry entry : entries) updated.lootEntries.add(entry.copy());
+			updated.normalizeCostBreakdown();
+			if (DrtConfigManager.updateRunRecord(editingOriginal, updated)) {
+				DrtClient.getTracker().notifyRunUpdated(editingOriginal, updated);
+			}
+			onClose();
+			return;
+		}
 
 		DungeonRunRecord record = new DungeonRunRecord(
 			System.currentTimeMillis(),
@@ -712,5 +935,12 @@ public final class ManualRunEntryScreen extends Screen {
 	private static class ManualLootSlot {
 		String itemId = "";
 		String displayName = "";
+		int quantity = 1;
+
+		void clear() {
+			itemId = "";
+			displayName = "";
+			quantity = 1;
+		}
 	}
 }

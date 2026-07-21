@@ -1,5 +1,6 @@
 package dev.vy.drt.client.screen;
 
+import dev.vy.drt.client.DrtClient;
 import dev.vy.drt.config.DrtConfigManager;
 import dev.vy.drt.config.DungeonFloor;
 import dev.vy.drt.config.DungeonLootEntry;
@@ -305,6 +306,20 @@ public final class DungeonLootScreen extends Screen {
 				minecraft.setScreen(new ManualRunEntryScreen(this));
 			}
 		}));
+
+		if (selectedRunIndex >= 0 && selectedRunIndex < tabHistory.size()) {
+			int editW = footerBlockWidth("Edit");
+			int editX = addX - 8 - editW;
+			boolean editHov = contains(editX, addY, editW, addSize, mouseX, mouseY);
+			drawButton(g, editX, addY, editW, addSize, editHov, "Edit");
+			clickTargets.add(new ClickTarget(editX, addY, editW, addSize, 0, () -> {
+				if (minecraft == null) return;
+				DungeonRunRecord record = tabHistory.get(selectedRunIndex);
+				if (record != null) {
+					minecraft.setScreen(new ManualRunEntryScreen(this, record));
+				}
+			}));
+		}
 	}
 
 	private void drawSectionLabels(GuiGraphicsExtractor g, int y) {
@@ -396,6 +411,7 @@ public final class DungeonLootScreen extends Screen {
 		if (deleteConfirmRunIndex == index && deleteConfirmUntilMillis > now) {
 			DungeonRunRecord record = tabHistory.get(index);
 			if (DrtConfigManager.removeRunRecord(record)) {
+				DrtClient.getTracker().notifyRunRemoved(record);
 				clearDeleteConfirm();
 				if (selectedRunIndex == index) selectedRunIndex = -1;
 				else if (selectedRunIndex > index) selectedRunIndex--;
@@ -572,11 +588,18 @@ public final class DungeonLootScreen extends Screen {
 		clickTargets.add(new ClickTarget(clearX, buttonY, clearW, buttonH, 0, () -> {
 			long now = System.currentTimeMillis();
 			if (clearConfirmUntilMillis > now) {
+				List<DungeonRunRecord> removed;
 				if (selectedTab == null) {
+					removed = DrtConfigManager.getRunHistory();
 					DrtConfigManager.clearAllData();
 				} else {
-					DrtConfigManager.clearFloorData(selectedTab.name());
+					String floor = selectedTab.name();
+					removed = DrtConfigManager.getRunHistory().stream()
+						.filter(r -> r != null && floor.equals(r.floor))
+						.toList();
+					DrtConfigManager.clearFloorData(floor);
 				}
+				DrtClient.getTracker().notifyHistoryCleared(removed);
 				clearConfirmUntilMillis = 0L;
 				clearDeleteConfirm();
 				clearLootFocus();

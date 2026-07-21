@@ -233,7 +233,7 @@ public final class CosmeticsContentManager {
 		return username == null ? null : username.toLowerCase(Locale.ROOT);
 	}
 
-	private static Integer parseColor(String raw) {
+	public static Integer parseColor(String raw) {
 		if (raw == null || raw.isBlank()) return null;
 		String normalized = raw.trim();
 		if (normalized.startsWith("#")) normalized = normalized.substring(1);

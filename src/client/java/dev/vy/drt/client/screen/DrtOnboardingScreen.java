@@ -249,18 +249,19 @@ public final class DrtOnboardingScreen extends Screen {
 
 	private void drawPositionRow(GuiGraphicsExtractor g, int mouseX, int mouseY, int y) {
 		drawRowBase(g, mouseX, mouseY, y);
-		g.text(font, "Tracker position", ox + 18, y + 7, TEXT);
-		String value = trackerFeature.getHudX() + ", " + trackerFeature.getHudY() + "  " + trackerFeature.getHudScalePercent() + "%";
-		int buttonX = controlX(64);
+		g.text(font, "Overlay", ox + 18, y + 7, TEXT);
+		String preset = trackerFeature.getOverlayPreset().displayName();
+		String value = preset + "  " + trackerFeature.getHudX() + "," + trackerFeature.getHudY() + "  " + trackerFeature.getHudScalePercent() + "%";
+		int buttonX = controlX(78);
 		int valueX = buttonX - CONTROL_GAP - font.width(value);
-		if (valueX > ox + 128) {
+		if (valueX > ox + 100) {
 			g.text(font, value, valueX, y + 7, MUTED);
 		}
-		drawSmallButton(g, buttonX, y + 3, 64, 16, "Move", false, () -> {
+		drawSmallButton(g, buttonX, y + 3, 78, 16, "Edit Overlay", false, () -> {
 			saveSettings(false);
 			Minecraft client = Minecraft.getInstance();
-			client.setScreen(new DungeonTrackerPositionScreen(trackerFeature, this));
-		}, "Pick where the DRT HUD sits");
+			client.setScreen(new DrtOverlayEditorScreen(trackerFeature, this));
+		}, "Choose overlay preset, custom layout, or move HUD");
 	}
 
 	private void drawPriceModeRow(GuiGraphicsExtractor g, int mouseX, int mouseY, int y) {
