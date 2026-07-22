@@ -12,6 +12,7 @@ base {
 
 repositories {
 	mavenCentral()
+	maven("https://maven.terraformersmc.com/releases/")
 }
 
 loom {
@@ -30,6 +31,7 @@ dependencies {
 	"mappings"(loom.officialMojangMappings())
 	"modImplementation"("net.fabricmc:fabric-loader:${project.property("loader_version")}")
 	"modImplementation"("net.fabricmc.fabric-api:fabric-api:${project.property("fabric_api_version")}")
+	"modCompileOnly"("com.terraformersmc:modmenu:${project.property("modmenu_version")}")
 }
 
 tasks.withType<JavaCompile>().configureEach {
