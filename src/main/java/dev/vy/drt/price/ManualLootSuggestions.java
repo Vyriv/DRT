@@ -51,7 +51,6 @@ public final class ManualLootSuggestions {
 		"Enchanted Book (Rend I)",
 		"Enchanted Book (Rend II)",
 		"Enchanted Book (Overload I)",
-		"Enchanted Book (Legion I)",
 		"Enchanted Book (Lethality VI)",
 		"Enchanted Book (Swarm I)",
 		"Enchanted Book (Soul Eater I)",
@@ -76,7 +75,7 @@ public final class ManualLootSuggestions {
 	private static final List<String> F5_DROPS = List.of(
 		"Dark Orb", "Shadow Assassin Helmet", "Shadow Assassin Chestplate", "Shadow Assassin Leggings",
 		"Shadow Assassin Boots", "Shadow Assassin Cloak", "Livid Dagger", "Shadow Fury",
-		"Last Breath", "Warped Stone"
+		"Last Breath", "Warped Stone", "Enchanted Book (Legion I)"
 	);
 	private static final List<String> F6_DROPS = List.of(
 		"Giant Tooth", "Sadan's Brooch", "Necromancer Lord Helmet", "Necromancer Lord Chestplate",
@@ -165,6 +164,8 @@ public final class ManualLootSuggestions {
 			String suggestionId = resolveItemId(suggestion);
 			if (!suggestionId.isEmpty() && suggestionId.equalsIgnoreCase(normalizedId)) return true;
 		}
+		// Floor-unique books (e.g. Legion on F5/M5) must not pass the generic book allowlist.
+		if (isFloorUniqueDropElsewhere(floor, rawName, itemId)) return false;
 		if (normalizedName.startsWith("ENCHANTED BOOK") || normalizedId.startsWith("ENCHANTMENT_")) return true;
 		if (normalizedName.contains("SHARD") || normalizedId.contains("SHARD")) return true;
 		return false;
@@ -178,6 +179,11 @@ public final class ManualLootSuggestions {
 		for (DungeonFloor floor : DungeonFloor.values()) {
 			if (floor == DungeonFloor.UNKNOWN || floor == currentFloor) continue;
 			if (floor.isKuudra() != currentFloor.isKuudra()) continue;
+			// F5 and M5 share the same unique pool — do not treat that as "elsewhere".
+			if (floor.isCatacombs() && currentFloor.isCatacombs()
+				&& floor.floorNumber() == currentFloor.floorNumber()) {
+				continue;
+			}
 			List<String> uniques = floorUniqueDrops(floor);
 			for (String unique : uniques) {
 				if (normalizeName(unique).equals(normalizedName)) return true;

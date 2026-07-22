@@ -41,7 +41,10 @@ import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.client.gui.screens.inventory.InventoryScreen;
 import net.minecraft.core.component.DataComponents;
+import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.HoverEvent;
+import net.minecraft.network.chat.Style;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.NbtOps;
@@ -3801,15 +3804,9 @@ public final class DungeonRunTrackerFeature {
 		for (String reason : LootFloorGuards.evaluate(pendingLootFloor, pendingLootChestTitle, entry)) {
 			String key = lootKey(entry) + "|" + reason;
 			if (!lootGuardWarnedKeys.add(key)) continue;
-			DungeonRunTracker.LOGGER.warn(
-				"[DRT][LOOT-GUARD] floor={} chest='{}' item='{}' id={} qty={} reason={} (kept)",
-				pendingLootFloor == null ? "UNKNOWN" : pendingLootFloor.name(),
-				pendingLootChestTitle == null ? "" : pendingLootChestTitle,
-				entry.rawName,
-				entry.itemId,
-				entry.quantity,
-				reason
-			);
+			String report = buildLootGuardReport(reason, entry);
+			DungeonRunTracker.LOGGER.warn(report.replace("\n", " | "));
+			notifyLootGuardInChat(report);
 		}
 	}
 
@@ -3817,13 +3814,147 @@ public final class DungeonRunTrackerFeature {
 		for (String reason : LootFloorGuards.evaluateChest(pendingLootFloor, pendingLootChestTitle, entries)) {
 			String key = "chest|" + reason;
 			if (!lootGuardWarnedKeys.add(key)) continue;
-			DungeonRunTracker.LOGGER.warn(
-				"[DRT][LOOT-GUARD] floor={} chest='{}' reason={} (kept)",
-				pendingLootFloor == null ? "UNKNOWN" : pendingLootFloor.name(),
-				pendingLootChestTitle == null ? "" : pendingLootChestTitle,
-				reason
-			);
+			String report = buildLootGuardReport(reason, null);
+			DungeonRunTracker.LOGGER.warn(report.replace("\n", " | "));
+			notifyLootGuardInChat(report);
 		}
+	}
+
+	private String buildLootGuardReport(String reason, DungeonLootEntry flaggedEntry) {
+		Minecraft client = Minecraft.getInstance();
+		long now = System.currentTimeMillis();
+		StringBuilder sb = new StringBuilder(768);
+		sb.append("=== DRT LOOT-GUARD REPORT ===\n");
+		sb.append("Please DM vyriv on Discord with this entire message.\n");
+		sb.append('\n');
+		sb.append("timeUtc=").append(java.time.Instant.ofEpochMilli(now)).append('\n');
+		sb.append("modVersion=").append(drtModVersion()).append('\n');
+		sb.append("minecraft=").append(client.getVersionType()).append(' ').append(minecraftVersionName()).append('\n');
+		sb.append("server=").append(connectedServerLabel(client)).append('\n');
+		sb.append("player=").append(playerName(client)).append('\n');
+		sb.append('\n');
+		sb.append("--- detection ---\n");
+		sb.append("reason=").append(reason).append('\n');
+		sb.append("kept=true (soft guard; loot was not discarded)\n");
+		if (flaggedEntry != null) {
+			sb.append("flaggedItem='").append(nullToEmpty(flaggedEntry.rawName)).append("'\n");
+			sb.append("flaggedItemId=").append(nullToEmpty(flaggedEntry.itemId)).append('\n');
+			sb.append("flaggedQty=").append(Math.max(1, flaggedEntry.quantity)).append('\n');
+		} else {
+			sb.append("flaggedItem=(chest-level check)\n");
+		}
+		sb.append('\n');
+		sb.append("--- floor context ---\n");
+		sb.append("pendingLootFloor=").append(floorName(pendingLootFloor)).append('\n');
+		sb.append("currentFloor=").append(floorName(currentFloor)).append('\n');
+		sb.append("selectedHudFloor=").append(selectedFloor == null ? "ALL" : selectedFloor.name()).append('\n');
+		sb.append("lastKnownKuudraFloor=").append(floorName(lastKnownKuudraFloor)).append('\n');
+		sb.append("pendingSPlusFloor=").append(floorName(pendingSPlusFloor)).append('\n');
+		sb.append("awaitingExtraStatsFloor=").append(floorName(awaitingExtraStatsFloor)).append('\n');
+		sb.append("lastRunRecordFloor=").append(floorName(lastRunRecordFloor)).append('\n');
+		sb.append("lastRunRecordGrade=").append(nullToEmpty(lastRunRecordGrade)).append('\n');
+		sb.append("lastRunRecordAgeMs=").append(lastRunRecordMillis > 0L ? Math.max(0L, now - lastRunRecordMillis) : -1L).append('\n');
+		sb.append("insideDungeon=").append(insideDungeon).append('\n');
+		sb.append("insideKuudra=").append(insideKuudra).append('\n');
+		sb.append("inDungeonHub=").append(inDungeonHub).append('\n');
+		sb.append("inCrimsonIsle=").append(inCrimsonIsle).append('\n');
+		sb.append("currentFloorIsKuudra=").append(isCurrentFloorKuudra()).append('\n');
+		sb.append("dungeonSignalMsLeft=").append(Math.max(0L, dungeonSignalUntilMillis - now)).append('\n');
+		sb.append("kuudraSignalMsLeft=").append(Math.max(0L, kuudraSignalUntilMillis - now)).append('\n');
+		sb.append('\n');
+		sb.append("--- chest / run ---\n");
+		sb.append("chestTitle='").append(nullToEmpty(pendingLootChestTitle)).append("'\n");
+		sb.append("chestAssigned=").append(pendingLootChestAssigned).append('\n');
+		sb.append("seededFromGui=").append(pendingLootSeededFromGui).append('\n');
+		sb.append("runNumber=").append(pendingLootRunNumber).append('\n');
+		sb.append("runTimestampMs=").append(pendingLootRunTimestamp).append('\n');
+		sb.append("currentRunActive=").append(currentRunActive).append('\n');
+		sb.append("runCountedThisDungeon=").append(runCountedThisDungeon).append('\n');
+		sb.append("gradePending=").append(pendingScoreGrade == null ? "" : pendingScoreGrade).append('\n');
+		sb.append("gradeLast=").append(nullToEmpty(lastRecordedGrade)).append('\n');
+		sb.append("openedChestsThisWindow=").append(openedRewardChestsInLootWindow).append('\n');
+		sb.append("lootWindowMsLeft=").append(Math.max(0L, lootWindowUntilMillis - now)).append('\n');
+		sb.append("lootCollectionMsLeft=").append(Math.max(0L, lootCollectionUntilMillis - now)).append('\n');
+		ChestCostBreakdown cost = pendingLootCostBreakdown == null ? new ChestCostBreakdown() : pendingLootCostBreakdown;
+		sb.append("cost.base=").append(cost.baseChestCostCoins)
+			.append(" key=").append(cost.dungeonChestKeyCostCoins)
+			.append(" kismet=").append(cost.kismetFeatherCostCoins)
+			.append(" wheel=").append(cost.wheelOfFateCostCoins)
+			.append(" kuudraKey=").append(cost.kuudraKeyCostCoins)
+			.append(" total=").append(cost.totalCostCoins()).append('\n');
+		sb.append("cost.flags key=").append(cost.usedDungeonChestKey)
+			.append(" kismet=").append(cost.usedKismetFeather)
+			.append(" wheel=").append(cost.usedWheelOfFate)
+			.append(" kuudraKey=").append(cost.usedKuudraKey).append('\n');
+		sb.append('\n');
+		sb.append("--- pending loot (").append(pendingLootEntries.size()).append(") ---\n");
+		if (pendingLootEntries.isEmpty()) {
+			sb.append("(none)\n");
+		} else {
+			int i = 0;
+			for (DungeonLootEntry e : pendingLootEntries) {
+				if (e == null) continue;
+				i++;
+				boolean flagged = flaggedEntry != null
+					&& lootKey(e).equals(lootKey(flaggedEntry));
+				sb.append(i).append(flagged ? " [FLAGGED] " : " ")
+					.append(nullToEmpty(e.rawName))
+					.append(" | id=").append(nullToEmpty(e.itemId))
+					.append(" | x").append(Math.max(1, e.quantity))
+					.append('\n');
+			}
+		}
+		sb.append('\n');
+		sb.append("--- end ---\n");
+		return sb.toString();
+	}
+
+	private static String drtModVersion() {
+		return net.fabricmc.loader.api.FabricLoader.getInstance()
+			.getModContainer(DungeonRunTracker.MOD_ID)
+			.map(c -> c.getMetadata().getVersion().getFriendlyString())
+			.orElse("unknown");
+	}
+
+	private static String minecraftVersionName() {
+		return net.minecraft.SharedConstants.getCurrentVersion().name();
+	}
+
+	private static String connectedServerLabel(Minecraft client) {
+		if (client.getConnection() != null && client.getConnection().getServerData() != null) {
+			return nullToEmpty(client.getConnection().getServerData().ip);
+		}
+		if (client.getSingleplayerServer() != null) return "singleplayer";
+		return "unknown";
+	}
+
+	private static String playerName(Minecraft client) {
+		if (client.player == null) return "?";
+		return nullToEmpty(client.player.getGameProfile().name());
+	}
+
+	private static String floorName(DungeonFloor floor) {
+		return floor == null ? "null" : floor.name();
+	}
+
+	private static String nullToEmpty(String value) {
+		return value == null ? "" : value;
+	}
+
+	private void notifyLootGuardInChat(String report) {
+		Minecraft client = Minecraft.getInstance();
+		if (client.player == null) return;
+		Component message = Component.literal("[DRT] Lootguard detected mismatched drop, click to copy error + dm vyriv on discord")
+			.withStyle(Style.EMPTY
+				.withColor(ChatFormatting.GOLD)
+				.withUnderlined(true)
+				.withClickEvent(new ClickEvent.CopyToClipboard(report))
+				.withHoverEvent(new HoverEvent.ShowText(Component.literal("Click to copy full diagnostic report for vyriv"))));
+		//? if >= 26.1 {
+		client.player.sendSystemMessage(message);
+		//? } else {
+		/*client.player.displayClientMessage(message, false);
+		*///?}
 	}
 
 	private void flushPendingLootRecord() {
