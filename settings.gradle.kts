@@ -16,5 +16,6 @@ rootProject.name = "DungeonRunTracker"
 stonecutter.create(rootProject) {
 	version("1.21.11").buildscript = "build.obf.gradle.kts"
 	version("26.1.2").buildscript = "build.gradle.kts"
+	version("26.2").buildscript = "build.gradle.kts"
 	vcsVersion = "26.1.2"
 }
