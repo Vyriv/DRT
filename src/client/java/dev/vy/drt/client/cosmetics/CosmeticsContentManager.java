@@ -125,6 +125,7 @@ public final class CosmeticsContentManager {
 		if (entry == null) return null;
 		LoadedNameStyle nameStyle = loadNameStyle(entry.style);
 		LoadedBadge badge = entry.badge == null ? null : loadBadge(entry.badge);
+		LoadedRankPrefix rankPrefix = entry.rankPrefix == null ? null : loadRankPrefix(entry.rankPrefix);
 		return new LoadedPlayerCustomization(
 			entry.username,
 			blankToNull(entry.nickname),
@@ -132,6 +133,7 @@ public final class CosmeticsContentManager {
 			entry.aliases == null ? List.of() : entry.aliases,
 			nameStyle,
 			badge,
+			rankPrefix,
 			blankToNull(entry.capeResourcePath),
 			blankToNull(entry.capeUrl));
 	}
@@ -185,6 +187,44 @@ public final class CosmeticsContentManager {
 		String text = blankToNull(badge.text);
 		Integer color = parseColor(badge.color);
 		return text == null || color == null ? null : new LoadedBadge(text, color, badge.bold);
+	}
+
+	private static LoadedRankPrefix loadRankPrefix(RankPrefixFile rankPrefix) {
+		String text = blankToNull(rankPrefix.text);
+		if (text == null) return null;
+
+		String normalizedMode = rankPrefix.mode == null ? "solid" : rankPrefix.mode.trim().toLowerCase(Locale.ROOT);
+		Float animationSpeed = rankPrefix.animationSpeed != null && rankPrefix.animationSpeed > 0.0F ? rankPrefix.animationSpeed : null;
+		Integer animationSteps = rankPrefix.animationSteps == null ? null : Math.max(2, rankPrefix.animationSteps);
+		float gradientSpacing = rankPrefix.gradientFrequency != null ? rankPrefix.gradientFrequency
+			: rankPrefix.gradientSpacing != null ? rankPrefix.gradientSpacing : 1.0F;
+		gradientSpacing = Math.max(1.0F, Math.min(10.0F, gradientSpacing));
+		boolean animated = Boolean.TRUE.equals(rankPrefix.animated);
+
+		return switch (normalizedMode) {
+			case "copy_name", "copy-name", "copyname" ->
+				new LoadedRankPrefix(LoadedRankPrefix.Mode.COPY_NAME, text, 0xFFFFFF, 0xFFFFFF, rankPrefix.bold, animationSpeed, animationSteps, gradientSpacing);
+			case "gradient" -> {
+				Integer left = parseColor(firstNonBlank(rankPrefix.leftColor, rankPrefix.color));
+				Integer right = parseColor(firstNonBlank(rankPrefix.rightColor, rankPrefix.color));
+				if (left == null || right == null) yield null;
+				LoadedRankPrefix.Mode mode = animated || animationSpeed != null
+					? LoadedRankPrefix.Mode.ANIMATED_GRADIENT
+					: LoadedRankPrefix.Mode.GRADIENT;
+				yield new LoadedRankPrefix(mode, text, left, right, rankPrefix.bold, animationSpeed, animationSteps, gradientSpacing);
+			}
+			case "animated_gradient", "animated-gradient", "animatedgradient" -> {
+				Integer left = parseColor(firstNonBlank(rankPrefix.leftColor, rankPrefix.color));
+				Integer right = parseColor(firstNonBlank(rankPrefix.rightColor, rankPrefix.color));
+				if (left == null || right == null) yield null;
+				yield new LoadedRankPrefix(LoadedRankPrefix.Mode.ANIMATED_GRADIENT, text, left, right, rankPrefix.bold, animationSpeed, animationSteps, gradientSpacing);
+			}
+			case "solid" -> {
+				Integer color = parseColor(firstNonBlank(rankPrefix.color, rankPrefix.leftColor, rankPrefix.rightColor));
+				yield color == null ? null : new LoadedRankPrefix(LoadedRankPrefix.Mode.SOLID, text, color, color, rankPrefix.bold, animationSpeed, animationSteps, gradientSpacing);
+			}
+			default -> null;
+		};
 	}
 
 	private static synchronized List<PlayerCustomizationFile> mergedCustomizationEntries() {
@@ -261,7 +301,7 @@ public final class CosmeticsContentManager {
 	}
 
 	public record LoadedPlayerCustomization(String username, String nickname, String uuid, List<String> aliases,
-			LoadedNameStyle style, LoadedBadge badge, String capeResourcePath, String capeUrl) {
+			LoadedNameStyle style, LoadedBadge badge, LoadedRankPrefix rankPrefix, String capeResourcePath, String capeUrl) {
 	}
 
 	public record LoadedNameStyle(Mode mode, int leftColor, int rightColor, boolean bold, List<Integer> letterColors,
@@ -276,6 +316,16 @@ public final class CosmeticsContentManager {
 	}
 
 	public record LoadedBadge(String label, int color, boolean bold) {
+	}
+
+	public record LoadedRankPrefix(Mode mode, String label, int leftColor, int rightColor, boolean bold,
+			Float animationSpeed, Integer animationSteps, float gradientSpacing) {
+		public enum Mode {
+			SOLID,
+			GRADIENT,
+			ANIMATED_GRADIENT,
+			COPY_NAME
+		}
 	}
 
 	private static final class PeopleContent {
@@ -306,6 +356,7 @@ public final class CosmeticsContentManager {
 		String creditRole;
 		NameStyleFile style;
 		BadgeFile badge;
+		RankPrefixFile rankPrefix;
 		String capeResourcePath;
 		String capeUrl;
 		Float scale;
@@ -332,6 +383,7 @@ public final class CosmeticsContentManager {
 			capeUrl = blankToNull(capeUrl);
 			if (style != null) style.normalize();
 			if (badge != null) badge.normalize();
+			if (rankPrefix != null) rankPrefix.normalize();
 			return this;
 		}
 
@@ -352,6 +404,7 @@ public final class CosmeticsContentManager {
 			merged.creditRole = overlay.creditRole != null ? overlay.creditRole : creditRole;
 			merged.style = overlay.style != null ? overlay.style : style;
 			merged.badge = overlay.badge != null ? overlay.badge : badge;
+			merged.rankPrefix = overlay.rankPrefix != null ? overlay.rankPrefix : rankPrefix;
 			merged.capeResourcePath = overlay.capeResourcePath != null ? overlay.capeResourcePath : capeResourcePath;
 			merged.capeUrl = overlay.capeUrl != null ? overlay.capeUrl : capeUrl;
 			merged.scale = overlay.scale != null ? overlay.scale : scale;
@@ -400,6 +453,28 @@ public final class CosmeticsContentManager {
 		void normalize() {
 			text = blankToNull(text);
 			color = blankToNull(color);
+		}
+	}
+
+	private static final class RankPrefixFile {
+		String text;
+		String mode = "solid";
+		String color;
+		String leftColor;
+		String rightColor;
+		Boolean animated;
+		Float animationSpeed;
+		Integer animationSteps;
+		Float gradientSpacing;
+		Float gradientFrequency;
+		boolean bold;
+
+		void normalize() {
+			text = blankToNull(text);
+			mode = blankToNull(mode) == null ? "solid" : mode.trim();
+			color = blankToNull(color);
+			leftColor = blankToNull(leftColor);
+			rightColor = blankToNull(rightColor);
 		}
 	}
 }

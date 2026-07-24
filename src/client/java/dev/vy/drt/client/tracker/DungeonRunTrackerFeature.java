@@ -303,6 +303,8 @@ public final class DungeonRunTrackerFeature {
 	private boolean pendingLootSeededFromGui;
 	private boolean pendingLootChestAssigned;
 	private int openedRewardChestsInLootWindow;
+	/** Canonical titles already counted in the current loot window (used to ignore Croesus re-views). */
+	private final Set<String> openedRewardChestTitlesInLootWindow = new HashSet<>();
 	private boolean nextOpenedChestUsesDungeonChestKey;
 	private boolean nextOpenedChestUsesKismetFeather;
 	private boolean nextOpenedChestUsesWheelOfFate;
@@ -317,6 +319,10 @@ public final class DungeonRunTrackerFeature {
 	private boolean lastRewardModifierScanHadKeyRequirement;
 	private boolean lastRewardModifierScanHadKismetMarker;
 	private String lastViewedOpenedRewardChestTitle = "";
+	/** Survives GUI close so CHEST REWARDS chat without a tier name can still assign. */
+	private String lastOpenedRewardChestTitleForChat = "";
+	/** Set while viewing a Croesus preview with an Open button; consumed on the subsequent open. */
+	private String armedPreviewRewardChestTitle = "";
 
 	private boolean sessionActive;
 	private long sessionStartMillis;
@@ -2343,13 +2349,23 @@ public final class DungeonRunTrackerFeature {
 				if (pendingLootChestAssigned && pendingLootEntries.isEmpty()) {
 					resetPendingChestState();
 				}
+				// Arm so the paid open counts even if this tier was already opened earlier in Croesus
+				// (offers are cached by title, so a second Wood from another run looks "Already Opened").
+				armedPreviewRewardChestTitle = canonicalRewardTitle;
 				// Keep key-requirement from this preview so the subsequent open can bill a key.
 				lastViewedOpenedRewardChestTitle = "";
 				return;
 			}
 
 			DungeonChestOffer cached = cachedChestOffersByTitle.get(canonicalRewardTitle);
-			if (cached != null && cached.alreadyOpened) {
+			boolean openedFromArmedPreview = canonicalRewardTitle.equals(armedPreviewRewardChestTitle);
+			if (openedFromArmedPreview) armedPreviewRewardChestTitle = "";
+			// Skip pure re-views of an already-counted tier. Never skip a preview→Open sequence —
+			// multi-run Croesus reuses titles (two Wood chests) and the title-keyed cache stays opened.
+			if (!openedFromArmedPreview
+				&& cached != null
+				&& cached.alreadyOpened
+				&& openedRewardChestTitlesInLootWindow.contains(canonicalRewardTitle)) {
 				updateCachedRewardChestOffers(menu);
 				lastViewedOpenedRewardChestTitle = "";
 				return;
@@ -2362,21 +2378,29 @@ public final class DungeonRunTrackerFeature {
 			refreshRewardModifierScan(menu, screenKey, now);
 			rememberKuudraKeyTierFromMenu(menu);
 			if (lastRewardModifierScanHadKismetMarker) markKismetFeatherUsed();
-			if (firstOpenScan) {
-				assignPendingOpenedChest(canonicalRewardTitle, cached, paidWithKey);
+			if (firstOpenScan || openedFromArmedPreview) {
+				assignPendingOpenedChest(canonicalRewardTitle, cached, paidWithKey, openedFromArmedPreview);
 			}
 			captureOpenedRewardChestLoot(client, menu, now);
 			lastViewedOpenedRewardChestTitle = canonicalRewardTitle;
+			lastOpenedRewardChestTitleForChat = canonicalRewardTitle;
 			return;
 		}
 
 		// Leaving an opened chest GUI: do NOT flush yet. Chat CHEST REWARDS often arrives next;
 		// flushing here was splitting one open into a partial GUI record + a second chat record.
 		if (!lastViewedOpenedRewardChestTitle.isBlank()) {
+			String leftTitle = lastViewedOpenedRewardChestTitle;
 			lastViewedOpenedRewardChestTitle = "";
+			lastOpenedRewardChestTitleForChat = leftTitle;
+			// Allow a later real open of the same tier (new container id often reuses) to scan again.
+			scannedRewardScreens.removeIf(key -> key.startsWith("opened#" + leftTitle + "#"));
 		}
 
 		if (!isRewardsMenuTitle(normalizedTitle) && !isCroesusChestListTitle(normalizedTitle)) return;
+
+		// Back on the chest list — drop any unused preview arm (backed out without opening).
+		armedPreviewRewardChestTitle = "";
 
 		AbstractContainerMenu menu = client.player.containerMenu;
 		if (menu == null) return;
@@ -2528,13 +2552,29 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private void assignPendingOpenedChest(String normalizedTitle, DungeonChestOffer offer) {
-		assignPendingOpenedChest(normalizedTitle, offer, false);
+		assignPendingOpenedChest(normalizedTitle, offer, false, false);
 	}
 
 	private void assignPendingOpenedChest(String normalizedTitle, DungeonChestOffer offer, boolean paidWithDungeonChestKey) {
+		assignPendingOpenedChest(normalizedTitle, offer, paidWithDungeonChestKey, false);
+	}
+
+	private void assignPendingOpenedChest(
+		String normalizedTitle,
+		DungeonChestOffer offer,
+		boolean paidWithDungeonChestKey,
+		boolean forceNewOpen
+	) {
 		String displayTitle = toDisplayChestTitle(normalizedTitle);
 		boolean samePendingChest = pendingLootChestAssigned && displayTitle.equalsIgnoreCase(pendingLootChestTitle);
 		boolean hadPendingEntries = !pendingLootEntries.isEmpty();
+		// Preview→Open of the same tier again (multi-run Croesus) is a new chest, not a re-scan.
+		if (forceNewOpen && samePendingChest) {
+			if (hadPendingEntries) flushPendingLootRecord(true);
+			else resetPendingChestState();
+			samePendingChest = false;
+			hadPendingEntries = false;
+		}
 		boolean alreadyChargedKey = samePendingChest && pendingLootCostBreakdown != null && pendingLootCostBreakdown.usedDungeonChestKey;
 		ChestCostBreakdown previousBreakdown = samePendingChest && pendingLootCostBreakdown != null
 			? pendingLootCostBreakdown.copy()
@@ -2550,6 +2590,8 @@ public final class DungeonRunTrackerFeature {
 			previousBreakdown = null;
 		}
 		if (!samePendingChest) {
+			String countedTitle = normalizedTitle == null ? "" : normalizedTitle.trim().toUpperCase(Locale.ROOT);
+			if (!countedTitle.isEmpty()) openedRewardChestTitlesInLootWindow.add(countedTitle);
 			openedRewardChestsInLootWindow++;
 		}
 
@@ -2611,6 +2653,7 @@ public final class DungeonRunTrackerFeature {
 		if (isRewardChestPreviewScreen(client.player.containerMenu)) return;
 		captureOpenedRewardChestLoot(client, client.player.containerMenu, now);
 		lastViewedOpenedRewardChestTitle = canonical;
+		lastOpenedRewardChestTitleForChat = canonical;
 	}
 
 	private void captureOpenedRewardChestLoot(Minecraft client, AbstractContainerMenu menu, long now) {
@@ -3398,7 +3441,6 @@ public final class DungeonRunTrackerFeature {
 
 	private void clearRuntimeState() {
 		refreshCountdown = 0;
-		flushPendingLootRecord();
 		resetDungeonRuntimeState();
 		lastKnownKuudraFloor = DungeonFloor.UNKNOWN;
 		inDungeonHub = false;
@@ -3406,7 +3448,8 @@ public final class DungeonRunTrackerFeature {
 		dungeonSignalUntilMillis = 0L;
 		kuudraSignalUntilMillis = 0L;
 		lastLevelIdentity = null;
-		clearLootWindow();
+		// Keep the loot window across brief player/level unavailability (dungeon → hub warps).
+		// Clearing it here reset openedChestsThisWindow mid-Croesus and undercounted opens.
 		cancelAutoOpenRewardChest();
 		dragging = false;
 		positionDirty = false;
@@ -3464,6 +3507,11 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private void startLootWindow(long now, int runNumber, DungeonFloor floor) {
+		boolean preserveOpenCount = lootWindowUntilMillis > now && openedRewardChestsInLootWindow > 0;
+		int preservedOpenCount = openedRewardChestsInLootWindow;
+		Set<String> preservedOpenTitles = preserveOpenCount
+			? new HashSet<>(openedRewardChestTitlesInLootWindow)
+			: Set.of();
 		if (pendingLootChestAssigned && !pendingLootEntries.isEmpty() && pendingLootRunNumber > 0) {
 			flushPendingLootRecord(true);
 		}
@@ -3476,7 +3524,9 @@ public final class DungeonRunTrackerFeature {
 		pendingLootCostBreakdown = new ChestCostBreakdown();
 		pendingLootSeededFromGui = false;
 		pendingLootChestAssigned = false;
-		openedRewardChestsInLootWindow = 0;
+		openedRewardChestsInLootWindow = preserveOpenCount ? preservedOpenCount : 0;
+		openedRewardChestTitlesInLootWindow.clear();
+		if (preserveOpenCount) openedRewardChestTitlesInLootWindow.addAll(preservedOpenTitles);
 		nextOpenedChestUsesDungeonChestKey = false;
 		nextOpenedChestUsesKismetFeather = false;
 		nextOpenedChestUsesWheelOfFate = false;
@@ -3588,6 +3638,7 @@ public final class DungeonRunTrackerFeature {
 		pendingLootSeededFromGui = false;
 		pendingLootChestAssigned = false;
 		openedRewardChestsInLootWindow = 0;
+		openedRewardChestTitlesInLootWindow.clear();
 		nextOpenedChestUsesDungeonChestKey = false;
 		nextOpenedChestUsesKismetFeather = false;
 		nextOpenedChestUsesWheelOfFate = false;
@@ -3603,6 +3654,8 @@ public final class DungeonRunTrackerFeature {
 		lastRewardModifierScanHadKeyRequirement = false;
 		lastRewardModifierScanHadKismetMarker = false;
 		lastViewedOpenedRewardChestTitle = "";
+		lastOpenedRewardChestTitleForChat = "";
+		armedPreviewRewardChestTitle = "";
 		recentLootMessages.clear();
 	}
 
@@ -3663,6 +3716,11 @@ public final class DungeonRunTrackerFeature {
 			assignPendingOpenedChest(title, cached);
 			return;
 		}
+		// Some CHEST REWARDS headers omit the tier name; fall back to the GUI we just left.
+		String fallback = lastOpenedRewardChestTitleForChat;
+		if (fallback == null || fallback.isBlank()) return;
+		DungeonChestOffer cached = cachedChestOffersByTitle.get(fallback);
+		assignPendingOpenedChest(fallback, cached);
 	}
 
 	private String toDisplayChestTitle(String normalizedTitle) {
@@ -4137,7 +4195,12 @@ public final class DungeonRunTrackerFeature {
 			|| normalized.contains("BITS EARNED") || normalized.startsWith("TIME:")
 			|| normalized.contains("[BAZAAR]") || normalized.contains("BAZAAR")
 			|| normalized.contains("SOLD ") || normalized.contains("BOUGHT ")
-			|| normalized.contains("COINS!") || normalized.contains("RNG METER");
+			|| normalized.contains("COINS!") || normalized.contains("RNG METER")
+			// Party/self rare-drop chat, e.g. "Player found a Recombobulator 3000 in their Obsidian Chest"
+			|| normalized.contains("FOUND A ") || normalized.contains("FOUND AN ")
+			|| normalized.contains("IN THEIR ") || normalized.contains("IN HIS ") || normalized.contains("IN HER ")
+			|| normalized.contains("RARE REWARD") || normalized.contains("CRAZY RARE")
+			|| normalized.contains("INSANE REWARD") || normalized.contains("PRAY RNGESUS");
 	}
 
 	private boolean shouldIgnoreLootName(String value) {

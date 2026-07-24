@@ -234,6 +234,7 @@ public final class PlayerCustomizationRegistry {
 		}
 
 		NameBadge badge = entry.badge() == null ? null : new NameBadge(entry.badge().label(), entry.badge().color(), entry.badge().bold());
+		NameRankPrefix rankPrefix = toRankPrefix(entry.rankPrefix());
 		return new PlayerCustomization(
 			username,
 			blankToNull(entry.nickname()),
@@ -246,8 +247,25 @@ public final class PlayerCustomizationRegistry {
 			entry.style() == null ? null : entry.style().animationSteps(),
 			entry.style() != null && entry.style().bold(),
 			badge,
+			rankPrefix,
 			blankToNull(entry.capeResourcePath()),
 			blankToNull(entry.capeUrl()));
+	}
+
+	private static NameRankPrefix toRankPrefix(CosmeticsContentManager.LoadedRankPrefix entry) {
+		if (entry == null) return null;
+		return switch (entry.mode()) {
+			case COPY_NAME -> new NameRankPrefix(entry.label(), NameRankPrefix.Mode.COPY_NAME, null, entry.bold(),
+				entry.animationSpeed(), entry.animationSteps());
+			case SOLID -> new NameRankPrefix(entry.label(), NameRankPrefix.Mode.SOLID, NameColors.solid(entry.leftColor()), entry.bold(),
+				entry.animationSpeed(), entry.animationSteps());
+			case GRADIENT -> new NameRankPrefix(entry.label(), NameRankPrefix.Mode.GRADIENT,
+				new NameColors(entry.leftColor(), entry.rightColor(), entry.gradientSpacing()), entry.bold(),
+				entry.animationSpeed(), entry.animationSteps());
+			case ANIMATED_GRADIENT -> new NameRankPrefix(entry.label(), NameRankPrefix.Mode.ANIMATED_GRADIENT,
+				new NameColors(entry.leftColor(), entry.rightColor(), entry.gradientSpacing()), entry.bold(),
+				entry.animationSpeed(), entry.animationSteps());
+		};
 	}
 
 	private static UUID parseUuid(String raw) {
@@ -277,6 +295,23 @@ public final class PlayerCustomizationRegistry {
 	public record NameBadge(String label, int color, boolean bold) {
 	}
 
+	public record NameRankPrefix(String label, Mode mode, NameColors colors, boolean bold, Float animationSpeed, Integer animationSteps) {
+		public enum Mode {
+			SOLID,
+			GRADIENT,
+			ANIMATED_GRADIENT,
+			COPY_NAME
+		}
+
+		public boolean copyName() {
+			return mode == Mode.COPY_NAME;
+		}
+
+		public boolean animatedGradient() {
+			return mode == Mode.ANIMATED_GRADIENT && colors != null && colors.left != colors.right;
+		}
+	}
+
 	public record NameColors(int left, int right, float spacing) {
 		static NameColors solid(int color) {
 			return new NameColors(color, color, 1.0F);
@@ -285,7 +320,8 @@ public final class PlayerCustomizationRegistry {
 
 	public record PlayerCustomization(String username, String nickname, UUID uuid, List<String> aliases,
 			NameColors nameColors, List<Integer> nameLetterColors, boolean nameAnimated, Float nameAnimationSpeed,
-			Integer nameAnimationSteps, boolean nameBold, NameBadge nameBadge, String capeResourcePath, String capeUrl) {
+			Integer nameAnimationSteps, boolean nameBold, NameBadge nameBadge, NameRankPrefix nameRankPrefix,
+			String capeResourcePath, String capeUrl) {
 		public PlayerCustomization {
 			aliases = aliases == null ? List.of() : aliases.stream()
 				.filter(alias -> alias != null && !alias.isBlank())
@@ -303,12 +339,16 @@ public final class PlayerCustomizationRegistry {
 			return nameBadge != null;
 		}
 
+		public boolean hasRankPrefix() {
+			return nameRankPrefix != null && nameRankPrefix.label() != null && !nameRankPrefix.label().isBlank();
+		}
+
 		public boolean hasNickname() {
 			return nickname != null && !nickname.isBlank();
 		}
 
 		public boolean hasDecorations() {
-			return hasExplicitNameColors() || nameBold || hasBadge();
+			return hasExplicitNameColors() || nameBold || hasBadge() || hasRankPrefix();
 		}
 
 		public boolean hasNameCustomization() {
@@ -320,7 +360,7 @@ public final class PlayerCustomizationRegistry {
 		}
 
 		public boolean hasChatHeaderDecorations() {
-			return hasExplicitNameColors() || nameBold || hasNickname();
+			return hasExplicitNameColors() || nameBold || hasNickname() || hasRankPrefix();
 		}
 
 		public boolean hasCapeCustomization() {
@@ -328,7 +368,10 @@ public final class PlayerCustomizationRegistry {
 		}
 
 		public boolean animatedGradient() {
-			return nameAnimated && nameColors != null && nameColors.left != nameColors.right;
+			boolean nameAnimatedGradient = nameAnimated && nameColors != null && nameColors.left != nameColors.right;
+			boolean rankAnimatedGradient = nameRankPrefix != null && nameRankPrefix.animatedGradient();
+			boolean copyNameAnimated = hasRankPrefix() && nameRankPrefix.copyName() && nameAnimatedGradient;
+			return nameAnimatedGradient || rankAnimatedGradient || copyNameAnimated;
 		}
 
 		public String displayName(String matchedName) {
@@ -378,6 +421,7 @@ public final class PlayerCustomizationRegistry {
 				overlay.nameAnimationSteps != null ? overlay.nameAnimationSteps : nameAnimationSteps,
 				overlay.nameBold || nameBold,
 				overlay.nameBadge != null ? overlay.nameBadge : nameBadge,
+				overlay.nameRankPrefix != null ? overlay.nameRankPrefix : nameRankPrefix,
 				overlay.capeResourcePath != null ? overlay.capeResourcePath : capeResourcePath,
 				overlay.capeUrl != null ? overlay.capeUrl : capeUrl);
 		}
