@@ -23,8 +23,8 @@ public final class PlayerCustomizationRegistry {
 			PlayerCustomization customization = toCustomization(entry);
 			if (customization == null) continue;
 			String key = customization.uuid != null
-				? "uuid:" + customization.uuid.toString().toLowerCase(Locale.ROOT)
-				: "name:" + normalizedNameKey(customization.username);
+					? "uuid:" + customization.uuid.toString().toLowerCase(Locale.ROOT)
+					: "name:" + normalizedNameKey(customization.username);
 			merged.putIfAbsent(key, customization);
 		}
 		loadedEntries = List.copyOf(merged.values());
@@ -143,19 +143,19 @@ public final class PlayerCustomizationRegistry {
 		ComparatorByCandidateLength.sort(scoreboardGradientNameCandidates);
 
 		snapshot = new Snapshot(
-			snapshot.version + 1L,
-			List.copyOf(effectiveEntries),
-			Map.copyOf(byName),
-			Map.copyOf(byUuid),
-			List.copyOf(allNameCandidates),
-			List.copyOf(nameplateDisplayCandidates),
-			List.copyOf(chatHeaderNameCandidates),
-			List.copyOf(styledNameCandidates),
-			List.copyOf(gradientNameCandidates),
-			List.copyOf(scoreboardDisplayNameCandidates),
-			List.copyOf(scoreboardStyledNameCandidates),
-			List.copyOf(scoreboardGradientNameCandidates),
-			effectiveEntries.stream().anyMatch(PlayerCustomization::hasCapeCustomization));
+				snapshot.version + 1L,
+				List.copyOf(effectiveEntries),
+				Map.copyOf(byName),
+				Map.copyOf(byUuid),
+				List.copyOf(allNameCandidates),
+				List.copyOf(nameplateDisplayCandidates),
+				List.copyOf(chatHeaderNameCandidates),
+				List.copyOf(styledNameCandidates),
+				List.copyOf(gradientNameCandidates),
+				List.copyOf(scoreboardDisplayNameCandidates),
+				List.copyOf(scoreboardStyledNameCandidates),
+				List.copyOf(scoreboardGradientNameCandidates),
+				effectiveEntries.stream().anyMatch(PlayerCustomization::hasCapeCustomization));
 	}
 
 	private static List<NameCandidate> exactCandidates(PlayerCustomization customization, List<String> names) {
@@ -234,20 +234,38 @@ public final class PlayerCustomizationRegistry {
 		}
 
 		NameBadge badge = entry.badge() == null ? null : new NameBadge(entry.badge().label(), entry.badge().color(), entry.badge().bold());
+		NameRankPrefix rankPrefix = toRankPrefix(entry.rankPrefix());
 		return new PlayerCustomization(
-			username,
-			blankToNull(entry.nickname()),
-			uuid,
-			entry.aliases(),
-			colors,
-			letterColors,
-			animated,
-			entry.style() == null ? null : entry.style().animationSpeed(),
-			entry.style() == null ? null : entry.style().animationSteps(),
-			entry.style() != null && entry.style().bold(),
-			badge,
-			blankToNull(entry.capeResourcePath()),
-			blankToNull(entry.capeUrl()));
+				username,
+				blankToNull(entry.nickname()),
+				uuid,
+				entry.aliases(),
+				colors,
+				letterColors,
+				animated,
+				entry.style() == null ? null : entry.style().animationSpeed(),
+				entry.style() == null ? null : entry.style().animationSteps(),
+				entry.style() != null && entry.style().bold(),
+				badge,
+				rankPrefix,
+				blankToNull(entry.capeResourcePath()),
+				blankToNull(entry.capeUrl()));
+	}
+
+	private static NameRankPrefix toRankPrefix(CosmeticsContentManager.LoadedRankPrefix entry) {
+		if (entry == null) return null;
+		return switch (entry.mode()) {
+			case COPY_NAME -> new NameRankPrefix(entry.label(), NameRankPrefix.Mode.COPY_NAME, null, entry.bold(),
+					entry.animationSpeed(), entry.animationSteps());
+			case SOLID -> new NameRankPrefix(entry.label(), NameRankPrefix.Mode.SOLID, NameColors.solid(entry.leftColor()), entry.bold(),
+					entry.animationSpeed(), entry.animationSteps());
+			case GRADIENT -> new NameRankPrefix(entry.label(), NameRankPrefix.Mode.GRADIENT,
+					new NameColors(entry.leftColor(), entry.rightColor(), entry.gradientSpacing()), entry.bold(),
+					entry.animationSpeed(), entry.animationSteps());
+			case ANIMATED_GRADIENT -> new NameRankPrefix(entry.label(), NameRankPrefix.Mode.ANIMATED_GRADIENT,
+					new NameColors(entry.leftColor(), entry.rightColor(), entry.gradientSpacing()), entry.bold(),
+					entry.animationSpeed(), entry.animationSteps());
+		};
 	}
 
 	private static UUID parseUuid(String raw) {
@@ -277,6 +295,23 @@ public final class PlayerCustomizationRegistry {
 	public record NameBadge(String label, int color, boolean bold) {
 	}
 
+	public record NameRankPrefix(String label, Mode mode, NameColors colors, boolean bold, Float animationSpeed, Integer animationSteps) {
+		public enum Mode {
+			SOLID,
+			GRADIENT,
+			ANIMATED_GRADIENT,
+			COPY_NAME
+		}
+
+		public boolean copyName() {
+			return mode == Mode.COPY_NAME;
+		}
+
+		public boolean animatedGradient() {
+			return mode == Mode.ANIMATED_GRADIENT && colors != null && colors.left != colors.right;
+		}
+	}
+
 	public record NameColors(int left, int right, float spacing) {
 		static NameColors solid(int color) {
 			return new NameColors(color, color, 1.0F);
@@ -284,14 +319,15 @@ public final class PlayerCustomizationRegistry {
 	}
 
 	public record PlayerCustomization(String username, String nickname, UUID uuid, List<String> aliases,
-			NameColors nameColors, List<Integer> nameLetterColors, boolean nameAnimated, Float nameAnimationSpeed,
-			Integer nameAnimationSteps, boolean nameBold, NameBadge nameBadge, String capeResourcePath, String capeUrl) {
+	                                  NameColors nameColors, List<Integer> nameLetterColors, boolean nameAnimated, Float nameAnimationSpeed,
+	                                  Integer nameAnimationSteps, boolean nameBold, NameBadge nameBadge, NameRankPrefix nameRankPrefix,
+	                                  String capeResourcePath, String capeUrl) {
 		public PlayerCustomization {
 			aliases = aliases == null ? List.of() : aliases.stream()
-				.filter(alias -> alias != null && !alias.isBlank())
-				.map(String::trim)
-				.distinct()
-				.toList();
+					.filter(alias -> alias != null && !alias.isBlank())
+					.map(String::trim)
+					.distinct()
+					.toList();
 			nameLetterColors = nameLetterColors == null ? List.of() : List.copyOf(nameLetterColors);
 		}
 
@@ -303,12 +339,16 @@ public final class PlayerCustomizationRegistry {
 			return nameBadge != null;
 		}
 
+		public boolean hasRankPrefix() {
+			return nameRankPrefix != null && nameRankPrefix.label() != null && !nameRankPrefix.label().isBlank();
+		}
+
 		public boolean hasNickname() {
 			return nickname != null && !nickname.isBlank();
 		}
 
 		public boolean hasDecorations() {
-			return hasExplicitNameColors() || nameBold || hasBadge();
+			return hasExplicitNameColors() || nameBold || hasBadge() || hasRankPrefix();
 		}
 
 		public boolean hasNameCustomization() {
@@ -320,7 +360,7 @@ public final class PlayerCustomizationRegistry {
 		}
 
 		public boolean hasChatHeaderDecorations() {
-			return hasExplicitNameColors() || nameBold || hasNickname();
+			return hasExplicitNameColors() || nameBold || hasNickname() || hasRankPrefix();
 		}
 
 		public boolean hasCapeCustomization() {
@@ -328,7 +368,10 @@ public final class PlayerCustomizationRegistry {
 		}
 
 		public boolean animatedGradient() {
-			return nameAnimated && nameColors != null && nameColors.left != nameColors.right;
+			boolean nameAnimatedGradient = nameAnimated && nameColors != null && nameColors.left != nameColors.right;
+			boolean rankAnimatedGradient = nameRankPrefix != null && nameRankPrefix.animatedGradient();
+			boolean copyNameAnimated = hasRankPrefix() && nameRankPrefix.copyName() && nameAnimatedGradient;
+			return nameAnimatedGradient || rankAnimatedGradient || copyNameAnimated;
 		}
 
 		public String displayName(String matchedName) {
@@ -361,25 +404,26 @@ public final class PlayerCustomizationRegistry {
 			addName(mergedAliases, username);
 			addName(mergedAliases, overlay.username);
 			mergedAliases = mergedAliases.stream()
-				.map(String::trim)
-				.filter(alias -> !alias.isEmpty() && !alias.equalsIgnoreCase(resolvedUsername))
-				.distinct()
-				.toList();
+					.map(String::trim)
+					.filter(alias -> !alias.isEmpty() && !alias.equalsIgnoreCase(resolvedUsername))
+					.distinct()
+					.toList();
 
 			return new PlayerCustomization(
-				resolvedUsername,
-				resolvedNickname,
-				resolvedUuid,
-				mergedAliases,
-				overlay.nameColors != null ? overlay.nameColors : nameColors,
-				!overlay.nameLetterColors.isEmpty() ? overlay.nameLetterColors : nameLetterColors,
-				overlay.nameAnimated || nameAnimated,
-				overlay.nameAnimationSpeed != null ? overlay.nameAnimationSpeed : nameAnimationSpeed,
-				overlay.nameAnimationSteps != null ? overlay.nameAnimationSteps : nameAnimationSteps,
-				overlay.nameBold || nameBold,
-				overlay.nameBadge != null ? overlay.nameBadge : nameBadge,
-				overlay.capeResourcePath != null ? overlay.capeResourcePath : capeResourcePath,
-				overlay.capeUrl != null ? overlay.capeUrl : capeUrl);
+					resolvedUsername,
+					resolvedNickname,
+					resolvedUuid,
+					mergedAliases,
+					overlay.nameColors != null ? overlay.nameColors : nameColors,
+					!overlay.nameLetterColors.isEmpty() ? overlay.nameLetterColors : nameLetterColors,
+					overlay.nameAnimated || nameAnimated,
+					overlay.nameAnimationSpeed != null ? overlay.nameAnimationSpeed : nameAnimationSpeed,
+					overlay.nameAnimationSteps != null ? overlay.nameAnimationSteps : nameAnimationSteps,
+					overlay.nameBold || nameBold,
+					overlay.nameBadge != null ? overlay.nameBadge : nameBadge,
+					overlay.nameRankPrefix != null ? overlay.nameRankPrefix : nameRankPrefix,
+					overlay.capeResourcePath != null ? overlay.capeResourcePath : capeResourcePath,
+					overlay.capeUrl != null ? overlay.capeUrl : capeUrl);
 		}
 
 		private static void addName(List<String> names, String value) {
@@ -398,11 +442,11 @@ public final class PlayerCustomizationRegistry {
 	}
 
 	private record Snapshot(long version, List<PlayerCustomization> entries, Map<String, PlayerCustomization> byName,
-			Map<UUID, PlayerCustomization> byUuid, List<NameCandidate> allNameCandidates,
-			List<NameCandidate> nameplateDisplayCandidates, List<NameCandidate> chatHeaderNameCandidates,
-			List<NameCandidate> styledNameCandidates, List<NameCandidate> gradientNameCandidates,
-			List<NameCandidate> scoreboardDisplayNameCandidates, List<NameCandidate> scoreboardStyledNameCandidates,
-			List<NameCandidate> scoreboardGradientNameCandidates, boolean hasCapeCustomizations) {
+	                        Map<UUID, PlayerCustomization> byUuid, List<NameCandidate> allNameCandidates,
+	                        List<NameCandidate> nameplateDisplayCandidates, List<NameCandidate> chatHeaderNameCandidates,
+	                        List<NameCandidate> styledNameCandidates, List<NameCandidate> gradientNameCandidates,
+	                        List<NameCandidate> scoreboardDisplayNameCandidates, List<NameCandidate> scoreboardStyledNameCandidates,
+	                        List<NameCandidate> scoreboardGradientNameCandidates, boolean hasCapeCustomizations) {
 		static Snapshot empty() {
 			return new Snapshot(0L, List.of(), Map.of(), Map.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), false);
 		}
