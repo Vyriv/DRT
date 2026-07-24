@@ -26,6 +26,8 @@ public final class NameStyler {
 	private static final Pattern TRAILING_BRACKET_PREFIX = Pattern.compile("(\\[[^\\]]+])(\\s*)$");
 	/** SkyBlock tab/chat level tags like [435] or [1,234] — never treat these as Hypixel ranks. */
 	private static final Pattern SKYBLOCK_LEVEL_INNER = Pattern.compile("^\\d[\\d,]*$");
+	/** Dungeon class tags like [M]/[T]/[H]/[B]/[A] — keep next to the name. */
+	private static final Pattern DUNGEON_CLASS_INNER = Pattern.compile("^[MTHBA]$", Pattern.CASE_INSENSITIVE);
 
 	private static final NameStylerLruCache<ColorizedCacheKey, Component> COLORIZED_TEXT_CACHE = new NameStylerLruCache<>(TEXT_CACHE_LIMIT);
 	private static final NameStylerLruCache<AnimatedGradientCacheKey, AnimatedGradientStyle> ANIMATED_GRADIENT_CACHE = new NameStylerLruCache<>(512);
@@ -529,16 +531,16 @@ public final class NameStyler {
 		if (rankPrefix == null) return null;
 
 		String work = prefixPlain;
-		StringBuilder levelSuffix = new StringBuilder();
-		// Peel trailing SkyBlock level brackets so we keep them next to the name.
+		StringBuilder protectedSuffix = new StringBuilder();
+		// Peel trailing SkyBlock level / dungeon class brackets so we keep them next to the name.
 		while (true) {
-			Matcher levelMatcher = TRAILING_BRACKET_PREFIX.matcher(work);
-			if (!levelMatcher.find()) break;
-			String bracket = levelMatcher.group(1);
+			Matcher protectedMatcher = TRAILING_BRACKET_PREFIX.matcher(work);
+			if (!protectedMatcher.find()) break;
+			String bracket = protectedMatcher.group(1);
 			String inner = bracket.substring(1, bracket.length() - 1);
-			if (!isSkyblockLevelBracketInner(inner)) break;
-			levelSuffix.insert(0, levelMatcher.group(0));
-			work = work.substring(0, levelMatcher.start());
+			if (!isProtectedNonRankBracketInner(inner)) break;
+			protectedSuffix.insert(0, protectedMatcher.group(0));
+			work = work.substring(0, protectedMatcher.start());
 		}
 
 		Matcher rankMatcher = TRAILING_BRACKET_PREFIX.matcher(work);
@@ -546,25 +548,19 @@ public final class NameStyler {
 			String trailingWhitespace = rankMatcher.group(2);
 			return new RankPrefixReplacement(
 				work.substring(0, rankMatcher.start()),
-				rankPrefix.label() + trailingWhitespace + levelSuffix,
+				rankPrefix.label() + trailingWhitespace + protectedSuffix,
 				rankPrefix.copyName());
 		}
 
-		// No Hypixel rank tag — keep level(s) and insert the custom prefix before the name.
-		if (!levelSuffix.isEmpty()) {
-			String label = rankPrefix.label();
-			String replacement = label.endsWith(" ") ? label : label + " ";
-			return new RankPrefixReplacement(
-				work + levelSuffix,
-				replacement,
-				rankPrefix.copyName());
-		}
+		// No Hypixel rank tag — leave level/class tags alone; do not insert a custom prefix.
 		return null;
 	}
 
-	private static boolean isSkyblockLevelBracketInner(String inner) {
+	private static boolean isProtectedNonRankBracketInner(String inner) {
 		if (inner == null || inner.isBlank()) return false;
-		return SKYBLOCK_LEVEL_INNER.matcher(inner.trim()).matches();
+		String trimmed = inner.trim();
+		return SKYBLOCK_LEVEL_INNER.matcher(trimmed).matches()
+			|| DUNGEON_CLASS_INNER.matcher(trimmed).matches();
 	}
 
 	private static Component styledRankPrefix(String text, PlayerCustomizationRegistry.PlayerCustomization customization, Style baseStyle, double animationTime) {
@@ -804,7 +800,30 @@ public final class NameStyler {
 
 	private static int chatHeaderBoundary(String plain) {
 		int delimiter = plain.indexOf(": ");
-		return delimiter == -1 ? Integer.MAX_VALUE : delimiter;
+		if (delimiter == -1) return Integer.MAX_VALUE;
+		// Party/guild roster lines use labels like "Party Moderators: [MVP+] Name".
+		// That colon is not a chat-message delimiter — style the whole line so ranks replace.
+		if (isRosterOrListLabel(plain.substring(0, delimiter))) return Integer.MAX_VALUE;
+		return delimiter;
+	}
+
+	private static boolean isRosterOrListLabel(String beforeColon) {
+		if (beforeColon == null || beforeColon.isBlank()) return false;
+		String upper = beforeColon.trim().toUpperCase(Locale.ROOT);
+		return upper.startsWith("PARTY ")
+			|| upper.equals("PARTY LEADER")
+			|| upper.equals("PARTY MODERATORS")
+			|| upper.equals("PARTY MEMBERS")
+			|| upper.startsWith("GUILD ")
+			|| upper.equals("OFFICER")
+			|| upper.startsWith("OFFICER ")
+			|| upper.startsWith("ONLINE ")
+			|| upper.startsWith("TOTAL ")
+			|| upper.endsWith(" MEMBERS")
+			|| upper.endsWith(" MEMBER")
+			|| upper.equals("LEADER")
+			|| upper.equals("MEMBERS")
+			|| upper.equals("MODERATORS");
 	}
 
 	private static boolean hasPlainBadgeImmediatelyAfter(String text, int startIndex, String badgeText) {
