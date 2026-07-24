@@ -15,122 +15,121 @@ public final class ManualLootSuggestions {
 	private static final int SEARCH_LIMIT = 80;
 	private static final Pattern ENCHANTED_BOOK_PATTERN = Pattern.compile("^Enchanted Book \\((.+) ([IVX]+)\\)$", Pattern.CASE_INSENSITIVE);
 	private static final Set<String> ULTIMATE_ENCHANTS = Set.of(
-		"LEGION", "ULTIMATE_WISE", "LAST_STAND", "SOUL_EATER", "SWARM", "COMBO", "REND",
-		"NO_PAIN_NO_GAIN", "ONE_FOR_ALL", "CHIMERA", "BANK", "JERRY", "INFERNO",
-		"FATAL_TEMPO", "DUPLEX", "FLASH", "HABANERO_TACTICS"
+			"LEGION", "ULTIMATE_WISE", "LAST_STAND", "SOUL_EATER", "SWARM", "COMBO", "REND",
+			"NO_PAIN_NO_GAIN", "ONE_FOR_ALL", "CHIMERA", "BANK", "JERRY", "INFERNO",
+			"FATAL_TEMPO", "DUPLEX", "FLASH", "HABANERO_TACTICS"
 	);
 
 	private static final List<String> COMMON_DUNGEON_CHEST_REWARDS = List.of(
-		"Hot Potato Book",
-		"Fuming Potato Book",
-		"Recombobulator 3000",
-		"Necromancer's Brooch",
-		"Enchanted Book (Bank I)",
-		"Enchanted Book (Bank II)",
-		"Enchanted Book (Bank III)",
-		"Enchanted Book (Ultimate Jerry I)",
-		"Enchanted Book (Ultimate Jerry II)",
-		"Enchanted Book (Ultimate Jerry III)",
-		"Enchanted Book (Infinite Quiver VI)",
-		"Enchanted Book (Infinite Quiver VII)",
-		"Enchanted Book (Feather Falling VI)",
-		"Enchanted Book (Feather Falling VII)",
-		"Enchanted Book (Rejuvenate I)",
-		"Enchanted Book (Rejuvenate II)",
-		"Enchanted Book (Rejuvenate III)",
-		"Enchanted Book (Combo I)",
-		"Enchanted Book (Combo II)",
-		"Enchanted Book (No Pain No Gain I)",
-		"Enchanted Book (No Pain No Gain II)",
-		"Enchanted Book (Ultimate Wise I)",
-		"Enchanted Book (Ultimate Wise II)",
-		"Enchanted Book (Wisdom I)",
-		"Enchanted Book (Wisdom II)",
-		"Enchanted Book (Last Stand I)",
-		"Enchanted Book (Last Stand II)",
-		"Enchanted Book (Rend I)",
-		"Enchanted Book (Rend II)",
-		"Enchanted Book (Overload I)",
-		"Enchanted Book (Legion I)",
-		"Enchanted Book (Lethality VI)",
-		"Enchanted Book (Swarm I)",
-		"Enchanted Book (Soul Eater I)",
-		"Enchanted Book (One For All I)",
-		"Enchanted Book (Thunderlord VII)"
+			"Hot Potato Book",
+			"Fuming Potato Book",
+			"Recombobulator 3000",
+			"Necromancer's Brooch",
+			"Enchanted Book (Bank I)",
+			"Enchanted Book (Bank II)",
+			"Enchanted Book (Bank III)",
+			"Enchanted Book (Ultimate Jerry I)",
+			"Enchanted Book (Ultimate Jerry II)",
+			"Enchanted Book (Ultimate Jerry III)",
+			"Enchanted Book (Infinite Quiver VI)",
+			"Enchanted Book (Infinite Quiver VII)",
+			"Enchanted Book (Feather Falling VI)",
+			"Enchanted Book (Feather Falling VII)",
+			"Enchanted Book (Rejuvenate I)",
+			"Enchanted Book (Rejuvenate II)",
+			"Enchanted Book (Rejuvenate III)",
+			"Enchanted Book (Combo I)",
+			"Enchanted Book (Combo II)",
+			"Enchanted Book (No Pain No Gain I)",
+			"Enchanted Book (No Pain No Gain II)",
+			"Enchanted Book (Ultimate Wise I)",
+			"Enchanted Book (Ultimate Wise II)",
+			"Enchanted Book (Wisdom I)",
+			"Enchanted Book (Wisdom II)",
+			"Enchanted Book (Last Stand I)",
+			"Enchanted Book (Last Stand II)",
+			"Enchanted Book (Rend I)",
+			"Enchanted Book (Rend II)",
+			"Enchanted Book (Overload I)",
+			"Enchanted Book (Lethality VI)",
+			"Enchanted Book (Swarm I)",
+			"Enchanted Book (Soul Eater I)",
+			"Enchanted Book (One For All I)",
+			"Enchanted Book (Thunderlord VII)"
 	);
 
 	private static final List<String> F1_DROPS = List.of(
-		"Bonzo's Staff", "Bonzo's Mask", "Red Nose", "Balloon Snake"
+			"Bonzo's Staff", "Bonzo's Mask", "Red Nose", "Balloon Snake"
 	);
 	private static final List<String> F2_DROPS = List.of(
-		"Scarf's Studies", "Red Scarf", "Adaptive Blade", "Adaptive Belt"
+			"Scarf's Studies", "Red Scarf", "Adaptive Blade", "Adaptive Belt"
 	);
 	private static final List<String> F3_DROPS = List.of(
-		"Adaptive Helmet", "Adaptive Chestplate", "Adaptive Leggings", "Adaptive Boots",
-		"Adaptive Blade", "Adaptive Belt", "Suspicious Vial"
+			"Adaptive Helmet", "Adaptive Chestplate", "Adaptive Leggings", "Adaptive Boots",
+			"Adaptive Blade", "Adaptive Belt", "Suspicious Vial"
 	);
 	private static final List<String> F4_DROPS = List.of(
-		"Spirit Stone", "Spirit Pet", "Spirit Sword", "Spirit Shortbow",
-		"Spirit Boots", "Spirit Wing", "Spirit Bone"
+			"Spirit Stone", "Spirit Pet", "Spirit Sword", "Spirit Shortbow",
+			"Spirit Boots", "Spirit Wing", "Spirit Bone"
 	);
 	private static final List<String> F5_DROPS = List.of(
-		"Dark Orb", "Shadow Assassin Helmet", "Shadow Assassin Chestplate", "Shadow Assassin Leggings",
-		"Shadow Assassin Boots", "Shadow Assassin Cloak", "Livid Dagger", "Shadow Fury",
-		"Last Breath", "Warped Stone"
+			"Dark Orb", "Shadow Assassin Helmet", "Shadow Assassin Chestplate", "Shadow Assassin Leggings",
+			"Shadow Assassin Boots", "Shadow Assassin Cloak", "Livid Dagger", "Shadow Fury",
+			"Last Breath", "Warped Stone", "Enchanted Book (Legion I)"
 	);
 	private static final List<String> F6_DROPS = List.of(
-		"Giant Tooth", "Sadan's Brooch", "Necromancer Lord Helmet", "Necromancer Lord Chestplate",
-		"Necromancer Lord Leggings", "Necromancer Lord Boots", "Necromancer Sword", "Summoning Ring",
-		"Fel Skull", "Soulweaver Gloves", "Precursor Eye", "Giant's Sword"
+			"Giant Tooth", "Sadan's Brooch", "Necromancer Lord Helmet", "Necromancer Lord Chestplate",
+			"Necromancer Lord Leggings", "Necromancer Lord Boots", "Necromancer Sword", "Summoning Ring",
+			"Fel Skull", "Soulweaver Gloves", "Precursor Eye", "Giant's Sword"
 	);
 	private static final List<String> F7_DROPS = List.of(
-		"Wither Helmet", "Wither Chestplate", "Wither Leggings", "Wither Boots", "Wither Cloak Sword",
-		"Wither Blood", "Wither Catalyst", "Precursor Gear", "Necron's Handle", "Shadow Warp",
-		"Wither Shield", "Implosion", "Auto Recombobulator", "Storm the Fish", "Maxor the Fish",
-		"Goldor the Fish", "Dungeon Disc", "Clown Disc", "Watcher Disc", "Necron Disc"
+			"Wither Helmet", "Wither Chestplate", "Wither Leggings", "Wither Boots", "Wither Cloak Sword",
+			"Wither Blood", "Wither Catalyst", "Precursor Gear", "Necron's Handle", "Shadow Warp",
+			"Wither Shield", "Implosion", "Auto Recombobulator", "Storm the Fish", "Maxor the Fish",
+			"Goldor the Fish", "Dungeon Disc", "Clown Disc", "Watcher Disc", "Necron Disc"
 	);
 
 	private static final List<String> KUUDRA_SHARED = List.of(
-		"Aurora Helmet", "Aurora Chestplate", "Aurora Leggings", "Aurora Boots", "Aurora Staff",
-		"Crimson Helmet", "Crimson Chestplate", "Crimson Leggings", "Crimson Boots",
-		"Fervor Helmet", "Fervor Chestplate", "Fervor Leggings", "Fervor Boots",
-		"Hollow Helmet", "Hollow Chestplate", "Hollow Leggings", "Hollow Boots", "Hollow Wand",
-		"Terror Helmet", "Terror Chestplate", "Terror Leggings", "Terror Boots",
-		"Crimson Essence", "Kuudra Teeth", "Kraken Shard",
-		"Molten Necklace", "Molten Cloak", "Molten Belt", "Molten Bracelet",
-		"Burning Kuudra Core", "Mandraa", "Ananke Feather", "Tormentor", "Hellstorm Wand",
-		"Kuudra Mandible", "Tentacle Dye"
+			"Aurora Helmet", "Aurora Chestplate", "Aurora Leggings", "Aurora Boots", "Aurora Staff",
+			"Crimson Helmet", "Crimson Chestplate", "Crimson Leggings", "Crimson Boots",
+			"Fervor Helmet", "Fervor Chestplate", "Fervor Leggings", "Fervor Boots",
+			"Hollow Helmet", "Hollow Chestplate", "Hollow Leggings", "Hollow Boots", "Hollow Wand",
+			"Terror Helmet", "Terror Chestplate", "Terror Leggings", "Terror Boots",
+			"Crimson Essence", "Kuudra Teeth", "Kraken Shard",
+			"Molten Necklace", "Molten Cloak", "Molten Belt", "Molten Bracelet",
+			"Burning Kuudra Core", "Mandraa", "Ananke Feather", "Tormentor", "Hellstorm Wand",
+			"Kuudra Mandible", "Tentacle Dye"
 	);
 	private static final List<String> K1_EXTRAS = List.of(
-		"Enchanted Book (Ferocious Mana I)", "Enchanted Book (Hardened Mana I)",
-		"Enchanted Book (Mana Vampire I)", "Enchanted Book (Strong Mana I)"
+			"Enchanted Book (Ferocious Mana I)", "Enchanted Book (Hardened Mana I)",
+			"Enchanted Book (Mana Vampire I)", "Enchanted Book (Strong Mana I)"
 	);
 	private static final List<String> K2_EXTRAS = List.of(
-		"Molten Necklace", "Molten Cloak", "Molten Belt", "Molten Bracelet",
-		"Heavy Pearl", "Mandraa",
-		"Enchanted Book (Ferocious Mana II)", "Enchanted Book (Hardened Mana II)",
-		"Enchanted Book (Mana Vampire II)", "Enchanted Book (Strong Mana II)"
+			"Molten Necklace", "Molten Cloak", "Molten Belt", "Molten Bracelet",
+			"Heavy Pearl", "Mandraa",
+			"Enchanted Book (Ferocious Mana II)", "Enchanted Book (Hardened Mana II)",
+			"Enchanted Book (Mana Vampire II)", "Enchanted Book (Strong Mana II)"
 	);
 	private static final List<String> K3_EXTRAS = List.of(
-		"Wheel of Fate", "Burning Kuudra Core", "Tentacle Dye", "Enchanted Book (Inferno I)",
-		"Enchanted Book (Ferocious Mana III)", "Enchanted Book (Hardened Mana III)",
-		"Enchanted Book (Mana Vampire III)", "Enchanted Book (Strong Mana III)"
+			"Wheel of Fate", "Burning Kuudra Core", "Tentacle Dye", "Enchanted Book (Inferno I)",
+			"Enchanted Book (Ferocious Mana III)", "Enchanted Book (Hardened Mana III)",
+			"Enchanted Book (Mana Vampire III)", "Enchanted Book (Strong Mana III)"
 	);
 	private static final List<String> K4_EXTRAS = List.of(
-		"Kuudra Mandible", "Ananke Feather",
-		"Enchanted Book (Fatal Tempo I)",
-		"Enchanted Book (Ferocious Mana IV)", "Enchanted Book (Hardened Mana IV)",
-		"Enchanted Book (Mana Vampire IV)", "Enchanted Book (Strong Mana IV)"
+			"Kuudra Mandible", "Ananke Feather",
+			"Enchanted Book (Fatal Tempo I)",
+			"Enchanted Book (Ferocious Mana IV)", "Enchanted Book (Hardened Mana IV)",
+			"Enchanted Book (Mana Vampire IV)", "Enchanted Book (Strong Mana IV)"
 	);
 	private static final List<String> K5_EXTRAS = List.of(
-		"Hellstorm Wand", "Tormentor",
-		"Enchanted Book (Ferocious Mana V)", "Enchanted Book (Hardened Mana V)",
-		"Enchanted Book (Mana Vampire V)", "Enchanted Book (Strong Mana V)",
-		"Bezal Shard", "Magma Slug Shard", "Kada Knight Shard", "Wither Specter Shard",
-		"Matcho Shard", "Lava Flame Shard", "Fire Eel Shard", "Flare Shard",
-		"Barbarian Duke X Shard", "Hellwisp Shard", "XYZ Shard", "Taurus Shard",
-		"Lord Jawbus Shard", "Cinderbat Shard", "Daemon Shard", "Moltenfish Shard",
-		"Ananke Shard"
+			"Hellstorm Wand", "Tormentor",
+			"Enchanted Book (Ferocious Mana V)", "Enchanted Book (Hardened Mana V)",
+			"Enchanted Book (Mana Vampire V)", "Enchanted Book (Strong Mana V)",
+			"Bezal Shard", "Magma Slug Shard", "Kada Knight Shard", "Wither Specter Shard",
+			"Matcho Shard", "Lava Flame Shard", "Fire Eel Shard", "Flare Shard",
+			"Barbarian Duke X Shard", "Hellwisp Shard", "XYZ Shard", "Taurus Shard",
+			"Lord Jawbus Shard", "Cinderbat Shard", "Daemon Shard", "Moltenfish Shard",
+			"Ananke Shard"
 	);
 
 	private static final Map<String, String> DISPLAY_ALIASES = createDisplayAliases();
@@ -165,6 +164,8 @@ public final class ManualLootSuggestions {
 			String suggestionId = resolveItemId(suggestion);
 			if (!suggestionId.isEmpty() && suggestionId.equalsIgnoreCase(normalizedId)) return true;
 		}
+		// Floor-unique books (e.g. Legion on F5/M5) must not pass the generic book allowlist.
+		if (isFloorUniqueDropElsewhere(floor, rawName, itemId)) return false;
 		if (normalizedName.startsWith("ENCHANTED BOOK") || normalizedId.startsWith("ENCHANTMENT_")) return true;
 		if (normalizedName.contains("SHARD") || normalizedId.contains("SHARD")) return true;
 		return false;
@@ -178,6 +179,11 @@ public final class ManualLootSuggestions {
 		for (DungeonFloor floor : DungeonFloor.values()) {
 			if (floor == DungeonFloor.UNKNOWN || floor == currentFloor) continue;
 			if (floor.isKuudra() != currentFloor.isKuudra()) continue;
+			// F5 and M5 share the same unique pool — do not treat that as "elsewhere".
+			if (floor.isCatacombs() && currentFloor.isCatacombs()
+					&& floor.floorNumber() == currentFloor.floorNumber()) {
+				continue;
+			}
 			List<String> uniques = floorUniqueDrops(floor);
 			for (String unique : uniques) {
 				if (normalizeName(unique).equals(normalizedName)) return true;
@@ -315,10 +321,10 @@ public final class ManualLootSuggestions {
 	private static String normalizeEnchantName(String enchantName) {
 		String normalized = enchantName.replaceFirst("(?i)^Ultimate\\s+", "");
 		return normalized
-			.replaceAll("[^A-Za-z0-9 ]", " ")
-			.trim()
-			.replaceAll("\\s+", "_")
-			.toUpperCase(Locale.ROOT);
+				.replaceAll("[^A-Za-z0-9 ]", " ")
+				.trim()
+				.replaceAll("\\s+", "_")
+				.toUpperCase(Locale.ROOT);
 	}
 
 	private static int romanToInt(String roman) {
@@ -343,11 +349,11 @@ public final class ManualLootSuggestions {
 
 	private static String generatedItemId(String name) {
 		return name.trim()
-			.replace("'", "")
-			.replaceAll("[^A-Za-z0-9 ]", " ")
-			.trim()
-			.replaceAll("\\s+", "_")
-			.toUpperCase(Locale.ROOT);
+				.replace("'", "")
+				.replaceAll("[^A-Za-z0-9 ]", " ")
+				.trim()
+				.replaceAll("\\s+", "_")
+				.toUpperCase(Locale.ROOT);
 	}
 
 	private static Map<String, String> createDisplayAliases() {
@@ -411,9 +417,9 @@ public final class ManualLootSuggestions {
 			aliases.put("MASTER SKULL - TIER " + tier, "MASTER_SKULL_TIER_" + tier);
 		}
 		String[] attributeShards = {
-			"MAGMA SLUG", "KADA KNIGHT", "WITHER SPECTER", "MATCHO", "LAVA FLAME", "FIRE EEL", "FLARE",
-			"BARBARIAN DUKE X", "HELLWISP", "XYZ", "TAURUS", "LORD JAWBUS", "CINDERBAT", "DAEMON",
-			"MOLTENFISH", "ANANKE"
+				"MAGMA SLUG", "KADA KNIGHT", "WITHER SPECTER", "MATCHO", "LAVA FLAME", "FIRE EEL", "FLARE",
+				"BARBARIAN DUKE X", "HELLWISP", "XYZ", "TAURUS", "LORD JAWBUS", "CINDERBAT", "DAEMON",
+				"MOLTENFISH", "ANANKE"
 		};
 		for (String shard : attributeShards) {
 			aliases.put(shard + " SHARD", "ATTRIBUTE_SHARD_" + shard.replace(' ', '_'));
