@@ -23,7 +23,9 @@ public final class NameStyler {
 	private static final float ANIMATED_GRADIENT_SPEED = 0.04F;
 	private static final int LARGE_LOBBY_ANIMATION_THRESHOLD = 40;
 	private static final float THROTTLED_ANIMATION_FPS = 15.0F;
-	private static final Pattern TRAILING_RANK_PREFIX = Pattern.compile("\\[[^\\]]+]\\s*$");
+	private static final Pattern TRAILING_BRACKET_PREFIX = Pattern.compile("(\\[[^\\]]+])(\\s*)$");
+	/** SkyBlock tab/chat level tags like [435] or [1,234] — never treat these as Hypixel ranks. */
+	private static final Pattern SKYBLOCK_LEVEL_INNER = Pattern.compile("^\\d[\\d,]*$");
 
 	private static final NameStylerLruCache<ColorizedCacheKey, Component> COLORIZED_TEXT_CACHE = new NameStylerLruCache<>(TEXT_CACHE_LIMIT);
 	private static final NameStylerLruCache<AnimatedGradientCacheKey, AnimatedGradientStyle> ANIMATED_GRADIENT_CACHE = new NameStylerLruCache<>(512);
@@ -523,17 +525,46 @@ public final class NameStyler {
 
 	private static RankPrefixReplacement resolveRankPrefixReplacement(String prefixPlain, PlayerCustomizationRegistry.PlayerCustomization customization) {
 		if (!customization.hasRankPrefix() || prefixPlain == null || prefixPlain.isEmpty()) return null;
-		Matcher matcher = TRAILING_RANK_PREFIX.matcher(prefixPlain);
-		if (!matcher.find()) return null;
-
-		String matched = matcher.group();
-		int bracketEnd = matched.indexOf(']') + 1;
-		String trailingWhitespace = bracketEnd >= 0 && bracketEnd <= matched.length() ? matched.substring(bracketEnd) : "";
 		PlayerCustomizationRegistry.NameRankPrefix rankPrefix = customization.nameRankPrefix();
-		return new RankPrefixReplacement(
-			prefixPlain.substring(0, matcher.start()),
-			rankPrefix.label() + trailingWhitespace,
-			rankPrefix.copyName());
+		if (rankPrefix == null) return null;
+
+		String work = prefixPlain;
+		StringBuilder levelSuffix = new StringBuilder();
+		// Peel trailing SkyBlock level brackets so we keep them next to the name.
+		while (true) {
+			Matcher levelMatcher = TRAILING_BRACKET_PREFIX.matcher(work);
+			if (!levelMatcher.find()) break;
+			String bracket = levelMatcher.group(1);
+			String inner = bracket.substring(1, bracket.length() - 1);
+			if (!isSkyblockLevelBracketInner(inner)) break;
+			levelSuffix.insert(0, levelMatcher.group(0));
+			work = work.substring(0, levelMatcher.start());
+		}
+
+		Matcher rankMatcher = TRAILING_BRACKET_PREFIX.matcher(work);
+		if (rankMatcher.find()) {
+			String trailingWhitespace = rankMatcher.group(2);
+			return new RankPrefixReplacement(
+				work.substring(0, rankMatcher.start()),
+				rankPrefix.label() + trailingWhitespace + levelSuffix,
+				rankPrefix.copyName());
+		}
+
+		// No Hypixel rank tag — keep level(s) and insert the custom prefix before the name.
+		if (!levelSuffix.isEmpty()) {
+			String label = rankPrefix.label();
+			String replacement = label.endsWith(" ") ? label : label + " ";
+			return new RankPrefixReplacement(
+				work + levelSuffix,
+				replacement,
+				rankPrefix.copyName());
+		}
+		return null;
+	}
+
+	private static boolean isSkyblockLevelBracketInner(String inner) {
+		if (inner == null || inner.isBlank()) return false;
+		return SKYBLOCK_LEVEL_INNER.matcher(inner.trim()).matches();
 	}
 
 	private static Component styledRankPrefix(String text, PlayerCustomizationRegistry.PlayerCustomization customization, Style baseStyle, double animationTime) {
