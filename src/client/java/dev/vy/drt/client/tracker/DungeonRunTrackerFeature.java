@@ -73,6 +73,10 @@ public final class DungeonRunTrackerFeature {
 	private static final Pattern RECEIVED_PATTERN = Pattern.compile("^YOU RECEIVED\\s+(.+?)(?:\\s*[xX]\\s*(\\d+))?!?$");
 	private static final Pattern PLUS_PATTERN = Pattern.compile("^\\+\\s*(.+?)(?:\\s*[xX]\\s*(\\d+))?$");
 	private static final Pattern TRAILING_QUANTITY_PATTERN = Pattern.compile("^(.+?)\\s*[xX]\\s*(\\d+)$");
+	/** Chest loot rare line, e.g. "RARE REWARD! Recombobulator 3000" (not party announcements). */
+	private static final Pattern RARE_REWARD_ITEM_PATTERN = Pattern.compile(
+		"^(?:RARE REWARD|CRAZY RARE(?: REWARD)?|INSANE REWARD|PRAY RNGESUS)!?\\s+(.+)$",
+		Pattern.CASE_INSENSITIVE);
 	private static final Pattern COIN_PATTERN = Pattern.compile("([-+]?\\d[\\d,]*(?:\\.\\d+)?)\\s*([kmb])?(?:\\s*Coins)?", Pattern.CASE_INSENSITIVE);
 	private static final Pattern QUANTITY_PREFIX_PATTERN = Pattern.compile("^(\\d+)x?\\s+(.+)$");
 	private static final Pattern QUANTITY_SUFFIX_PATTERN = Pattern.compile("^(.+?)\\s+x(\\d+)$", Pattern.CASE_INSENSITIVE);
@@ -2704,7 +2708,10 @@ public final class DungeonRunTrackerFeature {
 	private boolean isCatacombsRewardChest(String normalizedTitle) {
 		if (normalizedTitle == null || normalizedTitle.isBlank()) return false;
 		if (!REWARD_CHEST_TITLES.contains(normalizedTitle)) return false;
-		return !normalizedTitle.equals("FREE CHEST") && !normalizedTitle.equals("PAID CHEST") && !isCurrentFloorKuudra();
+		// Title alone decides this — Wood/Gold/… are always Catacombs. Do not gate on
+		// isCurrentFloorKuudra(): sticky Kuudra currentFloor after leaving Hollow hid all
+		// Croesus rows and skipped dungeon-key billing.
+		return !normalizedTitle.equals("FREE CHEST") && !normalizedTitle.equals("PAID CHEST");
 	}
 
 	private boolean isKuudraPaidRewardChest(String normalizedTitle) {
@@ -3672,11 +3679,15 @@ public final class DungeonRunTrackerFeature {
 			boolean sameChest = pendingLootChestAssigned
 				&& chatChestTitle != null
 				&& toDisplayChestTitle(chatChestTitle).equalsIgnoreCase(pendingLootChestTitle);
-			if (sameChest) {
+			if (sameChest && pendingLootSeededFromGui) {
 				// Same open as the GUI capture — chat wins. Replace GUI loot, do not create a second record.
 				pendingLootEntries.clear();
 				pendingLootSeededFromGui = false;
 				recentLootMessages.clear();
+			} else if (sameChest && !pendingLootEntries.isEmpty()) {
+				// Second CHEST REWARDS for the same tier (multi-run Croesus) — save the previous open.
+				flushPendingLootRecord(true);
+				assignOpenedChest(cleaned);
 			} else if (!pendingLootEntries.isEmpty()) {
 				flushPendingLootRecord(true);
 				assignOpenedChest(cleaned);
@@ -3704,8 +3715,9 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private boolean isLootHeader(String cleaned) {
-		return cleaned.contains("DUNGEON CHEST")
-			|| cleaned.contains("CHEST REWARDS")
+		// Real headers are "OBSIDIAN CHEST REWARDS" / similar. Do not match bare
+		// "DUNGEON CHEST" — that false-positives on key-requirement chat and flushes mid-loot.
+		return cleaned.contains("CHEST REWARDS")
 			|| cleaned.contains("REWARD CHEST");
 	}
 
@@ -3739,6 +3751,7 @@ public final class DungeonRunTrackerFeature {
 		if (rawText == null || rawText.isBlank()) return null;
 		String trimmedRaw = rawText.trim();
 		if (trimmedRaw.isEmpty()) return null;
+		if (looksLikeNonLootLine(cleaned) || looksLikeNonLootLine(trimmedRaw)) return null;
 
 		Matcher essenceMatcher = ESSENCE_PATTERN.matcher(cleaned);
 		if (essenceMatcher.matches()) {
@@ -3750,11 +3763,17 @@ public final class DungeonRunTrackerFeature {
 		String candidateName = null;
 		int quantity = 1;
 
+		Matcher rareRewardMatcher = RARE_REWARD_ITEM_PATTERN.matcher(trimmedRaw);
+		if (!rareRewardMatcher.matches()) rareRewardMatcher = RARE_REWARD_ITEM_PATTERN.matcher(cleaned);
+		if (rareRewardMatcher.matches()) {
+			candidateName = rareRewardMatcher.group(1).trim();
+		}
+
 		Matcher receivedMatcher = RECEIVED_PATTERN.matcher(trimmedRaw);
-		if (receivedMatcher.matches()) {
+		if (candidateName == null && receivedMatcher.matches()) {
 			candidateName = receivedMatcher.group(1);
 			quantity = parsePositiveInt(receivedMatcher.group(2), 1);
-		} else {
+		} else if (candidateName == null) {
 			Matcher plusMatcher = PLUS_PATTERN.matcher(trimmedRaw);
 			if (plusMatcher.matches()) {
 				candidateName = plusMatcher.group(1);
@@ -4196,11 +4215,9 @@ public final class DungeonRunTrackerFeature {
 			|| normalized.contains("[BAZAAR]") || normalized.contains("BAZAAR")
 			|| normalized.contains("SOLD ") || normalized.contains("BOUGHT ")
 			|| normalized.contains("COINS!") || normalized.contains("RNG METER")
-			// Party/self rare-drop chat, e.g. "Player found a Recombobulator 3000 in their Obsidian Chest"
+			// Party rare-drop announcements only (not chest lines like "RARE REWARD! Recombobulator 3000")
 			|| normalized.contains("FOUND A ") || normalized.contains("FOUND AN ")
-			|| normalized.contains("IN THEIR ") || normalized.contains("IN HIS ") || normalized.contains("IN HER ")
-			|| normalized.contains("RARE REWARD") || normalized.contains("CRAZY RARE")
-			|| normalized.contains("INSANE REWARD") || normalized.contains("PRAY RNGESUS");
+			|| normalized.contains("IN THEIR ") || normalized.contains("IN HIS ") || normalized.contains("IN HER ");
 	}
 
 	private boolean shouldIgnoreLootName(String value) {
