@@ -25,8 +25,8 @@ public final class CosmeticsContentManager {
 	private static final String PEOPLE_RESOURCE_PATH = "drt/content/people.json";
 	private static final String REMOTE_PEOPLE_URL = "https://plain-dawn-a5d2.ryaneagers2015.workers.dev/cosmetics/people";
 	private static final HttpClient HTTP = HttpClient.newBuilder()
-		.connectTimeout(Duration.ofSeconds(5))
-		.build();
+			.connectTimeout(Duration.ofSeconds(5))
+			.build();
 	private static final AtomicBoolean INITIALIZED = new AtomicBoolean();
 
 	private static volatile PeopleContent bundledPeopleContent = new PeopleContent();
@@ -51,8 +51,8 @@ public final class CosmeticsContentManager {
 				CapeTextureManager.invalidateRemoteCapes();
 				int totalEntries = remotePeopleContent.players.size() + remotePeopleContent.awesomePeople.size();
 				DungeonRunTracker.LOGGER.info("[DRT] Loaded {} remote cosmetic player entr{} from startup refresh",
-					totalEntries,
-					totalEntries == 1 ? "y" : "ies");
+						totalEntries,
+						totalEntries == 1 ? "y" : "ies");
 			} catch (Exception e) {
 				DungeonRunTracker.LOGGER.warn("[DRT] Failed to fetch startup cosmetic player data: {}", e.getMessage());
 			}
@@ -61,9 +61,9 @@ public final class CosmeticsContentManager {
 
 	public static synchronized List<LoadedPlayerCustomization> playerCustomizations() {
 		return mergedCustomizationEntries().stream()
-			.map(CosmeticsContentManager::loadPlayerCustomization)
-			.filter(customization -> customization != null)
-			.toList();
+				.map(CosmeticsContentManager::loadPlayerCustomization)
+				.filter(customization -> customization != null)
+				.toList();
 	}
 
 	private static PeopleContent loadBundledPeople() {
@@ -81,13 +81,13 @@ public final class CosmeticsContentManager {
 
 	private static PeopleContent fetchRemotePeopleContent() throws Exception {
 		HttpRequest request = HttpRequest.newBuilder()
-			.uri(cacheBustedUri())
-			.timeout(Duration.ofSeconds(10))
-			.header("accept", "application/json,*/*")
-			.header("cache-control", "no-cache, no-store, max-age=0")
-			.header("pragma", "no-cache")
-			.GET()
-			.build();
+				.uri(cacheBustedUri())
+				.timeout(Duration.ofSeconds(10))
+				.header("accept", "application/json,*/*")
+				.header("cache-control", "no-cache, no-store, max-age=0")
+				.header("pragma", "no-cache")
+				.GET()
+				.build();
 		HttpResponse<String> response = HTTP.send(request, HttpResponse.BodyHandlers.ofString());
 		if (response.statusCode() != 200) {
 			throw new IllegalStateException("unexpected HTTP " + response.statusCode());
@@ -125,15 +125,17 @@ public final class CosmeticsContentManager {
 		if (entry == null) return null;
 		LoadedNameStyle nameStyle = loadNameStyle(entry.style);
 		LoadedBadge badge = entry.badge == null ? null : loadBadge(entry.badge);
+		LoadedRankPrefix rankPrefix = entry.rankPrefix == null ? null : loadRankPrefix(entry.rankPrefix);
 		return new LoadedPlayerCustomization(
-			entry.username,
-			blankToNull(entry.nickname),
-			blankToNull(entry.uuid),
-			entry.aliases == null ? List.of() : entry.aliases,
-			nameStyle,
-			badge,
-			blankToNull(entry.capeResourcePath),
-			blankToNull(entry.capeUrl));
+				entry.username,
+				blankToNull(entry.nickname),
+				blankToNull(entry.uuid),
+				entry.aliases == null ? List.of() : entry.aliases,
+				nameStyle,
+				badge,
+				rankPrefix,
+				blankToNull(entry.capeResourcePath),
+				blankToNull(entry.capeUrl));
 	}
 
 	private static LoadedNameStyle loadNameStyle(NameStyleFile style) {
@@ -143,17 +145,17 @@ public final class CosmeticsContentManager {
 		Float animationSpeed = style.animationSpeed != null && style.animationSpeed > 0.0F ? style.animationSpeed : null;
 		Integer animationSteps = style.animationSteps == null ? null : Math.max(2, style.animationSteps);
 		float gradientSpacing = style.gradientFrequency != null ? style.gradientFrequency
-			: style.gradientSpacing != null ? style.gradientSpacing : 1.0F;
+				: style.gradientSpacing != null ? style.gradientSpacing : 1.0F;
 		gradientSpacing = Math.max(1.0F, Math.min(10.0F, gradientSpacing));
 		boolean animated = Boolean.TRUE.equals(style.animated);
 
 		return switch (normalizedMode) {
 			case "inherit_rank", "inherit-rank", "inherit" -> new LoadedNameStyle(LoadedNameStyle.Mode.INHERIT_RANK, 0xFFFFFF, 0xFFFFFF,
-				style.bold, List.of(), animationSpeed, animationSteps, gradientSpacing);
+					style.bold, List.of(), animationSpeed, animationSteps, gradientSpacing);
 			case "solid" -> {
 				Integer color = parseColor(firstNonBlank(style.color, style.leftColor, style.rightColor));
 				yield color == null ? null : new LoadedNameStyle(LoadedNameStyle.Mode.SOLID, color, color, style.bold, List.of(), animationSpeed,
-					animationSteps, gradientSpacing);
+						animationSteps, gradientSpacing);
 			}
 			case "gradient" -> {
 				Integer left = parseColor(firstNonBlank(style.leftColor, style.color));
@@ -167,15 +169,15 @@ public final class CosmeticsContentManager {
 				Integer right = parseColor(firstNonBlank(style.rightColor, style.color));
 				if (left == null || right == null) yield null;
 				yield new LoadedNameStyle(LoadedNameStyle.Mode.ANIMATED_GRADIENT, left, right, style.bold, List.of(), animationSpeed, animationSteps,
-					gradientSpacing);
+						gradientSpacing);
 			}
 			case "multicolor" -> {
 				List<Integer> colors = style.letterColors == null ? List.of() : style.letterColors.stream()
-					.map(CosmeticsContentManager::parseColor)
-					.filter(color -> color != null)
-					.toList();
+						.map(CosmeticsContentManager::parseColor)
+						.filter(color -> color != null)
+						.toList();
 				yield colors.isEmpty() ? null : new LoadedNameStyle(LoadedNameStyle.Mode.MULTICOLOR, colors.get(0), colors.get(colors.size() - 1),
-					style.bold, colors, animationSpeed, animationSteps, gradientSpacing);
+						style.bold, colors, animationSpeed, animationSteps, gradientSpacing);
 			}
 			default -> null;
 		};
@@ -187,14 +189,52 @@ public final class CosmeticsContentManager {
 		return text == null || color == null ? null : new LoadedBadge(text, color, badge.bold);
 	}
 
+	private static LoadedRankPrefix loadRankPrefix(RankPrefixFile rankPrefix) {
+		String text = blankToNull(rankPrefix.text);
+		if (text == null) return null;
+
+		String normalizedMode = rankPrefix.mode == null ? "solid" : rankPrefix.mode.trim().toLowerCase(Locale.ROOT);
+		Float animationSpeed = rankPrefix.animationSpeed != null && rankPrefix.animationSpeed > 0.0F ? rankPrefix.animationSpeed : null;
+		Integer animationSteps = rankPrefix.animationSteps == null ? null : Math.max(2, rankPrefix.animationSteps);
+		float gradientSpacing = rankPrefix.gradientFrequency != null ? rankPrefix.gradientFrequency
+				: rankPrefix.gradientSpacing != null ? rankPrefix.gradientSpacing : 1.0F;
+		gradientSpacing = Math.max(1.0F, Math.min(10.0F, gradientSpacing));
+		boolean animated = Boolean.TRUE.equals(rankPrefix.animated);
+
+		return switch (normalizedMode) {
+			case "copy_name", "copy-name", "copyname" ->
+					new LoadedRankPrefix(LoadedRankPrefix.Mode.COPY_NAME, text, 0xFFFFFF, 0xFFFFFF, rankPrefix.bold, animationSpeed, animationSteps, gradientSpacing);
+			case "gradient" -> {
+				Integer left = parseColor(firstNonBlank(rankPrefix.leftColor, rankPrefix.color));
+				Integer right = parseColor(firstNonBlank(rankPrefix.rightColor, rankPrefix.color));
+				if (left == null || right == null) yield null;
+				LoadedRankPrefix.Mode mode = animated || animationSpeed != null
+						? LoadedRankPrefix.Mode.ANIMATED_GRADIENT
+						: LoadedRankPrefix.Mode.GRADIENT;
+				yield new LoadedRankPrefix(mode, text, left, right, rankPrefix.bold, animationSpeed, animationSteps, gradientSpacing);
+			}
+			case "animated_gradient", "animated-gradient", "animatedgradient" -> {
+				Integer left = parseColor(firstNonBlank(rankPrefix.leftColor, rankPrefix.color));
+				Integer right = parseColor(firstNonBlank(rankPrefix.rightColor, rankPrefix.color));
+				if (left == null || right == null) yield null;
+				yield new LoadedRankPrefix(LoadedRankPrefix.Mode.ANIMATED_GRADIENT, text, left, right, rankPrefix.bold, animationSpeed, animationSteps, gradientSpacing);
+			}
+			case "solid" -> {
+				Integer color = parseColor(firstNonBlank(rankPrefix.color, rankPrefix.leftColor, rankPrefix.rightColor));
+				yield color == null ? null : new LoadedRankPrefix(LoadedRankPrefix.Mode.SOLID, text, color, color, rankPrefix.bold, animationSpeed, animationSteps, gradientSpacing);
+			}
+			default -> null;
+		};
+	}
+
 	private static synchronized List<PlayerCustomizationFile> mergedCustomizationEntries() {
 		List<String> orderedKeys = new ArrayList<>();
 		Map<String, PlayerCustomizationFile> mergedEntries = new LinkedHashMap<>();
 		List<List<PlayerCustomizationFile>> sections = List.of(
-			bundledPeopleContent.players,
-			bundledPeopleContent.awesomePeople,
-			remotePeopleContent.players,
-			remotePeopleContent.awesomePeople);
+				bundledPeopleContent.players,
+				bundledPeopleContent.awesomePeople,
+				remotePeopleContent.players,
+				remotePeopleContent.awesomePeople);
 
 		for (List<PlayerCustomizationFile> section : sections) {
 			for (PlayerCustomizationFile entry : section) {
@@ -208,9 +248,9 @@ public final class CosmeticsContentManager {
 		}
 
 		return orderedKeys.stream()
-			.map(mergedEntries::get)
-			.filter(entry -> entry != null)
-			.toList();
+				.map(mergedEntries::get)
+				.filter(entry -> entry != null)
+				.toList();
 	}
 
 	private static String existingCustomizationKey(PlayerCustomizationFile entry, Map<String, PlayerCustomizationFile> mergedEntries) {
@@ -261,11 +301,11 @@ public final class CosmeticsContentManager {
 	}
 
 	public record LoadedPlayerCustomization(String username, String nickname, String uuid, List<String> aliases,
-			LoadedNameStyle style, LoadedBadge badge, String capeResourcePath, String capeUrl) {
+	                                        LoadedNameStyle style, LoadedBadge badge, LoadedRankPrefix rankPrefix, String capeResourcePath, String capeUrl) {
 	}
 
 	public record LoadedNameStyle(Mode mode, int leftColor, int rightColor, boolean bold, List<Integer> letterColors,
-			Float animationSpeed, Integer animationSteps, float gradientSpacing) {
+	                              Float animationSpeed, Integer animationSteps, float gradientSpacing) {
 		public enum Mode {
 			INHERIT_RANK,
 			SOLID,
@@ -276,6 +316,16 @@ public final class CosmeticsContentManager {
 	}
 
 	public record LoadedBadge(String label, int color, boolean bold) {
+	}
+
+	public record LoadedRankPrefix(Mode mode, String label, int leftColor, int rightColor, boolean bold,
+	                               Float animationSpeed, Integer animationSteps, float gradientSpacing) {
+		public enum Mode {
+			SOLID,
+			GRADIENT,
+			ANIMATED_GRADIENT,
+			COPY_NAME
+		}
 	}
 
 	private static final class PeopleContent {
@@ -291,9 +341,9 @@ public final class CosmeticsContentManager {
 		private static List<PlayerCustomizationFile> normalizedEntries(List<PlayerCustomizationFile> entries) {
 			if (entries == null) return new ArrayList<>();
 			return entries.stream()
-				.map(PlayerCustomizationFile::normalized)
-				.filter(entry -> entry != null)
-				.toList();
+					.map(PlayerCustomizationFile::normalized)
+					.filter(entry -> entry != null)
+					.toList();
 		}
 	}
 
@@ -306,6 +356,7 @@ public final class CosmeticsContentManager {
 		String creditRole;
 		NameStyleFile style;
 		BadgeFile badge;
+		RankPrefixFile rankPrefix;
 		String capeResourcePath;
 		String capeUrl;
 		Float scale;
@@ -321,10 +372,10 @@ public final class CosmeticsContentManager {
 			uuid = blankToNull(uuid);
 			if (username.isEmpty() && uuid == null) return null;
 			aliases = aliases == null ? new ArrayList<>() : aliases.stream()
-				.map(String::trim)
-				.filter(alias -> !alias.isEmpty() && !alias.equalsIgnoreCase(username))
-				.distinct()
-				.toList();
+					.map(String::trim)
+					.filter(alias -> !alias.isEmpty() && !alias.equalsIgnoreCase(username))
+					.distinct()
+					.toList();
 			nickname = blankToNull(nickname);
 			creditLabel = blankToNull(creditLabel);
 			creditRole = blankToNull(creditRole);
@@ -332,6 +383,7 @@ public final class CosmeticsContentManager {
 			capeUrl = blankToNull(capeUrl);
 			if (style != null) style.normalize();
 			if (badge != null) badge.normalize();
+			if (rankPrefix != null) rankPrefix.normalize();
 			return this;
 		}
 
@@ -344,14 +396,15 @@ public final class CosmeticsContentManager {
 			merged.aliases.addAll(aliases == null ? List.of() : aliases);
 			merged.aliases.addAll(overlay.aliases == null ? List.of() : overlay.aliases);
 			merged.aliases = merged.aliases.stream()
-				.map(String::trim)
-				.filter(alias -> !alias.isEmpty() && !alias.equalsIgnoreCase(merged.username))
-				.distinct()
-				.toList();
+					.map(String::trim)
+					.filter(alias -> !alias.isEmpty() && !alias.equalsIgnoreCase(merged.username))
+					.distinct()
+					.toList();
 			merged.creditLabel = overlay.creditLabel != null ? overlay.creditLabel : creditLabel;
 			merged.creditRole = overlay.creditRole != null ? overlay.creditRole : creditRole;
 			merged.style = overlay.style != null ? overlay.style : style;
 			merged.badge = overlay.badge != null ? overlay.badge : badge;
+			merged.rankPrefix = overlay.rankPrefix != null ? overlay.rankPrefix : rankPrefix;
 			merged.capeResourcePath = overlay.capeResourcePath != null ? overlay.capeResourcePath : capeResourcePath;
 			merged.capeUrl = overlay.capeUrl != null ? overlay.capeUrl : capeUrl;
 			merged.scale = overlay.scale != null ? overlay.scale : scale;
@@ -385,9 +438,9 @@ public final class CosmeticsContentManager {
 			rightColor = blankToNull(rightColor);
 			if (letterColors != null) {
 				letterColors = letterColors.stream()
-					.map(String::trim)
-					.filter(value -> !value.isEmpty())
-					.toList();
+						.map(String::trim)
+						.filter(value -> !value.isEmpty())
+						.toList();
 			}
 		}
 	}
@@ -400,6 +453,28 @@ public final class CosmeticsContentManager {
 		void normalize() {
 			text = blankToNull(text);
 			color = blankToNull(color);
+		}
+	}
+
+	private static final class RankPrefixFile {
+		String text;
+		String mode = "solid";
+		String color;
+		String leftColor;
+		String rightColor;
+		Boolean animated;
+		Float animationSpeed;
+		Integer animationSteps;
+		Float gradientSpacing;
+		Float gradientFrequency;
+		boolean bold;
+
+		void normalize() {
+			text = blankToNull(text);
+			mode = blankToNull(mode) == null ? "solid" : mode.trim();
+			color = blankToNull(color);
+			leftColor = blankToNull(leftColor);
+			rightColor = blankToNull(rightColor);
 		}
 	}
 }

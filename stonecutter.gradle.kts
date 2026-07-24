@@ -78,5 +78,14 @@ stonecutter parameters {
 				"STAINED_GLASS_PANE\\.black\\(\\)" to "BLACK_STAINED_GLASS_PANE"
 			)
 		}
+
+		// Minecraft#getVersionType() (release/snapshot as a String) is gone in
+		// 26.2; the closest surviving vanilla signal is WorldVersion#stable().
+		string(current.parsed >= "26.2") {
+			replace(
+				"client.getVersionType()",
+				"(net.minecraft.SharedConstants.getCurrentVersion().stable() ? \"release\" : \"snapshot\")"
+			)
+		}
 	}
 }
