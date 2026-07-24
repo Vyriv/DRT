@@ -5,6 +5,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.FormattedText;
@@ -21,6 +23,7 @@ public final class NameStyler {
 	private static final float ANIMATED_GRADIENT_SPEED = 0.04F;
 	private static final int LARGE_LOBBY_ANIMATION_THRESHOLD = 40;
 	private static final float THROTTLED_ANIMATION_FPS = 15.0F;
+	private static final Pattern TRAILING_RANK_PREFIX = Pattern.compile("\\[[^\\]]+]\\s*$");
 
 	private static final NameStylerLruCache<ColorizedCacheKey, Component> COLORIZED_TEXT_CACHE = new NameStylerLruCache<>(TEXT_CACHE_LIMIT);
 	private static final NameStylerLruCache<AnimatedGradientCacheKey, AnimatedGradientStyle> ANIMATED_GRADIENT_CACHE = new NameStylerLruCache<>(512);
@@ -269,11 +272,26 @@ public final class NameStyler {
 			NameStyleMatcher.MatchedCustomization match = NameStyleMatcher.findFirstNameMatch(raw, candidates, index);
 			if (match == null || match.index() >= matchBoundary) break;
 
-			if (match.index() > index) output.append(raw, index, match.index());
 			PlayerCustomizationRegistry.PlayerCustomization customization = match.customization();
 			String matchedText = raw.substring(match.index(), match.index() + match.matchedName().length());
 			String displayText = kind.replaceMatchedName ? customization.displayName(matchedText) : matchedText;
-			output.append(toLegacyStyledName(displayText, customization));
+			RankPrefixReplacement rankReplacement = resolveRankPrefixReplacement(raw.substring(index, match.index()), customization);
+
+			if (rankReplacement != null) {
+				output.append(rankReplacement.before());
+				if (rankReplacement.copyName()) {
+					output.append(toLegacyStyledName(rankReplacement.replacement() + displayText, customization));
+				} else {
+					output.append(toLegacyStyledRank(rankReplacement.replacement(), customization));
+					output.append(toLegacyStyledName(displayText, customization));
+				}
+				changed = true;
+			} else {
+				if (match.index() > index) output.append(raw, index, match.index());
+				output.append(toLegacyStyledName(displayText, customization));
+				changed = true;
+			}
+
 			if (kind.includeBadges && customization.hasBadge()
 				&& !hasPlainBadgeImmediatelyAfter(raw, match.index() + match.matchedName().length(), customization.nameBadge().label())
 				&& !(kind.terminalBadgesOnly && hasPlainVisibleContentAfter(raw, match.index() + match.matchedName().length()))) {
@@ -283,7 +301,6 @@ public final class NameStyler {
 				output.append(customization.nameBadge().label());
 			}
 			index = match.index() + match.matchedName().length();
-			changed = true;
 		}
 
 		if (!changed) return raw;
@@ -353,20 +370,62 @@ public final class NameStyler {
 		MutableComponent rebuilt = Component.empty();
 		int currentIndex = 0;
 		for (ResolvedOrderedMatch match : plan.matches) {
-			if (match.start > currentIndex) {
-				appendOriginalRange(rebuilt, source.runs, currentIndex, match.start);
-			}
+			RankPrefixReplacement rankReplacement = resolveRankPrefixReplacement(
+				source.plain.substring(currentIndex, match.start),
+				match.customization);
 
-			Component styledName;
-			if (kind.replaceMatchedName) {
-				styledName = cachedGradient(match.customization.displayName(match.content), match.customization, match.baseStyle, animationTime);
-			} else if (match.hasExplicitNameColors) {
-				styledName = cachedGradient(match.content, match.customization, match.baseStyle, animationTime);
+			if (rankReplacement != null) {
+				if (!rankReplacement.before().isEmpty()) {
+					int beforeEnd = currentIndex + rankReplacement.before().length();
+					appendOriginalRange(rebuilt, source.runs, currentIndex, beforeEnd);
+				}
+
+				String displayName;
+				if (kind.replaceMatchedName) {
+					displayName = match.customization.displayName(match.content);
+				} else {
+					displayName = match.content;
+				}
+
+				if (rankReplacement.copyName()) {
+					Style combinedBase = applyCustomNameStyle(match.baseStyle, match.customization);
+					if (match.customization.nameRankPrefix().bold()) {
+						combinedBase = combinedBase.withBold(true);
+					}
+					if (kind.replaceMatchedName || match.hasExplicitNameColors || match.customization.nameBold()) {
+						rebuilt.append(cachedGradient(rankReplacement.replacement() + displayName, match.customization, combinedBase, animationTime));
+					} else {
+						rebuilt.append(Component.literal(rankReplacement.replacement()).setStyle(combinedBase));
+						rebuilt.append(buildOriginalRangeComponent(source.runs, match.start, match.end));
+					}
+				} else {
+					rebuilt.append(styledRankPrefix(rankReplacement.replacement(), match.customization, match.baseStyle, animationTime));
+					Component styledName;
+					if (kind.replaceMatchedName) {
+						styledName = cachedGradient(displayName, match.customization, match.baseStyle, animationTime);
+					} else if (match.hasExplicitNameColors) {
+						styledName = cachedGradient(match.content, match.customization, match.baseStyle, animationTime);
+					} else {
+						styledName = buildOriginalRangeComponent(source.runs, match.start, match.end);
+					}
+					rebuilt.append(styledName);
+				}
 			} else {
-				styledName = buildOriginalRangeComponent(source.runs, match.start, match.end);
+				if (match.start > currentIndex) {
+					appendOriginalRange(rebuilt, source.runs, currentIndex, match.start);
+				}
+
+				Component styledName;
+				if (kind.replaceMatchedName) {
+					styledName = cachedGradient(match.customization.displayName(match.content), match.customization, match.baseStyle, animationTime);
+				} else if (match.hasExplicitNameColors) {
+					styledName = cachedGradient(match.content, match.customization, match.baseStyle, animationTime);
+				} else {
+					styledName = buildOriginalRangeComponent(source.runs, match.start, match.end);
+				}
+				rebuilt.append(styledName);
 			}
 
-			rebuilt.append(styledName);
 			if (kind.includeBadges && match.hasBadge && !match.hasBadgeAlready && !match.hasTrailingContent) {
 				appendBadge(rebuilt, match.customization, match.baseStyle);
 			}
@@ -460,6 +519,101 @@ public final class NameStyler {
 		Style badgeStyle = baseStyle.withColor(badge.color());
 		if (badge.bold()) badgeStyle = badgeStyle.withBold(true);
 		target.append(Component.literal(badge.label()).setStyle(badgeStyle));
+	}
+
+	private static RankPrefixReplacement resolveRankPrefixReplacement(String prefixPlain, PlayerCustomizationRegistry.PlayerCustomization customization) {
+		if (!customization.hasRankPrefix() || prefixPlain == null || prefixPlain.isEmpty()) return null;
+		Matcher matcher = TRAILING_RANK_PREFIX.matcher(prefixPlain);
+		if (!matcher.find()) return null;
+
+		String matched = matcher.group();
+		int bracketEnd = matched.indexOf(']') + 1;
+		String trailingWhitespace = bracketEnd >= 0 && bracketEnd <= matched.length() ? matched.substring(bracketEnd) : "";
+		PlayerCustomizationRegistry.NameRankPrefix rankPrefix = customization.nameRankPrefix();
+		return new RankPrefixReplacement(
+			prefixPlain.substring(0, matcher.start()),
+			rankPrefix.label() + trailingWhitespace,
+			rankPrefix.copyName());
+	}
+
+	private static Component styledRankPrefix(String text, PlayerCustomizationRegistry.PlayerCustomization customization, Style baseStyle, double animationTime) {
+		PlayerCustomizationRegistry.NameRankPrefix rankPrefix = customization.nameRankPrefix();
+		if (rankPrefix == null) return Component.literal(text).setStyle(baseStyle);
+
+		Style rankStyle = baseStyle;
+		if (rankPrefix.bold()) rankStyle = rankStyle.withBold(true);
+
+		PlayerCustomizationRegistry.NameColors colors = rankPrefix.colors();
+		if (colors == null) {
+			return Component.literal(text).setStyle(rankStyle);
+		}
+
+		if (rankPrefix.animatedGradient()) {
+			AnimatedGradientStyle animatedStyle = resolveRankAnimatedGradientStyle(rankPrefix);
+			return animatedStyle == null
+				? Component.literal(text).setStyle(rankStyle.withColor(colors.left()))
+				: animatedGradientText(text, animatedStyle, rankStyle, animationTime);
+		}
+
+		if (colors.left() == colors.right()) {
+			return Component.literal(text).setStyle(rankStyle.withColor(colors.left()));
+		}
+		return staticGradientText(text, colors, rankStyle);
+	}
+
+	private static String toLegacyStyledRank(String content, PlayerCustomizationRegistry.PlayerCustomization customization) {
+		PlayerCustomizationRegistry.NameRankPrefix rankPrefix = customization.nameRankPrefix();
+		if (rankPrefix == null) return content;
+
+		PlayerCustomizationRegistry.NameColors colors = rankPrefix.colors();
+		if (colors == null) {
+			StringBuilder output = new StringBuilder();
+			if (rankPrefix.bold()) output.append('§').append('l');
+			output.append(content);
+			return output.toString();
+		}
+
+		if (colors.left() == colors.right() && !rankPrefix.animatedGradient()) {
+			StringBuilder output = new StringBuilder();
+			output.append(buildLegacyHexColorCode(colors.left()));
+			if (rankPrefix.bold()) output.append('§').append('l');
+			output.append(content);
+			return output.toString();
+		}
+
+		StringBuilder output = new StringBuilder();
+		int[] codePoints = content.codePoints().toArray();
+		AnimatedGradientStyle animatedStyle = rankPrefix.animatedGradient() ? resolveRankAnimatedGradientStyle(rankPrefix) : null;
+		double animationTime = animatedStyle == null ? 0.0D : currentAnimationTime();
+		for (int i = 0; i < codePoints.length; i++) {
+			int color;
+			if (animatedStyle != null) {
+				color = animatedStyle.getColor(i, codePoints.length, animationTime);
+			} else {
+				float progress = gradientFrequencyProgress(i, codePoints.length, clamp(colors.spacing(), 1.0F, 10.0F));
+				color = gradientLoopColor(colors.left(), colors.right(), progress);
+			}
+			output.append(buildLegacyHexColorCode(color));
+			if (rankPrefix.bold()) output.append('§').append('l');
+			output.appendCodePoint(codePoints[i]);
+		}
+		return output.toString();
+	}
+
+	private static AnimatedGradientStyle resolveRankAnimatedGradientStyle(PlayerCustomizationRegistry.NameRankPrefix rankPrefix) {
+		PlayerCustomizationRegistry.NameColors colors = rankPrefix.colors();
+		if (colors == null || !rankPrefix.animatedGradient()) return null;
+
+		int steps = rankPrefix.animationSteps() == null ? ANIMATED_GRADIENT_STEPS : Math.max(2, rankPrefix.animationSteps());
+		float speed = rankPrefix.animationSpeed() == null ? ANIMATED_GRADIENT_SPEED : rankPrefix.animationSpeed();
+		float spacing = clamp(colors.spacing(), 1.0F, 10.0F);
+		AnimatedGradientCacheKey key = new AnimatedGradientCacheKey(colors.left(), colors.right(), steps, Float.floatToRawIntBits(speed), Float.floatToRawIntBits(spacing));
+		AnimatedGradientStyle cached = ANIMATED_GRADIENT_CACHE.getCached(key);
+		if (cached != null) return cached;
+
+		AnimatedGradientStyle built = new AnimatedGradientStyle(buildLoopGradient(colors.left(), colors.right(), steps), speed, spacing);
+		ANIMATED_GRADIENT_CACHE.putCached(key, built);
+		return built;
 	}
 
 	private static Style applyCustomNameStyle(Style style, PlayerCustomizationRegistry.PlayerCustomization customization) {
@@ -763,6 +917,9 @@ public final class NameStyler {
 			PlayerCustomizationRegistry.PlayerCustomization customization, boolean isAnimatedGradient,
 			boolean hasBadge, boolean hasDecorations, boolean hasExplicitNameColors, boolean hasBadgeAlready,
 			boolean hasTrailingContent) {
+	}
+
+	private record RankPrefixReplacement(String before, String replacement, boolean copyName) {
 	}
 
 	private record TextCacheKey(long version, TransformKind kind, String plain, int styleHash, long frame) {
