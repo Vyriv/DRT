@@ -1,0 +1,11 @@
+{
+  "clockStart": "2024-01-01T00:00:00Z",
+  "activeRun": false,
+  "activeMode": "UNKNOWN",
+  "activeFloor": "UNKNOWN",
+  "completedRuns": 1,
+  "orphanChests": 0,
+  "invariants": [
+    "ONE_RUN_COMPLETION_COUNTS_AT_MOST_ONCE"
+  ]
+}

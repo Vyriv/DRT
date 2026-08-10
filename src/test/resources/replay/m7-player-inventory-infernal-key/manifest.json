@@ -1,0 +1,5 @@
+{
+  "schema": "drt-replay-v1",
+  "label": "synthetic",
+  "description": "M7 active run with an Infernal Kuudra Key in player inventory must remain M7."
+}

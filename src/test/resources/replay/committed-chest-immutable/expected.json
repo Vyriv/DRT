@@ -1,0 +1,17 @@
+{
+  "clockStart": "2024-01-01T00:00:00Z",
+  "activeRun": true,
+  "activeMode": "DUNGEON",
+  "activeFloor": "M7",
+  "completedRuns": 0,
+  "chests": 1,
+  "committedChests": 1,
+  "orphanChests": 0,
+  "loot": {
+    "itemId": "ESSENCE_WITHER",
+    "quantity": 100
+  },
+  "invariants": [
+    "COMMITTED_CHEST_IS_IMMUTABLE"
+  ]
+}

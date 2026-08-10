@@ -1,0 +1,4 @@
+{"type":"startRun","mode":"DUNGEON","floor":"M7","source":"CONFIRMED_SCOREBOARD","strength":"CONFIRMED_SCOREBOARD"}
+{"type":"updateActiveFloor","floor":"F7","source":"GUI_TITLE_INFERENCE","strength":"GUI_TITLE_INFERENCE"}
+{"type":"openChest","owner":"active","chestTitle":"Bedrock Chest","containerId":404,"source":"CONFIRMED_GUI_COMPONENT"}
+{"type":"observeLoot","chestId":"last","source":"CONFIRMED_GUI_COMPONENT","slotOwner":"SERVER_CONTAINER","rawName":"Fifth Master Star","normalizedName":"FIFTH MASTER STAR","itemId":"FIFTH_MASTER_STAR","identityStrength":"EXACT_COMPONENT_ID","quantity":1,"containerId":404,"slotIndex":13,"dedupKey":"gui|404|13|FIFTH_MASTER_STAR"}

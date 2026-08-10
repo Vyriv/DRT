@@ -1,0 +1,5 @@
+{
+  "schema": "drt-replay-v1",
+  "label": "synthetic",
+  "description": "F7 historical reward opened while a new M7 run is active remains orphaned and leaves active M7 unchanged."
+}

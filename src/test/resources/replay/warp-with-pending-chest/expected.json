@@ -1,0 +1,11 @@
+{
+  "clockStart": "2024-01-01T00:00:00Z",
+  "activeRun": false,
+  "abandonedRuns": 1,
+  "chests": 1,
+  "chestCostCoins": 10000000,
+  "loot": {
+    "itemId": "ESSENCE_WITHER",
+    "quantity": 100
+  }
+}

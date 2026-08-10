@@ -1,0 +1,5 @@
+{"type":"startRun","mode":"DUNGEON","floor":"M7","source":"CONFIRMED_SCOREBOARD","strength":"CONFIRMED_SCOREBOARD"}
+{"type":"completeRun","floor":"M7","grade":"S+","fingerprint":"m7-player-inventory-context"}
+{"type":"openChest","owner":"last","chestTitle":"Bedrock Chest","containerId":907,"source":"CONFIRMED_GUI_COMPONENT"}
+{"type":"updateChestContextFloor","chestId":"last","floor":"K5","strength":"FALLBACK_GUESS","source":"PLAYER_INVENTORY"}
+{"type":"updateChestContextMode","chestId":"last","mode":"KUUDRA","strength":"FALLBACK_GUESS","source":"PLAYER_INVENTORY"}

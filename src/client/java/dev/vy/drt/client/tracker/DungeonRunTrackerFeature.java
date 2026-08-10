@@ -17,11 +17,31 @@ import dev.vy.drt.config.DrtConfigManager;
 import dev.vy.drt.config.DungeonChestOffer;
 import dev.vy.drt.config.DungeonFloor;
 import dev.vy.drt.config.DungeonLootEntry;
+import dev.vy.drt.config.DungeonRunCompletionRecord;
 import dev.vy.drt.config.DungeonRunRecord;
 import dev.vy.drt.mixin.AbstractContainerScreenAccessor;
 import dev.vy.drt.price.DungeonProfitPricing;
 import dev.vy.drt.price.LootFloorGuards;
 import dev.vy.drt.price.PriceCache;
+import dev.vy.drt.tracking.DetectionEvent;
+import dev.vy.drt.tracking.DetectionEventType;
+import dev.vy.drt.tracking.DetectionSource;
+import dev.vy.drt.tracking.DiagnosticIncident;
+import dev.vy.drt.tracking.DiagnosticRecorder;
+import dev.vy.drt.tracking.DiagnosticSeverity;
+import dev.vy.drt.tracking.EvidenceStrength;
+import dev.vy.drt.tracking.LootIdentityStrength;
+import dev.vy.drt.tracking.LootObservation;
+import dev.vy.drt.tracking.ChestSession;
+import dev.vy.drt.tracking.ChestState;
+import dev.vy.drt.tracking.ResolvedLoot;
+import dev.vy.drt.tracking.RunMode;
+import dev.vy.drt.tracking.RunSession;
+import dev.vy.drt.tracking.RunState;
+import dev.vy.drt.tracking.SlotOwner;
+import dev.vy.drt.tracking.SyntheticDiagnosticIncidentFactory;
+import dev.vy.drt.tracking.TrackingSession;
+import dev.vy.drt.tracking.TrackerInvariant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -33,6 +53,9 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import net.minecraft.ChatFormatting;
@@ -65,7 +88,6 @@ public final class DungeonRunTrackerFeature {
 	private static final long EXTRA_STATS_TIMEOUT_MS = 8_000L;
 	private static final long DUNGEON_SIGNAL_GRACE_MS = 15_000L;
 	private static final long MESSAGE_DEDUP_WINDOW_MS = 2_000L;
-	private static final long RUN_COMPLETION_DEDUP_WINDOW_MS = 20_000L;
 	private static final long LOOT_WINDOW_MS = 180_000L;
 	private static final long LOOT_COLLECTION_MS = 3_000L;
 	private static final long REWARD_MODIFIER_SCAN_INTERVAL_MS = 300L;
@@ -131,6 +153,7 @@ public final class DungeonRunTrackerFeature {
 	private static final float MIN_HUD_SCALE = 0.5F;
 	private static final float MAX_HUD_SCALE = 2.0F;
 	private static final float HUD_SCALE_STEP = 0.1F;
+	private static final int DIAGNOSTIC_EVENT_LIMIT = 512;
 
 	private enum HudVisibilityMode {
 		GLOBAL("Global"),
@@ -262,10 +285,22 @@ public final class DungeonRunTrackerFeature {
 		}
 	}
 
+	/** Compatibility cache for HUD/history displays; persisted completion records own new run commits. */
 	private final Map<String, Integer> floorRunCounts = new LinkedHashMap<>();
 	private final Map<String, Long> floorRunTimeMs = new LinkedHashMap<>();
 	private final Map<String, Long> floorProfitTotals = new LinkedHashMap<>();
 	private DungeonFloor selectedFloor = null;
+	private final DiagnosticRecorder diagnostics = new DiagnosticRecorder(
+		new dev.vy.drt.tracking.SystemTrackerClock(),
+		DIAGNOSTIC_EVENT_LIMIT,
+		this::diagnosticEnvironment
+	);
+	private final TrackingSession trackingSession = new TrackingSession(
+		"live",
+		"client",
+		new dev.vy.drt.tracking.SystemTrackerClock(),
+		diagnostics
+	);
 
 	private boolean enabled;
 	private HudVisibilityMode hudVisibilityMode = HudVisibilityMode.DEFAULT;
@@ -280,6 +315,7 @@ public final class DungeonRunTrackerFeature {
 	private boolean insideKuudra;
 	private boolean inDungeonHub;
 	private boolean inCrimsonIsle;
+	/** Compatibility projection of the active RunSession floor. Do not assign without evidence acceptance. */
 	private DungeonFloor currentFloor = DungeonFloor.UNKNOWN;
 	private DungeonFloor lastKnownKuudraFloor = DungeonFloor.UNKNOWN;
 	private long dungeonSignalUntilMillis;
@@ -296,15 +332,22 @@ public final class DungeonRunTrackerFeature {
 	private DungeonFloor lastRunRecordFloor = DungeonFloor.UNKNOWN;
 	private String lastRunRecordGrade = "?";
 	private Object lastLevelIdentity;
+	private String activeRunSessionId = "";
+	private String currentRunCompletionFingerprint = "";
 
 	private long lootWindowUntilMillis;
 	private long lootCollectionUntilMillis;
 	private int pendingLootRunNumber;
 	private long pendingLootRunTimestamp;
+	private long chestSessionSequence;
+	/** Compatibility pointer to the active ChestSession ID, or a pre-open dedup placeholder. */
+	private String pendingChestSessionId = "";
 	private String pendingLootChestTitle = "";
 	private ChestCostBreakdown pendingLootCostBreakdown = new ChestCostBreakdown();
 	private DungeonFloor pendingLootFloor = DungeonFloor.UNKNOWN;
+	private boolean pendingLootOrphaned;
 	private boolean pendingLootSeededFromGui;
+	private boolean pendingLootReconcilingGuiChat;
 	private boolean pendingLootChestAssigned;
 	private int openedRewardChestsInLootWindow;
 	/** Canonical titles already counted in the current loot window (used to ignore Croesus re-views). */
@@ -314,7 +357,10 @@ public final class DungeonRunTrackerFeature {
 	private boolean nextOpenedChestUsesWheelOfFate;
 	private boolean rewardMenuKismetRerollPending;
 	private String rewardMenuKismetRerolledChestTitle = "";
+	/** Compatibility overlay buffer; ChestSession LootObservations/ResolvedLoot are authoritative at commit. */
 	private final List<DungeonLootEntry> pendingLootEntries = new ArrayList<>();
+	private final Set<String> pendingChestLootDedupKeys = new HashSet<>();
+	private final Set<String> ignoredPlayerInventoryDiagnosticKeys = new HashSet<>();
 	private final Map<String, DungeonChestOffer> cachedChestOffersByTitle = new HashMap<>();
 	private final Map<String, Integer> cachedChestOfferFingerprintsByTitle = new HashMap<>();
 	private final Set<String> scannedRewardScreens = new HashSet<>();
@@ -1107,6 +1153,7 @@ public final class DungeonRunTrackerFeature {
 	private int findOpenRewardChestSlotIndex(AbstractContainerMenu menu) {
 		if (menu == null) return -1;
 		for (int slotIndex = 0; slotIndex < menu.slots.size(); slotIndex++) {
+			if (!isServerOwnedSlot(menu.getSlot(slotIndex))) continue;
 			if (stackIndicatesOpenRewardChest(menu.getSlot(slotIndex).getItem())) return slotIndex;
 		}
 		return -1;
@@ -1414,11 +1461,14 @@ public final class DungeonRunTrackerFeature {
 		}
 
 		DungeonFloor lineFloor = detectFloorFromLine(cleaned);
-		if (lineFloor != DungeonFloor.UNKNOWN) currentFloor = lineFloor;
+		if (lineFloor != DungeonFloor.UNKNOWN) {
+			updateActiveRunFloorProjection(lineFloor, EvidenceStrength.STRUCTURED_CHAT, DetectionSource.STRUCTURED_CHAT);
+		}
 
 		String preGrade = extractScoreGrade(cleaned);
 		if (preGrade != null && pendingScoreGrade == null) {
 			pendingScoreGrade = preGrade;
+			trackingSession.updateActiveRunGrade(preGrade, EvidenceStrength.STRUCTURED_CHAT, DetectionSource.STRUCTURED_CHAT);
 			pendingSPlusFloor = lineFloor != DungeonFloor.UNKNOWN ? lineFloor : currentFloor;
 			pendingSPlusUntilMillis = now + EXTRA_STATS_TIMEOUT_MS;
 		}
@@ -1436,7 +1486,8 @@ public final class DungeonRunTrackerFeature {
 				recordCompletedRun(now, f, pendingScoreGrade);
 				clearPendingCompletionScore();
 			} else {
-				DungeonFloor contextFloor = currentFloor != DungeonFloor.UNKNOWN ? currentFloor : pendingSPlusFloor;
+				DungeonFloor projectedFloor = activeRunFloorProjection();
+				DungeonFloor contextFloor = projectedFloor != DungeonFloor.UNKNOWN ? projectedFloor : pendingSPlusFloor;
 				awaitingExtraStatsScore = true;
 				awaitingExtraStatsFloor = contextFloor;
 				awaitingExtraStatsUntilMillis = now + EXTRA_STATS_TIMEOUT_MS;
@@ -1452,7 +1503,7 @@ public final class DungeonRunTrackerFeature {
 			String postGrade = preGrade;
 			if (postGrade != null) {
 				if (!runCountedThisDungeon) {
-					DungeonFloor scoreFloor = awaitingExtraStatsFloor != DungeonFloor.UNKNOWN ? awaitingExtraStatsFloor : currentFloor;
+					DungeonFloor scoreFloor = awaitingExtraStatsFloor != DungeonFloor.UNKNOWN ? awaitingExtraStatsFloor : activeRunFloorProjection();
 					recordCompletedRun(now, scoreFloor, postGrade);
 				}
 				awaitingExtraStatsScore = false;
@@ -1591,6 +1642,10 @@ public final class DungeonRunTrackerFeature {
 		ScreenBounds bounds = currentContainerBounds(client);
 		for (int slotIndex = 0; slotIndex < menu.slots.size(); slotIndex++) {
 			Slot slot = menu.slots.get(slotIndex);
+			if (!isServerOwnedSlot(slot)) {
+				diagnoseRejectedPlayerInventoryStack(slot, "currentCroesusChestRows");
+				continue;
+			}
 			ItemStack stack = slot.getItem();
 			if (stack.isEmpty()) continue;
 			String canonicalKey = canonicalChestTitleFromStack(stack);
@@ -1892,6 +1947,7 @@ public final class DungeonRunTrackerFeature {
 		List<CroesusRunSlot> slots = new ArrayList<>();
 		for (int slotIndex = 0; slotIndex < menu.slots.size(); slotIndex++) {
 			Slot slot = menu.slots.get(slotIndex);
+			if (!isServerOwnedSlot(slot)) continue;
 			ItemStack stack = slot.getItem();
 			if (stack.isEmpty()) continue;
 			if (!croesusRunHasUnopenedChest(stack)) continue;
@@ -2267,7 +2323,28 @@ public final class DungeonRunTrackerFeature {
 		if (lineFloor != DungeonFloor.UNKNOWN) return lineFloor;
 		if (awaitingExtraStatsFloor != DungeonFloor.UNKNOWN) return awaitingExtraStatsFloor;
 		if (pendingSPlusFloor != DungeonFloor.UNKNOWN) return pendingSPlusFloor;
-		return currentFloor;
+		return activeRunFloorProjection();
+	}
+
+	private DungeonFloor activeRunFloorProjection() {
+		RunSession activeRun = trackingSession.activeRun();
+		if (activeRun != null && activeRun.floor().isKnown()) {
+			DungeonFloor floor = activeRun.floor().value();
+			return floor == null ? DungeonFloor.UNKNOWN : floor;
+		}
+		return currentFloor == null ? DungeonFloor.UNKNOWN : currentFloor;
+	}
+
+	private boolean updateActiveRunFloorProjection(DungeonFloor floor, EvidenceStrength strength, DetectionSource source) {
+		if (floor == null || floor == DungeonFloor.UNKNOWN) return false;
+		boolean accepted = trackingSession.updateActiveRunFloor(floor, strength, source);
+		if (!accepted) return false;
+		DungeonFloor projected = activeRunFloorProjection();
+		if (projected != DungeonFloor.UNKNOWN) {
+			currentFloor = projected;
+			if (projected.isKuudra()) lastKnownKuudraFloor = projected;
+		}
+		return true;
 	}
 
 	private void updateDungeonContext(Minecraft client) {
@@ -2288,6 +2365,7 @@ public final class DungeonRunTrackerFeature {
 		refreshCountdown = REFRESH_INTERVAL_TICKS;
 		List<String> scoreboardLines = readScoreboardLines(client);
 		List<String> tabLines = TabReader.readNormalizedLines(client);
+		updateKuudraReputationFromLines(tabLines, scoreboardLines);
 		boolean wasKuudra = insideKuudra;
 		inDungeonHub = isDungeonHub(scoreboardLines) || isDungeonHub(tabLines);
 		inCrimsonIsle = isCrimsonIsle(scoreboardLines) || isCrimsonIsle(tabLines);
@@ -2317,8 +2395,16 @@ public final class DungeonRunTrackerFeature {
 				kuudraSignalUntilMillis = 0L;
 			}
 			DungeonFloor detected = detectFloorFromLines(scoreboardLines);
-			if (detected == DungeonFloor.UNKNOWN) detected = detectFloorFromLines(tabLines);
-			if (detected != DungeonFloor.UNKNOWN && detected != currentFloor) currentFloor = detected;
+			DetectionSource floorSource = DetectionSource.CONFIRMED_SCOREBOARD;
+			EvidenceStrength floorStrength = EvidenceStrength.CONFIRMED_SCOREBOARD;
+			if (detected == DungeonFloor.UNKNOWN) {
+				detected = detectFloorFromLines(tabLines);
+				floorSource = DetectionSource.CONFIRMED_TAB;
+				floorStrength = EvidenceStrength.CONFIRMED_TAB;
+			}
+			if (detected != DungeonFloor.UNKNOWN && detected != activeRunFloorProjection()) {
+				updateActiveRunFloorProjection(detected, floorStrength, floorSource);
+			}
 		}
 
 		if (insideKuudra && !insideDungeon) {
@@ -2336,12 +2422,17 @@ public final class DungeonRunTrackerFeature {
 
 		String normalizedTitle = normalize(screen.getTitle().getString());
 		String canonicalRewardTitle = canonicalRewardChestTitle(normalizedTitle);
+		DungeonFloor menuTitleFloor = rewardContextFloorFromTitle(normalizedTitle);
 		long now = System.currentTimeMillis();
 		rememberRunContextFromMenuTitle(normalizedTitle, now);
 
 		if (canonicalRewardTitle != null) {
 			if (lootWindowUntilMillis <= 0L || now > lootWindowUntilMillis) {
 				startAdHocLootWindow(now);
+				if (menuTitleFloor != DungeonFloor.UNKNOWN) {
+					pendingLootFloor = menuTitleFloor;
+					updatePendingChestContextProjection(EvidenceStrength.GUI_TITLE_INFERENCE, DetectionSource.GUI_TITLE_INFERENCE);
+				}
 			}
 			if (lootWindowUntilMillis <= 0L || now > lootWindowUntilMillis) return;
 
@@ -2383,7 +2474,7 @@ public final class DungeonRunTrackerFeature {
 			rememberKuudraKeyTierFromMenu(menu);
 			if (lastRewardModifierScanHadKismetMarker) markKismetFeatherUsed();
 			if (firstOpenScan || openedFromArmedPreview) {
-				assignPendingOpenedChest(canonicalRewardTitle, cached, paidWithKey, openedFromArmedPreview);
+				assignPendingOpenedChest(canonicalRewardTitle, cached, paidWithKey, openedFromArmedPreview, menu.containerId);
 			}
 			captureOpenedRewardChestLoot(client, menu, now);
 			lastViewedOpenedRewardChestTitle = canonicalRewardTitle;
@@ -2418,27 +2509,52 @@ public final class DungeonRunTrackerFeature {
 
 		updateCachedRewardChestOffers(menu);
 
-		if (lootWindowUntilMillis <= 0L || now > lootWindowUntilMillis) startAdHocLootWindow(now);
+		if (lootWindowUntilMillis > 0L
+			&& now <= lootWindowUntilMillis
+			&& pendingLootOrphaned
+			&& pendingLootFloor == DungeonFloor.UNKNOWN
+			&& menuTitleFloor != DungeonFloor.UNKNOWN) {
+			pendingLootFloor = menuTitleFloor;
+			updatePendingChestContextProjection(EvidenceStrength.GUI_TITLE_INFERENCE, DetectionSource.GUI_TITLE_INFERENCE);
+		}
 	}
 
 	private void rememberRunContextFromMenuTitle(String normalizedTitle, long now) {
 		if (normalizedTitle == null || normalizedTitle.isBlank()) return;
 		DungeonFloor kuudraTier = detectKuudraTierFromLine(normalizedTitle, normalizedTitle.contains("KUUDRA") || insideKuudra || isCurrentFloorKuudra());
 		if (kuudraTier != DungeonFloor.UNKNOWN) {
+			if (menuTitleConflictsWithActiveRun(kuudraTier)) {
+				if (pendingLootFloor == DungeonFloor.UNKNOWN && lootWindowUntilMillis > 0L && now <= lootWindowUntilMillis) {
+					pendingLootFloor = kuudraTier;
+					updatePendingChestContextProjection(EvidenceStrength.GUI_TITLE_INFERENCE, DetectionSource.GUI_TITLE_INFERENCE);
+				}
+				recordContextConflictDiagnostic("rememberRunContextFromMenuTitle", "kuudra_title_conflicts_with_active_run", kuudraTier);
+				return;
+			}
 			rememberKuudraTier(kuudraTier, hasStrongKuudraTierSignal(normalizedTitle));
 			insideKuudra = true;
 			kuudraSignalUntilMillis = Math.max(kuudraSignalUntilMillis, now + DUNGEON_SIGNAL_GRACE_MS);
 			if (pendingLootFloor == DungeonFloor.UNKNOWN && lootWindowUntilMillis > 0L && now <= lootWindowUntilMillis) {
 				pendingLootFloor = kuudraTier;
+				updatePendingChestContextProjection(EvidenceStrength.CONFIRMED_GUI_COMPONENT, DetectionSource.CONFIRMED_GUI_COMPONENT);
 			}
 			return;
 		}
 
 		DungeonFloor titleFloor = detectFloorFromLine(normalizedTitle);
-		if (titleFloor != DungeonFloor.UNKNOWN && titleFloor != currentFloor) {
-			currentFloor = titleFloor;
+		if (titleFloor != DungeonFloor.UNKNOWN && titleFloor != activeRunFloorProjection()) {
+			if (menuTitleConflictsWithActiveRun(titleFloor)) {
+				if (pendingLootFloor == DungeonFloor.UNKNOWN && lootWindowUntilMillis > 0L && now <= lootWindowUntilMillis) {
+					pendingLootFloor = titleFloor;
+					updatePendingChestContextProjection(EvidenceStrength.GUI_TITLE_INFERENCE, DetectionSource.GUI_TITLE_INFERENCE);
+				}
+				recordContextConflictDiagnostic("rememberRunContextFromMenuTitle", "catacombs_title_conflicts_with_active_run", titleFloor);
+				return;
+			}
+			updateActiveRunFloorProjection(titleFloor, EvidenceStrength.GUI_TITLE_INFERENCE, DetectionSource.GUI_TITLE_INFERENCE);
 			if (pendingLootFloor == DungeonFloor.UNKNOWN && lootWindowUntilMillis > 0L && now <= lootWindowUntilMillis) {
 				pendingLootFloor = titleFloor;
+				updatePendingChestContextProjection(EvidenceStrength.GUI_TITLE_INFERENCE, DetectionSource.GUI_TITLE_INFERENCE);
 			}
 		}
 	}
@@ -2455,6 +2571,10 @@ public final class DungeonRunTrackerFeature {
 	private void updateCachedRewardChestOffers(AbstractContainerMenu menu) {
 		List<String> changedExistingOffers = new ArrayList<>();
 		for (int slotIndex = 0; slotIndex < menu.slots.size(); slotIndex++) {
+			if (!isServerOwnedSlot(menu.getSlot(slotIndex))) {
+				diagnoseRejectedPlayerInventoryStack(menu.getSlot(slotIndex), "updateCachedRewardChestOffers");
+				continue;
+			}
 			ItemStack stack = menu.getSlot(slotIndex).getItem();
 			if (stack.isEmpty()) continue;
 			String canonicalKey = canonicalChestTitleFromStack(stack);
@@ -2550,17 +2670,36 @@ public final class DungeonRunTrackerFeature {
 		populateKnownModifierCosts(breakdown);
 		suppressDungeonChestKeyForKuudra(normalizedTitle, breakdown);
 		DungeonChestOffer offer = new DungeonChestOffer(toDisplayChestTitle(normalizedTitle), breakdown, valueCoins, entries);
+		offer.contextFloor = detectRewardFloorFromOffer(normalizedTitle, lore);
 		offer.alreadyOpened = alreadyOpened;
 		offer.normalize();
 		return offer;
 	}
 
+	private DungeonFloor detectRewardFloorFromOffer(String normalizedTitle, List<String> lore) {
+		DungeonFloor titleFloor = rewardContextFloorFromTitle(normalizedTitle);
+		if (titleFloor != DungeonFloor.UNKNOWN) return titleFloor;
+		if (lore == null || lore.isEmpty()) return DungeonFloor.UNKNOWN;
+		List<String> normalizedLore = new ArrayList<>(lore.size());
+		for (String line : lore) {
+			String normalized = normalize(line);
+			if (!normalized.isBlank()) normalizedLore.add(normalized);
+		}
+		DungeonFloor loreFloor = detectFloorFromLines(normalizedLore);
+		if (loreFloor != DungeonFloor.UNKNOWN) return loreFloor;
+		for (String line : normalizedLore) {
+			DungeonFloor kuudraFloor = detectKuudraTierFromLine(line, isKuudraRewardContext(normalizedTitle));
+			if (kuudraFloor != DungeonFloor.UNKNOWN) return kuudraFloor;
+		}
+		return DungeonFloor.UNKNOWN;
+	}
+
 	private void assignPendingOpenedChest(String normalizedTitle, DungeonChestOffer offer) {
-		assignPendingOpenedChest(normalizedTitle, offer, false, false);
+		assignPendingOpenedChest(normalizedTitle, offer, false, false, -1);
 	}
 
 	private void assignPendingOpenedChest(String normalizedTitle, DungeonChestOffer offer, boolean paidWithDungeonChestKey) {
-		assignPendingOpenedChest(normalizedTitle, offer, paidWithDungeonChestKey, false);
+		assignPendingOpenedChest(normalizedTitle, offer, paidWithDungeonChestKey, false, -1);
 	}
 
 	private void assignPendingOpenedChest(
@@ -2568,6 +2707,16 @@ public final class DungeonRunTrackerFeature {
 		DungeonChestOffer offer,
 		boolean paidWithDungeonChestKey,
 		boolean forceNewOpen
+	) {
+		assignPendingOpenedChest(normalizedTitle, offer, paidWithDungeonChestKey, forceNewOpen, -1);
+	}
+
+	private void assignPendingOpenedChest(
+		String normalizedTitle,
+		DungeonChestOffer offer,
+		boolean paidWithDungeonChestKey,
+		boolean forceNewOpen,
+		int containerId
 	) {
 		String displayTitle = toDisplayChestTitle(normalizedTitle);
 		boolean samePendingChest = pendingLootChestAssigned && displayTitle.equalsIgnoreCase(pendingLootChestTitle);
@@ -2594,6 +2743,9 @@ public final class DungeonRunTrackerFeature {
 			previousBreakdown = null;
 		}
 		if (!samePendingChest) {
+			pendingChestSessionId = openTrackingChestSession(displayTitle, containerId, DetectionSource.CONFIRMED_GUI_COMPONENT);
+			pendingChestLootDedupKeys.clear();
+			pendingLootReconcilingGuiChat = false;
 			String countedTitle = normalizedTitle == null ? "" : normalizedTitle.trim().toUpperCase(Locale.ROOT);
 			if (!countedTitle.isEmpty()) openedRewardChestTitlesInLootWindow.add(countedTitle);
 			openedRewardChestsInLootWindow++;
@@ -2602,6 +2754,7 @@ public final class DungeonRunTrackerFeature {
 		pendingLootChestAssigned = true;
 		pendingLootChestTitle = displayTitle;
 		pendingLootCostBreakdown = offer == null ? new ChestCostBreakdown() : offer.costBreakdown.copy();
+		applyOfferContextFloor(offer, "assignPendingOpenedChest");
 		// Never inherit key flags from croesus/preview offer lore; only charge when we have evidence.
 		pendingLootCostBreakdown.usedDungeonChestKey = false;
 		pendingLootCostBreakdown.dungeonChestKeyCostCoins = 0L;
@@ -2617,9 +2770,10 @@ public final class DungeonRunTrackerFeature {
 			if (previousBreakdown.usedKuudraKey) pendingLootCostBreakdown.usedKuudraKey = true;
 		}
 		DungeonFloor kuudraFloor = currentKuudraFloorForPricing();
-		if (pendingLootFloor == DungeonFloor.UNKNOWN && kuudraFloor != null && kuudraFloor.isKuudra()) {
+		if (!pendingLootOrphaned && pendingLootFloor == DungeonFloor.UNKNOWN && kuudraFloor != null && kuudraFloor.isKuudra()) {
 			pendingLootFloor = kuudraFloor;
 		}
+		updatePendingChestContextProjection(EvidenceStrength.CONFIRMED_GUI_COMPONENT, DetectionSource.CONFIRMED_GUI_COMPONENT);
 		// Key only when chat/marker said so, or preview open-button required a key for this open.
 		// Do NOT bill a key just because this is the Nth chest in the loot window (breaks Croesus).
 		if ((alreadyChargedKey || paidWithDungeonChestKey || nextOpenedChestUsesDungeonChestKey)
@@ -2643,7 +2797,29 @@ public final class DungeonRunTrackerFeature {
 		if (pendingLootCostBreakdown.usedKuudraKey) pendingLootCostBreakdown.kuudraKeyCostCoins = 0L;
 		populateKnownModifierCosts(pendingLootCostBreakdown);
 		suppressDungeonChestKeyForKuudra(normalizedTitle, pendingLootCostBreakdown);
+		trackingSession.updateChestCost(pendingChestSessionId, pendingLootCostBreakdown);
 		lootCollectionUntilMillis = System.currentTimeMillis() + LOOT_COLLECTION_MS;
+	}
+
+	private void applyOfferContextFloor(DungeonChestOffer offer, String handler) {
+		if (offer == null || offer.contextFloor == null || offer.contextFloor == DungeonFloor.UNKNOWN) return;
+		DungeonFloor offerFloor = offer.contextFloor;
+		if (pendingLootFloor == DungeonFloor.UNKNOWN) {
+			pendingLootFloor = offerFloor;
+			updatePendingChestContextProjection(EvidenceStrength.CONFIRMED_GUI_COMPONENT, DetectionSource.CONFIRMED_GUI_COMPONENT);
+			return;
+		}
+		if (pendingLootFloor == offerFloor) {
+			updatePendingChestContextProjection(EvidenceStrength.CONFIRMED_GUI_COMPONENT, DetectionSource.CONFIRMED_GUI_COMPONENT);
+			return;
+		}
+		updateChestContextProjection(
+			pendingChestSessionId,
+			offerFloor,
+			EvidenceStrength.CONFIRMED_GUI_COMPONENT,
+			DetectionSource.CONFIRMED_GUI_COMPONENT
+		);
+		recordContextConflictDiagnostic(handler, "croesus_offer_floor_conflicts_with_pending_context", offerFloor);
 	}
 
 	private boolean isRewardChestPreviewScreen(AbstractContainerMenu menu) {
@@ -2668,7 +2844,8 @@ public final class DungeonRunTrackerFeature {
 		}
 		var playerInventory = client.player.getInventory();
 		boolean found = false;
-		for (Slot slot : menu.slots) {
+		for (int slotIndex = 0; slotIndex < menu.slots.size(); slotIndex++) {
+			Slot slot = menu.getSlot(slotIndex);
 			if (slot == null || slot.container == playerInventory) continue;
 			ItemStack stack = slot.getItem();
 			if (stack.isEmpty() || stackIndicatesOpenRewardChest(stack) || isRewardChestUiStack(stack)) continue;
@@ -2681,7 +2858,9 @@ public final class DungeonRunTrackerFeature {
 			int quantity = Math.max(1, stack.getCount());
 			String itemId = resolveItemId(rawName);
 			if (itemId.isEmpty() && !looksReasonableLootName(rawName)) continue;
-			mergePendingLootEntry(new DungeonLootEntry(rawName, itemId, quantity));
+			DungeonLootEntry entry = new DungeonLootEntry(rawName, itemId, quantity);
+			observeTrackingLoot(entry, DetectionSource.CONFIRMED_GUI_COMPONENT, menu.containerId, slotIndex, SlotOwner.SERVER_CONTAINER, "gui");
+			mergePendingLootEntry(entry, true);
 			found = true;
 		}
 		if (found) {
@@ -2769,6 +2948,10 @@ public final class DungeonRunTrackerFeature {
 			if (slot == null) continue;
 			ItemStack stack = slot.getItem();
 			if (stack.isEmpty()) continue;
+			if (!isServerOwnedSlot(slot)) {
+				diagnoseRejectedPlayerInventoryStack(slot, "rememberKuudraKeyTierFromMenu");
+				continue;
+			}
 			DungeonFloor fromName = detectKuudraKeyTierFromText(cleanText(stack.getHoverName().getString()));
 			if (kuudraTierNumber(fromName) > kuudraTierNumber(best)) best = fromName;
 			for (String line : cleanLoreLines(stack)) {
@@ -2781,11 +2964,22 @@ public final class DungeonRunTrackerFeature {
 
 	private void adoptKuudraKeyTier(DungeonFloor keyTier) {
 		if (keyTier == null || !keyTier.isKuudra()) return;
+		if (pendingLootOrphaned) {
+			if (pendingLootFloor == null
+				|| !pendingLootFloor.isKuudra()
+				|| kuudraTierNumber(keyTier) > kuudraTierNumber(pendingLootFloor)) {
+				pendingLootFloor = keyTier;
+				updatePendingChestContextProjection(EvidenceStrength.CONFIRMED_GUI_COMPONENT, DetectionSource.CONFIRMED_GUI_COMPONENT);
+			}
+			recordContextConflictDiagnostic("adoptKuudraKeyTier", "orphan_kuudra_key_tier_not_applied_to_active_run", keyTier);
+			return;
+		}
 		rememberKuudraTier(keyTier, true);
 		if (pendingLootFloor == null
 			|| !pendingLootFloor.isKuudra()
 			|| kuudraTierNumber(keyTier) > kuudraTierNumber(pendingLootFloor)) {
 			pendingLootFloor = keyTier;
+			updatePendingChestContextProjection(EvidenceStrength.CONFIRMED_GUI_COMPONENT, DetectionSource.CONFIRMED_GUI_COMPONENT);
 		}
 	}
 
@@ -2893,6 +3087,10 @@ public final class DungeonRunTrackerFeature {
 	private boolean screenHasKismetRerollMarker(AbstractContainerMenu menu) {
 		if (menu == null) return false;
 		for (int slotIndex = 0; slotIndex < menu.slots.size(); slotIndex++) {
+			if (!isServerOwnedSlot(menu.getSlot(slotIndex))) {
+				diagnoseRejectedPlayerInventoryStack(menu.getSlot(slotIndex), "screenHasKismetRerollMarker");
+				continue;
+			}
 			ItemStack stack = menu.getSlot(slotIndex).getItem();
 			if (stack.isEmpty()) continue;
 			String name = normalize(cleanText(stack.getHoverName().getString()));
@@ -2908,6 +3106,10 @@ public final class DungeonRunTrackerFeature {
 	private boolean screenHasDungeonChestKeyRequirement(AbstractContainerMenu menu) {
 		if (menu == null) return false;
 		for (int slotIndex = 0; slotIndex < menu.slots.size(); slotIndex++) {
+			if (!isServerOwnedSlot(menu.getSlot(slotIndex))) {
+				diagnoseRejectedPlayerInventoryStack(menu.getSlot(slotIndex), "screenHasDungeonChestKeyRequirement");
+				continue;
+			}
 			ItemStack stack = menu.getSlot(slotIndex).getItem();
 			if (stack.isEmpty()) continue;
 			String name = normalize(cleanText(stack.getHoverName().getString()));
@@ -2934,6 +3136,7 @@ public final class DungeonRunTrackerFeature {
 		if (pendingLootChestAssigned) {
 			pendingLootCostBreakdown.usedDungeonChestKey = true;
 			populateKnownModifierCosts(pendingLootCostBreakdown);
+			trackingSession.updateChestCost(pendingChestSessionId, pendingLootCostBreakdown);
 		} else {
 			nextOpenedChestUsesDungeonChestKey = true;
 		}
@@ -2948,6 +3151,7 @@ public final class DungeonRunTrackerFeature {
 			rewardMenuKismetRerollPending = false;
 			rewardMenuKismetRerolledChestTitle = "";
 			populateKnownModifierCosts(pendingLootCostBreakdown);
+			trackingSession.updateChestCost(pendingChestSessionId, pendingLootCostBreakdown);
 		} else {
 			armNextOpenedKismetReroll();
 		}
@@ -2967,6 +3171,7 @@ public final class DungeonRunTrackerFeature {
 		if (pendingLootChestAssigned) {
 			pendingLootCostBreakdown.usedWheelOfFate = true;
 			populateKnownModifierCosts(pendingLootCostBreakdown);
+			trackingSession.updateChestCost(pendingChestSessionId, pendingLootCostBreakdown);
 		} else {
 			nextOpenedChestUsesWheelOfFate = true;
 		}
@@ -2993,8 +3198,11 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private DungeonFloor currentKuudraFloorForPricing() {
-		if (pendingLootFloor != null && pendingLootFloor.isKuudra()) return pendingLootFloor;
-		if (currentFloor != null && currentFloor.isKuudra()) return currentFloor;
+		DungeonFloor chestFloor = authoritativePendingChestFloor();
+		if (chestFloor != null && chestFloor.isKuudra()) return chestFloor;
+		if (pendingLootOrphaned) return DungeonFloor.UNKNOWN;
+		DungeonFloor activeFloor = activeRunFloorProjection();
+		if (activeFloor != null && activeFloor.isKuudra()) return activeFloor;
 		if (lastKnownKuudraFloor != null && lastKnownKuudraFloor.isKuudra()) return lastKnownKuudraFloor;
 		return DungeonFloor.UNKNOWN;
 	}
@@ -3144,6 +3352,13 @@ public final class DungeonRunTrackerFeature {
 
 	private boolean isDungeonHubLine(String line) {
 		return line.contains("DUNGEON HUB") || line.contains("DUNGEON_HUB");
+	}
+
+	private void updateKuudraReputationFromLines(List<String> tabLines, List<String> scoreboardLines) {
+		TabReader.FactionReputation parsed = TabReader.parseFactionReputation(tabLines);
+		if (parsed == null) parsed = TabReader.parseFactionReputation(scoreboardLines);
+		if (parsed == null) return;
+		DrtConfigManager.updateKuudraReputation(parsed.faction(), parsed.reputation());
 	}
 
 	private boolean isCrimsonIsle(List<String> lines) {
@@ -3412,8 +3627,15 @@ public final class DungeonRunTrackerFeature {
 			&& (currentRunActive || insideKuudra)) {
 			return;
 		}
-		currentFloor = tier;
-		lastKnownKuudraFloor = tier;
+		boolean accepted = updateActiveRunFloorProjection(
+			tier,
+			trusted ? EvidenceStrength.CONFIRMED_GUI_COMPONENT : EvidenceStrength.RECENT_CONTEXT,
+			trusted ? DetectionSource.CONFIRMED_GUI_COMPONENT : DetectionSource.RECENT_CONTEXT
+		);
+		if (accepted || trackingSession.activeRun() == null) {
+			currentFloor = tier;
+			lastKnownKuudraFloor = tier;
+		}
 	}
 
 	private DungeonFloor bestKuudraTier(DungeonFloor candidate) {
@@ -3470,6 +3692,14 @@ public final class DungeonRunTrackerFeature {
 	private void beginNewDungeonRun(long now) {
 		flushPendingLootRecord();
 		startCurrentRunTiming(now);
+		RunSession run = trackingSession.startRun(
+			RunMode.DUNGEON,
+			DungeonFloor.UNKNOWN,
+			DetectionSource.STRUCTURED_CHAT,
+			EvidenceStrength.STRUCTURED_CHAT
+		);
+		activeRunSessionId = run.id();
+		currentRunCompletionFingerprint = "";
 		currentFloor = DungeonFloor.UNKNOWN;
 		lastKnownKuudraFloor = DungeonFloor.UNKNOWN;
 		insideKuudra = false;
@@ -3489,9 +3719,17 @@ public final class DungeonRunTrackerFeature {
 	private void beginNewKuudraRun(long now, DungeonFloor tier) {
 		flushPendingLootRecord();
 		startCurrentRunTiming(now);
+		currentRunCompletionFingerprint = "";
 		// Prefer a freshly detected tier. Do not silently inherit a sticky Hot (K2) floor from
 		// earlier farming when this Hollow visit has not announced Infernal/T5 yet.
 		DungeonFloor runTier = tier != null && tier.isKuudra() ? tier : DungeonFloor.UNKNOWN;
+		RunSession run = trackingSession.startRun(
+			RunMode.KUUDRA,
+			runTier,
+			DetectionSource.STRUCTURED_CHAT,
+			EvidenceStrength.STRUCTURED_CHAT
+		);
+		activeRunSessionId = run.id();
 		currentFloor = runTier;
 		lastKnownKuudraFloor = runTier.isKuudra() ? runTier : DungeonFloor.UNKNOWN;
 		if (runTier.isKuudra()) {
@@ -3526,10 +3764,13 @@ public final class DungeonRunTrackerFeature {
 		lootCollectionUntilMillis = 0L;
 		pendingLootRunNumber = runNumber;
 		pendingLootRunTimestamp = now;
+		pendingChestSessionId = nextChestSessionId(runNumber > 0 ? activeRunSessionId : "");
 		pendingLootFloor = floor;
+		pendingLootOrphaned = runNumber <= 0;
 		pendingLootChestTitle = "";
 		pendingLootCostBreakdown = new ChestCostBreakdown();
 		pendingLootSeededFromGui = false;
+		pendingLootReconcilingGuiChat = false;
 		pendingLootChestAssigned = false;
 		openedRewardChestsInLootWindow = preserveOpenCount ? preservedOpenCount : 0;
 		openedRewardChestTitlesInLootWindow.clear();
@@ -3540,6 +3781,14 @@ public final class DungeonRunTrackerFeature {
 		rewardMenuKismetRerollPending = false;
 		rewardMenuKismetRerolledChestTitle = "";
 		pendingLootEntries.clear();
+		pendingChestLootDedupKeys.clear();
+	}
+
+	private DungeonFloor rewardContextFloorFromTitle(String normalizedTitle) {
+		if (normalizedTitle == null || normalizedTitle.isBlank()) return DungeonFloor.UNKNOWN;
+		DungeonFloor kuudraTier = detectKuudraTierFromLine(normalizedTitle, normalizedTitle.contains("KUUDRA"));
+		if (kuudraTier != DungeonFloor.UNKNOWN) return kuudraTier;
+		return detectFloorFromLine(normalizedTitle);
 	}
 
 	public synchronized void recordManualRun(DungeonRunRecord record, long runTimeMs) {
@@ -3548,10 +3797,27 @@ public final class DungeonRunTrackerFeature {
 		String key = record.floor;
 		String g = record.grade;
 
-		DrtConfigManager.addRunRecord(record);
+		var recordCommit = DrtConfigManager.addRunRecord(record);
+		if (recordCommit != dev.vy.drt.config.RunRecordCommitDecision.ADD_INCOMING) {
+			recordDuplicateCommitDiagnostic(recordCommit, record);
+			resyncLifetimeFromConfig();
+			return;
+		}
+		String completionFingerprint = record.commitFingerprint == null || record.commitFingerprint.isBlank()
+			? "manual|" + buildLootCommitFingerprint(record)
+			: "manual|" + record.commitFingerprint;
+		DrtConfigManager.addRunCompletionRecord(new DungeonRunCompletionRecord(
+			now,
+			configFloor(key).isKuudra() ? RunMode.KUUDRA.name() : RunMode.DUNGEON.name(),
+			key,
+			g,
+			runTimeMs,
+			record.runSessionId,
+			completionFingerprint
+		));
 
-		int newCount = floorRunCounts.merge(key, 1, Integer::sum);
-		DrtConfigManager.updateFloorRunCount(key, newCount);
+		resyncLifetimeFromConfig();
+		int newCount = floorRunCounts.getOrDefault(key, 0);
 		gradeRunCounts.merge(g, 1, Integer::sum);
 		sessionGradeRuns.merge(g, 1, Integer::sum);
 		lastRecordedGrade = g;
@@ -3574,36 +3840,59 @@ public final class DungeonRunTrackerFeature {
 			sessionInRunMillis += runTimeMs;
 			accumulateLifetimeRunTime(key, runTimeMs);
 		}
-
-		resyncLifetimeFromConfig();
 		DungeonRunTracker.LOGGER.info("[DRT] *** MANUAL RUN RECORDED: floor={} grade={} totalForFloor={} profit={} runTimeMs={}", key, g, newCount, profit, runTimeMs);
 	}
 
 	private synchronized void recordCompletedRun(long now, DungeonFloor floor, String grade) {
 		String key = floor != null && floor != DungeonFloor.UNKNOWN ? floor.name() : "UNKNOWN";
 		String g = grade == null || grade.isBlank() ? "?" : grade;
-		if (lastRunRecordMillis > 0L && now - lastRunRecordMillis <= RUN_COMPLETION_DEDUP_WINDOW_MS) {
+		long bossTimeMs = Math.max(0L, currentRunBossTimeMs);
+		String incomingCompletionShape = key + "|" + g + "|" + bossTimeMs;
+		RunSession existingRun = activeRunSessionId == null || activeRunSessionId.isBlank()
+			? null
+			: trackingSession.run(activeRunSessionId);
+		if (existingRun != null && existingRun.state() == RunState.COMPLETED) {
+			if (completionShape(currentRunCompletionFingerprint).equals(incomingCompletionShape)) {
+				recordCompletionDuplicateDecision(currentRunCompletionFingerprint, now, key, g);
+				runCountedThisDungeon = true;
+				return;
+			}
+			existingRun = null;
+			activeRunSessionId = "";
+			currentRunCompletionFingerprint = "";
+		}
+		if (activeRunSessionId == null || activeRunSessionId.isBlank() || existingRun == null) {
+			RunSession run = trackingSession.startRun(
+				floor != null && floor.isKuudra() ? RunMode.KUUDRA : RunMode.DUNGEON,
+				floor,
+				DetectionSource.CONFIRMED_COMPLETION,
+				EvidenceStrength.CONFIRMED_COMPLETION
+			);
+			activeRunSessionId = run.id();
+		}
+		String completionFingerprint = activeRunSessionId + "|" + incomingCompletionShape;
+		boolean completedBySession = trackingSession.completeRun(activeRunSessionId, floor, g, completionFingerprint);
+		if (!completedBySession) {
+			if (completionFingerprint.equals(currentRunCompletionFingerprint)) {
+				recordCompletionDuplicateDecision(completionFingerprint, now, key, g);
+			} else {
+				recordCompletionDuplicateDiagnostic(completionFingerprint, now, key, g);
+			}
 			DungeonRunTracker.LOGGER.info(
-				"[DRT] Ignored duplicate completion signal: floor={} grade={} previousFloor={} previousGrade={} ageMs={}",
+				"[DRT] Ignored duplicate/conflicting completion signal for runSession={}: floor={} grade={} previousFloor={} previousGrade={}",
+				activeRunSessionId,
 				key,
 				g,
 				lastRunRecordFloor != null ? lastRunRecordFloor.name() : "UNKNOWN",
-				lastRunRecordGrade,
-				now - lastRunRecordMillis
+				lastRunRecordGrade
 			);
 			runCountedThisDungeon = true;
 			return;
 		}
+		currentRunCompletionFingerprint = completionFingerprint;
 		lastRunRecordMillis = now;
 		lastRunRecordFloor = floor != null ? floor : DungeonFloor.UNKNOWN;
 		lastRunRecordGrade = g;
-		int newCount = floorRunCounts.merge(key, 1, Integer::sum);
-		DrtConfigManager.updateFloorRunCount(key, newCount);
-		gradeRunCounts.merge(g, 1, Integer::sum);
-		sessionGradeRuns.merge(g, 1, Integer::sum);
-		lastRecordedGrade = g;
-		runCountedThisDungeon = true;
-		DungeonRunTracker.LOGGER.info("[DRT] *** RUN RECORDED: floor={} grade={} totalForFloor={} allFloors={}", key, g, newCount, floorRunCounts);
 
 		if (!sessionActive) {
 			sessionActive = true;
@@ -3612,6 +3901,32 @@ public final class DungeonRunTrackerFeature {
 		long wallRunTimeMs = finishCurrentRunTiming(now);
 		if (wallRunTimeMs <= 0L) wallRunTimeMs = lastFinishedRunTimeMs;
 		long runTimeMs = currentRunBossTimeMs > 0L ? currentRunBossTimeMs : wallRunTimeMs;
+		DungeonRunCompletionRecord completionRecord = new DungeonRunCompletionRecord(
+			now,
+			floor != null && floor.isKuudra() ? RunMode.KUUDRA.name() : RunMode.DUNGEON.name(),
+			key,
+			g,
+			runTimeMs,
+			activeRunSessionId,
+			completionFingerprint
+		);
+		var completionCommit = DrtConfigManager.addRunCompletionRecord(completionRecord);
+		if (completionCommit != dev.vy.drt.config.RunRecordCommitDecision.ADD_INCOMING) {
+			if (completionCommit == dev.vy.drt.config.RunRecordCommitDecision.KEEP_EXISTING) {
+				recordCompletionDuplicateDecision(completionFingerprint, now, key, g);
+			} else {
+				recordCompletionDuplicateDiagnostic(completionFingerprint, now, key, g);
+			}
+			runCountedThisDungeon = true;
+			return;
+		}
+		resyncLifetimeFromConfig();
+		int newCount = floorRunCounts.getOrDefault(key, 0);
+		gradeRunCounts.merge(g, 1, Integer::sum);
+		sessionGradeRuns.merge(g, 1, Integer::sum);
+		lastRecordedGrade = g;
+		runCountedThisDungeon = true;
+		DungeonRunTracker.LOGGER.info("[DRT] *** RUN RECORDED: floor={} grade={} totalForFloor={} allFloors={}", key, g, newCount, floorRunCounts);
 		sessionTotalRunTimeMs += runTimeMs;
 		sessionFloorRunTimeTotals.merge(key, runTimeMs, Long::sum);
 		accumulateLifetimeRunTime(key, runTimeMs);
@@ -3623,15 +3938,15 @@ public final class DungeonRunTrackerFeature {
 		startLootWindow(now, totalRunsCompleted(), floor != null ? floor : DungeonFloor.UNKNOWN);
 	}
 
-	private void startAdHocLootWindow(long now) {
-		int nextRunNumber = Math.max(totalRunsCompleted(), DrtConfigManager.getRunHistory().size()) + 1;
-		startLootWindow(now, nextRunNumber, bestAdHocLootFloor());
+	private String completionShape(String completionFingerprint) {
+		if (completionFingerprint == null || completionFingerprint.isBlank()) return "";
+		String[] parts = completionFingerprint.split("\\|", 4);
+		return parts.length == 4 ? parts[1] + "|" + parts[2] + "|" + parts[3] : completionFingerprint;
 	}
 
-	private DungeonFloor bestAdHocLootFloor() {
-		DungeonFloor kuudraFloor = currentKuudraFloorForPricing();
-		if (kuudraFloor != null && kuudraFloor.isKuudra() && (insideKuudra || isCurrentFloorKuudra())) return kuudraFloor;
-		return currentFloor != null ? currentFloor : DungeonFloor.UNKNOWN;
+	private void startAdHocLootWindow(long now) {
+		startLootWindow(now, 0, DungeonFloor.UNKNOWN);
+		recordOrphanChestDiagnostic("ad_hoc_reward_without_run_owner", now);
 	}
 
 	private void clearLootWindow() {
@@ -3639,10 +3954,13 @@ public final class DungeonRunTrackerFeature {
 		lootCollectionUntilMillis = 0L;
 		pendingLootRunNumber = 0;
 		pendingLootRunTimestamp = 0L;
+		pendingChestSessionId = "";
 		pendingLootFloor = DungeonFloor.UNKNOWN;
+		pendingLootOrphaned = false;
 		pendingLootChestTitle = "";
 		pendingLootCostBreakdown = new ChestCostBreakdown();
 		pendingLootSeededFromGui = false;
+		pendingLootReconcilingGuiChat = false;
 		pendingLootChestAssigned = false;
 		openedRewardChestsInLootWindow = 0;
 		openedRewardChestTitlesInLootWindow.clear();
@@ -3664,9 +3982,12 @@ public final class DungeonRunTrackerFeature {
 		lastOpenedRewardChestTitleForChat = "";
 		armedPreviewRewardChestTitle = "";
 		recentLootMessages.clear();
+		pendingChestLootDedupKeys.clear();
+		ignoredPlayerInventoryDiagnosticKeys.clear();
 	}
 
 	private void handleLootMessage(String rawText, String cleaned, long now) {
+		if (isDrtClientMessage(cleaned) || isDrtClientMessage(rawText)) return;
 		if ((lootWindowUntilMillis <= 0L || now > lootWindowUntilMillis) && isLootHeader(cleaned)) {
 			startAdHocLootWindow(now);
 		}
@@ -3680,10 +4001,8 @@ public final class DungeonRunTrackerFeature {
 				&& chatChestTitle != null
 				&& toDisplayChestTitle(chatChestTitle).equalsIgnoreCase(pendingLootChestTitle);
 			if (sameChest && pendingLootSeededFromGui) {
-				// Same open as the GUI capture — chat wins. Replace GUI loot, do not create a second record.
-				pendingLootEntries.clear();
-				pendingLootSeededFromGui = false;
-				recentLootMessages.clear();
+				// Same open as the GUI capture — reconcile chat with GUI instead of destroying GUI observations.
+				pendingLootReconcilingGuiChat = true;
 			} else if (sameChest && !pendingLootEntries.isEmpty()) {
 				// Second CHEST REWARDS for the same tier (multi-run Croesus) — save the previous open.
 				flushPendingLootRecord(true);
@@ -3698,11 +4017,12 @@ public final class DungeonRunTrackerFeature {
 			return;
 		}
 		if (lootCollectionUntilMillis <= 0L || now > lootCollectionUntilMillis) return;
-		if (!markLootLineForProcessing(cleaned, now)) return;
 		DungeonLootEntry parsed = parseLootEntry(rawText, cleaned);
 		if (parsed == null) return;
-		mergePendingLootEntry(parsed);
-		pendingLootSeededFromGui = false;
+		observeTrackingLoot(parsed, DetectionSource.STRUCTURED_CHAT, -1, -1, SlotOwner.SERVER_CONTAINER, cleaned);
+		if (!markLootLineForProcessing(cleaned, now)) return;
+		mergePendingLootEntry(parsed, pendingLootSeededFromGui || pendingLootReconcilingGuiChat);
+		if (!pendingLootReconcilingGuiChat) pendingLootSeededFromGui = false;
 		lootCollectionUntilMillis = now + LOOT_COLLECTION_MS;
 	}
 
@@ -3838,6 +4158,78 @@ public final class DungeonRunTrackerFeature {
 		return stripped == null ? "" : stripped.trim();
 	}
 
+	private boolean isServerOwnedSlot(Slot slot) {
+		return slot != null && !isPlayerInventorySlot(slot);
+	}
+
+	private boolean isPlayerInventorySlot(Slot slot) {
+		if (slot == null) return false;
+		Minecraft client = Minecraft.getInstance();
+		return client != null
+			&& client.player != null
+			&& slot.container == client.player.getInventory();
+	}
+
+	private void diagnoseRejectedPlayerInventoryStack(Slot slot, String handler) {
+		if (slot == null) return;
+		ItemStack stack = slot.getItem();
+		if (stack == null || stack.isEmpty()) return;
+		String name = cleanText(stack.getHoverName().getString());
+		String normalizedName = normalize(name);
+		DungeonFloor keyTier = detectKuudraKeyTierFromText(name);
+		boolean costAuthorityAttempt = false;
+		boolean keyOrModifierLike = normalizedName.contains("KUUDRA KEY")
+			|| normalizedName.contains("DUNGEON CHEST KEY")
+			|| normalizedName.contains("KISMET FEATHER")
+			|| normalizedName.contains("WHEEL OF FATE");
+		for (String line : cleanLoreLines(stack)) {
+			DungeonFloor fromLore = detectKuudraKeyTierFromText(line);
+			if (kuudraTierNumber(fromLore) > kuudraTierNumber(keyTier)) keyTier = fromLore;
+			String normalized = normalize(line);
+			if (lineIndicatesDungeonChestKeyRequirement(normalized)
+				|| lineIndicatesDungeonChestKeyUsed(normalized)
+				|| lineIndicatesKismetUsed(normalized)
+				|| lineIndicatesWheelOfFateUsed(normalized)) {
+				costAuthorityAttempt = true;
+			}
+		}
+		if (!keyTier.isKuudra() && !costAuthorityAttempt && !keyOrModifierLike) return;
+		String category = keyTier.isKuudra()
+			? "KUUDRA_KEY"
+			: costAuthorityAttempt ? "CHEST_COST_MARKER" : "REWARD_MODIFIER_ITEM";
+		String dedupKey = handler + "|" + category + "|" + floorName(keyTier);
+		if (!ignoredPlayerInventoryDiagnosticKeys.add(dedupKey)) return;
+		if (ignoredPlayerInventoryDiagnosticKeys.size() > 128) ignoredPlayerInventoryDiagnosticKeys.clear();
+		DetectionEvent event = diagnostics.recordEvent(
+			DetectionEventType.CONTAINER_SNAPSHOT,
+			DetectionSource.PLAYER_INVENTORY,
+			diagnosticPayload(
+				"slotOwner", "PLAYER_INVENTORY",
+				"itemCategory", category,
+				"attemptedFloor", floorName(keyTier),
+				"currentFloor", floorName(currentFloor),
+				"pendingLootFloor", floorName(pendingLootFloor),
+				"pendingChestSessionId", pendingChestSessionId,
+				"pendingRunSessionId", activeRunSessionId
+			)
+		);
+		diagnostics.recordDecision(
+			event,
+			"DungeonRunTrackerFeature." + handler,
+			"IGNORE_PLAYER_INVENTORY_STACK",
+			"passive_player_inventory_scan_has_no_tracking_authority",
+			activeRunSessionId,
+			pendingChestSessionId,
+			"",
+			dedupKey,
+			diagnosticPayload(
+				"slotOwner", "PLAYER_INVENTORY",
+				"itemCategory", category,
+				"attemptedFloor", floorName(keyTier)
+			)
+		);
+	}
+
 	private Long parseCoins(String line) {
 		Matcher matcher = COIN_PATTERN.matcher(cleanText(line));
 		if (!matcher.find()) return null;
@@ -3855,12 +4247,66 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private void mergePendingLootEntry(DungeonLootEntry incoming) {
+		mergePendingLootEntry(incoming, pendingLootSeededFromGui);
+	}
+
+	private void observeTrackingLoot(
+		DungeonLootEntry incoming,
+		DetectionSource source,
+		int containerId,
+		int slotIndex,
+		SlotOwner slotOwner,
+		String dedupBasis
+	) {
+		if (incoming == null || pendingChestSessionId == null || pendingChestSessionId.isBlank()) return;
+		String normalizedName = sanitizeLootName(incoming.rawName).toUpperCase(Locale.ROOT);
+		String identityKey = lootKey(incoming);
+		String dedupKey = pendingChestSessionId + "|"
+			+ (source == null ? DetectionSource.NONE : source).name() + "|"
+			+ (dedupBasis == null || dedupBasis.isBlank() ? identityKey : dedupBasis.trim()) + "|"
+			+ Math.max(1, incoming.quantity);
+		DetectionEvent event = diagnostics.recordEvent(
+			DetectionEventType.LOOT_OBSERVED,
+			source == null ? DetectionSource.NONE : source,
+			diagnosticPayload(
+				"pendingChestSessionId", pendingChestSessionId,
+				"rawName", incoming.rawName,
+				"normalizedName", normalizedName,
+				"itemId", incoming.itemId,
+				"quantity", Math.max(1, incoming.quantity),
+				"containerId", containerId,
+				"slotIndex", slotIndex,
+				"slotOwner", slotOwner == null ? SlotOwner.UNKNOWN : slotOwner
+			)
+		);
+		trackingSession.observeLoot(pendingChestSessionId, new LootObservation(
+			pendingChestSessionId + "-loot-" + event.sequence(),
+			event.sequence(),
+			source,
+			incoming.rawName,
+			normalizedName,
+			incoming.itemId,
+			lootIdentityStrength(incoming),
+			Math.max(1, incoming.quantity),
+			containerId,
+			slotIndex,
+			slotOwner,
+			dedupKey
+		));
+	}
+
+	private LootIdentityStrength lootIdentityStrength(DungeonLootEntry entry) {
+		if (entry == null || entry.itemId == null || entry.itemId.isBlank()) return LootIdentityStrength.UNRESOLVED;
+		return LootIdentityStrength.STRICT_ALIAS;
+	}
+
+	private void mergePendingLootEntry(DungeonLootEntry incoming, boolean maxOnDuplicate) {
 		if (incoming == null) return;
 		String incomingKey = lootKey(incoming);
 		DungeonLootEntry target = null;
 		for (DungeonLootEntry existing : pendingLootEntries) {
 			if (lootKey(existing).equals(incomingKey)) {
-				if (pendingLootSeededFromGui) {
+				if (maxOnDuplicate) {
 					existing.quantity = Math.max(existing.quantity, incoming.quantity);
 				} else {
 					existing.quantity += incoming.quantity;
@@ -3878,7 +4324,16 @@ public final class DungeonRunTrackerFeature {
 
 	private void warnLootGuardsForEntry(DungeonLootEntry entry) {
 		if (entry == null) return;
-		for (String reason : LootFloorGuards.evaluate(pendingLootFloor, pendingLootChestTitle, entry)) {
+		if (entry.itemId == null || entry.itemId.isBlank()) {
+			recordUnresolvedItemDiagnostic(entry.rawName, sanitizeLootName(entry.rawName).toUpperCase(Locale.ROOT));
+			return;
+		}
+		DungeonFloor guardFloor = authoritativePendingChestFloor();
+		if (hasLootContextConflict()) {
+			recordContextConflictDiagnostic("warnLootGuardsForEntry", "context_conflict_blocks_loot_guard", guardFloor);
+			return;
+		}
+		for (String reason : LootFloorGuards.evaluate(guardFloor, pendingLootChestTitle, entry)) {
 			String key = lootKey(entry) + "|" + reason;
 			if (!lootGuardWarnedKeys.add(key)) continue;
 			String report = buildLootGuardReport(reason, entry);
@@ -3888,7 +4343,12 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private void warnLootGuardsForChest(List<DungeonLootEntry> entries) {
-		for (String reason : LootFloorGuards.evaluateChest(pendingLootFloor, pendingLootChestTitle, entries)) {
+		DungeonFloor guardFloor = authoritativePendingChestFloor();
+		if (hasLootContextConflict()) {
+			recordContextConflictDiagnostic("warnLootGuardsForChest", "context_conflict_blocks_loot_guard", guardFloor);
+			return;
+		}
+		for (String reason : LootFloorGuards.evaluateChest(guardFloor, pendingLootChestTitle, entries)) {
 			String key = "chest|" + reason;
 			if (!lootGuardWarnedKeys.add(key)) continue;
 			String report = buildLootGuardReport(reason, null);
@@ -3936,6 +4396,13 @@ public final class DungeonRunTrackerFeature {
 		sb.append("inDungeonHub=").append(inDungeonHub).append('\n');
 		sb.append("inCrimsonIsle=").append(inCrimsonIsle).append('\n');
 		sb.append("currentFloorIsKuudra=").append(isCurrentFloorKuudra()).append('\n');
+		sb.append("kuudraFaction=").append(nullToEmpty(DrtConfigManager.getConfig().kuudraFaction)).append('\n');
+		sb.append("kuudraReputation=").append(DrtConfigManager.getConfig().kuudraReputationKnown
+			? Integer.toString(DrtConfigManager.getConfig().kuudraReputation)
+			: "unknown").append('\n');
+		sb.append("kuudraKeyCoinDiscountPercent=").append(DrtConfigManager.getConfig().kuudraReputationKnown
+			? DungeonProfitPricing.kuudraKeyCoinDiscountPercent(DrtConfigManager.getConfig().kuudraReputation)
+			: 0).append('\n');
 		sb.append("dungeonSignalMsLeft=").append(Math.max(0L, dungeonSignalUntilMillis - now)).append('\n');
 		sb.append("kuudraSignalMsLeft=").append(Math.max(0L, kuudraSignalUntilMillis - now)).append('\n');
 		sb.append('\n');
@@ -4014,8 +4481,447 @@ public final class DungeonRunTrackerFeature {
 		return floor == null ? "null" : floor.name();
 	}
 
+	private static DungeonFloor configFloor(String floor) {
+		if (floor == null || floor.isBlank()) return DungeonFloor.UNKNOWN;
+		try {
+			return DungeonFloor.valueOf(floor.trim().toUpperCase(Locale.ROOT));
+		} catch (IllegalArgumentException ignored) {
+			return DungeonFloor.UNKNOWN;
+		}
+	}
+
 	private static String nullToEmpty(String value) {
 		return value == null ? "" : value;
+	}
+
+	private Map<String, Object> diagnosticEnvironment() {
+		Minecraft client = Minecraft.getInstance();
+		return diagnosticPayload(
+			"reportSchema", DiagnosticRecorder.REPORT_SCHEMA,
+			"modVersion", drtModVersion(),
+			"minecraft", minecraftVersionName(),
+			"java", System.getProperty("java.version", "unknown"),
+			"os", System.getProperty("os.name", "unknown"),
+			"server", client == null ? "unknown" : connectedServerLabel(client)
+		);
+	}
+
+	private Map<String, Object> diagnosticState() {
+		Map<String, Object> state = new LinkedHashMap<>(diagnosticPayload(
+			"activeRunSessionId", activeRunSessionId,
+			"pendingChestSessionId", pendingChestSessionId,
+			"currentFloor", floorName(currentFloor),
+			"pendingLootFloor", floorName(pendingLootFloor),
+			"pendingLootOrphaned", pendingLootOrphaned,
+			"pendingLootChestTitle", pendingLootChestTitle,
+			"pendingLootRunNumber", pendingLootRunNumber,
+			"currentRunActive", currentRunActive,
+			"runCountedThisDungeon", runCountedThisDungeon,
+			"completionFingerprint", currentRunCompletionFingerprint,
+			"insideDungeon", insideDungeon,
+			"insideKuudra", insideKuudra,
+			"pendingLootEntries", pendingLootEntries.size()
+		));
+		return state;
+	}
+
+	private Map<String, Object> diagnosticState(DiagnosticIncident incident) {
+		Map<String, Object> state = new LinkedHashMap<>(diagnosticState());
+		if (incident != null && SyntheticDiagnosticIncidentFactory.INCIDENT_TYPE.equals(incident.incidentType())) {
+			state.putAll(SyntheticDiagnosticIncidentFactory.expected(incident));
+		}
+		return state;
+	}
+
+	private Map<String, Object> diagnosticExpected(DiagnosticIncident incident) {
+		Map<String, Object> expected = new LinkedHashMap<>(diagnosticPayload(
+			"invariants", diagnostics.incidents().stream()
+				.flatMap(existingIncident -> existingIncident.invariants().stream())
+				.map(Enum::name)
+				.distinct()
+				.toList(),
+			"activeRunSessionId", activeRunSessionId,
+			"pendingChestSessionId", pendingChestSessionId,
+			"pendingLootOrphaned", pendingLootOrphaned
+		));
+		if (incident != null && SyntheticDiagnosticIncidentFactory.INCIDENT_TYPE.equals(incident.incidentType())) {
+			expected.putAll(SyntheticDiagnosticIncidentFactory.expected(incident));
+		}
+		return expected;
+	}
+
+	private Map<String, Object> diagnosticPayload(Object... keyValues) {
+		Map<String, Object> payload = new LinkedHashMap<>();
+		for (int i = 0; i + 1 < keyValues.length; i += 2) {
+			Object key = keyValues[i];
+			Object value = keyValues[i + 1];
+			if (key != null && value != null) payload.put(String.valueOf(key), value);
+		}
+		return payload;
+	}
+
+	private void notifyTrackingIncidentInChat(DiagnosticIncident incident) {
+		if (incident == null || incident.userNotified()) return;
+		Minecraft client = Minecraft.getInstance();
+		if (client.player == null) return;
+		var message = Component.literal("[DRT] \u26A0 Tracking issue detected.\n")
+			.withStyle(Style.EMPTY.withColor(ChatFormatting.GOLD))
+			.append(Component.literal("Something inconsistent happened while tracking this run/chest.\n")
+				.withStyle(ChatFormatting.YELLOW))
+			.append(Component.literal("[Export Bug]")
+				.withStyle(Style.EMPTY
+					.withColor(ChatFormatting.AQUA)
+					.withUnderlined(true)
+					.withClickEvent(new ClickEvent.RunCommand("/drt debug exportbug " + incident.id()))
+					.withHoverEvent(new HoverEvent.ShowText(Component.literal("Save the replay bundle and report.txt for this issue")))));
+		//? if >= 26.1 {
+		client.player.sendSystemMessage(message);
+		//? } else {
+		/*client.player.displayClientMessage(message, false);
+		*///?}
+		incident.markUserNotified();
+	}
+
+	public boolean triggerSyntheticDiagnosticIncident(String mode) {
+		String normalized = mode == null ? "" : mode.trim().toLowerCase(Locale.ROOT);
+		String rootKey = SyntheticDiagnosticIncidentFactory.DEFAULT_ROOT_KEY;
+		int repeats = "duplicate".equals(normalized) ? 3 : 1;
+		if ("new".equals(normalized)) {
+			rootKey = SyntheticDiagnosticIncidentFactory.DEFAULT_ROOT_KEY + "|new|" + UUID.randomUUID();
+		}
+		DiagnosticIncident first = null;
+		for (int i = 0; i < repeats; i++) {
+			DiagnosticIncident incident = SyntheticDiagnosticIncidentFactory.record(diagnostics, rootKey, i);
+			if (first == null) first = incident;
+			notifyTrackingIncidentInChat(incident);
+		}
+		DungeonRunTracker.LOGGER.info(
+			"[DRT] Synthetic diagnostic incident triggered: mode={} reportId={} repeats={}",
+			normalized.isBlank() ? "default" : normalized,
+			first == null ? "" : first.id(),
+			repeats
+		);
+		return first != null;
+	}
+
+	public boolean copyDiagnosticReportToClipboard(String reportId) {
+		DiagnosticIncident incident = diagnostics.incidentById(reportId);
+		Minecraft client = Minecraft.getInstance();
+		if (client.player == null) return false;
+		if (incident == null) {
+			sendDrtSystemMessage(client, Component.literal("§c[DRT] Diagnostic report not found: " + nullToEmpty(reportId)));
+			return false;
+		}
+		String report = diagnostics.buildHumanReport(incident, diagnosticState(incident));
+		client.keyboardHandler.setClipboard(report);
+		sendDrtSystemMessage(client, Component.literal("§a[DRT] Diagnostic report copied to clipboard."));
+		return true;
+	}
+
+	public boolean saveDiagnosticReplay(String reportId) {
+		return exportDiagnosticBug(reportId);
+	}
+
+	public boolean exportDiagnosticBug(String reportId) {
+		DiagnosticIncident incident = diagnostics.incidentById(reportId);
+		Minecraft client = Minecraft.getInstance();
+		if (client.player == null) return false;
+		if (incident == null) {
+			sendDrtSystemMessage(client, Component.literal("§c[DRT] Diagnostic report not found: " + nullToEmpty(reportId)));
+			return false;
+		}
+		try {
+			Path replayDir = diagnostics.saveReplayBundle(
+				diagnosticReplayParentDir(),
+				incident,
+				diagnosticExpected(incident),
+				diagnosticState(incident)
+			);
+			var message = Component.literal("§a[DRT] Bug export saved successfully.\n")
+				.append(Component.literal("[Copy Path]")
+					.withStyle(Style.EMPTY
+						.withColor(ChatFormatting.GREEN)
+						.withUnderlined(true)
+						.withClickEvent(new ClickEvent.CopyToClipboard(replayDir.toAbsolutePath().toString()))
+						.withHoverEvent(new HoverEvent.ShowText(Component.literal("Copy saved bug export folder path")))));
+			sendDrtSystemMessage(client, message);
+			return true;
+		} catch (Exception e) {
+			DungeonRunTracker.LOGGER.warn("[DRT] Failed to save diagnostic bug export: {}", e.getMessage());
+			sendDrtSystemMessage(client, Component.literal("§c[DRT] Failed to export bug: " + e.getMessage()));
+			return false;
+		}
+	}
+
+	private Path diagnosticReplayParentDir() {
+		return net.fabricmc.loader.api.FabricLoader.getInstance().getConfigDir()
+			.resolve("drt")
+			.resolve("replays");
+	}
+
+	private void sendDrtSystemMessage(Minecraft client, Component message) {
+		if (client == null || client.player == null || message == null) return;
+		//? if >= 26.1 {
+		client.player.sendSystemMessage(message);
+		//? } else {
+		/*client.player.displayClientMessage(message, false);
+		*///?}
+	}
+
+	private boolean menuTitleConflictsWithActiveRun(DungeonFloor titleFloor) {
+		if (titleFloor == null || titleFloor == DungeonFloor.UNKNOWN) return false;
+		if (!currentRunActive && (activeRunSessionId == null || activeRunSessionId.isBlank())) return false;
+		DungeonFloor activeFloor = activeRunFloorProjection();
+		if (activeFloor == DungeonFloor.UNKNOWN) return false;
+		return activeFloor != titleFloor;
+	}
+
+	private boolean hasLootContextConflict() {
+		ChestSession chest = trackingSession.chest(pendingChestSessionId);
+		if (chest != null && chest.state() == dev.vy.drt.tracking.ChestState.CONFLICTED) return true;
+		DungeonFloor chestFloor = authoritativePendingChestFloor();
+		if (chestFloor == DungeonFloor.UNKNOWN) return false;
+		DungeonFloor activeFloor = activeRunFloorProjection();
+		if (activeFloor == DungeonFloor.UNKNOWN) return false;
+		if (pendingLootRunNumber > 0 && !pendingLootOrphaned) return false;
+		return chestFloor != activeFloor;
+	}
+
+	private void recordContextConflictDiagnostic(String handler, String reason, DungeonFloor incomingFloor) {
+		DetectionEvent event = diagnostics.recordEvent(
+			DetectionEventType.RUN_EVIDENCE,
+			DetectionSource.GUI_TITLE_INFERENCE,
+			diagnosticPayload(
+				"incomingFloor", floorName(incomingFloor),
+				"currentFloor", floorName(activeRunFloorProjection()),
+				"pendingLootFloor", floorName(pendingLootFloor),
+				"activeRunSessionId", activeRunSessionId,
+				"pendingChestSessionId", pendingChestSessionId
+			)
+		);
+		DiagnosticIncident incident = diagnostics.recordInvariantViolation(
+			TrackerInvariant.CONTEXT_CONFLICT_BLOCKS_NORMAL_LOOT_GUARD,
+			DiagnosticSeverity.ERROR,
+			event,
+			"context-conflict|" + floorName(activeRunFloorProjection()) + "|" + floorName(incomingFloor) + "|" + pendingChestSessionId,
+			"Reward context conflicted with active run context. The active run was preserved and normal floor-specific loot guard checks were blocked.",
+			"DungeonRunTrackerFeature." + handler,
+			handler,
+			"REJECT_CONFLICTING_CONTEXT",
+			reason,
+			activeRunSessionId,
+			pendingChestSessionId,
+			"",
+			"context|" + floorName(activeRunFloorProjection()) + "|" + floorName(incomingFloor),
+			diagnosticPayload(
+				"currentFloor", floorName(activeRunFloorProjection()),
+				"incomingFloor", floorName(incomingFloor),
+				"pendingLootFloor", floorName(pendingLootFloor),
+				"pendingLootOrphaned", pendingLootOrphaned
+			)
+		);
+		notifyTrackingIncidentInChat(incident);
+	}
+
+	private void recordCompletionDuplicateDiagnostic(String incomingFingerprint, long now, String floor, String grade) {
+		DetectionEvent event = diagnostics.recordEvent(
+			DetectionEventType.RUN_COMPLETED,
+			DetectionSource.CONFIRMED_COMPLETION,
+			diagnosticPayload(
+				"incomingFingerprint", incomingFingerprint,
+				"existingFingerprint", currentRunCompletionFingerprint,
+				"floor", floor,
+				"grade", grade,
+				"atMillis", now
+			)
+		);
+		DiagnosticIncident incident = diagnostics.recordInvariantViolation(
+			TrackerInvariant.ONE_RUN_COMPLETION_COUNTS_AT_MOST_ONCE,
+			DiagnosticSeverity.WARN,
+			event,
+			"completion-duplicate|" + activeRunSessionId,
+			"A completion signal arrived for a RunSession that was already completed. It was ignored.",
+			"DungeonRunTrackerFeature.recordCompletedRun",
+			"recordCompletedRun",
+			"IGNORE_DUPLICATE_COMPLETION",
+			"run_session_already_completed",
+			activeRunSessionId,
+			pendingChestSessionId,
+			"",
+			incomingFingerprint,
+			diagnosticPayload("existingFingerprint", currentRunCompletionFingerprint, "incomingFingerprint", incomingFingerprint)
+		);
+		notifyTrackingIncidentInChat(incident);
+	}
+
+	private void recordCompletionDuplicateDecision(String incomingFingerprint, long now, String floor, String grade) {
+		DetectionEvent event = diagnostics.recordEvent(
+			DetectionEventType.RUN_COMPLETED,
+			DetectionSource.CONFIRMED_COMPLETION,
+			diagnosticPayload(
+				"incomingFingerprint", incomingFingerprint,
+				"existingFingerprint", currentRunCompletionFingerprint,
+				"floor", floor,
+				"grade", grade,
+				"atMillis", now
+			)
+		);
+		diagnostics.recordDecision(
+			event,
+			"recordCompletedRun",
+			"IGNORE_DUPLICATE_COMPLETION",
+			"same_completion_signal",
+			activeRunSessionId,
+			pendingChestSessionId,
+			"",
+			incomingFingerprint,
+			diagnosticPayload("existingFingerprint", currentRunCompletionFingerprint, "incomingFingerprint", incomingFingerprint)
+		);
+	}
+
+	private void recordOrphanChestDiagnostic(String reason, long now) {
+		DetectionEvent event = diagnostics.recordEvent(
+			DetectionEventType.CHEST_OPENED,
+			DetectionSource.RECENT_CONTEXT,
+			diagnosticPayload(
+				"reason", reason,
+				"atMillis", now,
+				"currentFloor", floorName(currentFloor),
+				"pendingLootFloor", floorName(pendingLootFloor),
+				"pendingChestSessionId", pendingChestSessionId
+			)
+		);
+		DiagnosticIncident incident = diagnostics.recordInvariantViolation(
+			TrackerInvariant.ORPHAN_CHEST_CANNOT_SILENTLY_INVENT_RUN,
+			DiagnosticSeverity.WARN,
+			event,
+			"orphan-chest|" + pendingChestSessionId,
+			"Reward loot appeared without deterministic run ownership. DRT kept it unassigned instead of inventing a synthetic run.",
+			"DungeonRunTrackerFeature.startAdHocLootWindow/flushPendingLootRecord",
+			"orphanChest",
+			"KEEP_ORPHAN_UNCOMMITTED",
+			reason,
+			activeRunSessionId,
+			pendingChestSessionId,
+			"",
+			pendingChestSessionId,
+			diagnosticState()
+		);
+		notifyTrackingIncidentInChat(incident);
+	}
+
+	private void recordDuplicateCommitDiagnostic(dev.vy.drt.config.RunRecordCommitDecision decision, DungeonRunRecord record) {
+		DetectionEvent event = diagnostics.recordEvent(
+			DetectionEventType.PERSISTENCE,
+			DetectionSource.PERSISTENCE,
+			diagnosticPayload(
+				"decision", decision,
+				"commitFingerprint", record == null ? "" : record.commitFingerprint,
+				"chestSessionId", record == null ? "" : record.chestSessionId
+			)
+		);
+		DiagnosticIncident incident = diagnostics.recordInvariantViolation(
+			TrackerInvariant.DUPLICATE_SIGNAL_CANNOT_CREATE_DUPLICATE_RECORD,
+			decision == dev.vy.drt.config.RunRecordCommitDecision.CONFLICT ? DiagnosticSeverity.ERROR : DiagnosticSeverity.WARN,
+			event,
+			"duplicate-commit|" + (record == null ? "" : record.commitFingerprint),
+			"A duplicate or conflicting chest commit reached persistence. The persistence layer did not append a duplicate record.",
+			"DrtConfigManager.addRunRecord",
+			"flushPendingLootRecord",
+			decision == null ? "UNKNOWN" : decision.name(),
+			"history_commit_deduplicated",
+			record == null ? "" : record.runSessionId,
+			record == null ? "" : record.chestSessionId,
+			"",
+			record == null ? "" : record.commitFingerprint,
+			diagnosticPayload("decision", decision == null ? "" : decision.name())
+		);
+		notifyTrackingIncidentInChat(incident);
+	}
+
+	private void recordLootDedupDiagnostic(String key, String cleaned) {
+		DetectionEvent event = diagnostics.recordEvent(
+			DetectionEventType.LOOT_OBSERVED,
+			DetectionSource.STRUCTURED_CHAT,
+			diagnosticPayload("dedupKey", key, "line", cleaned, "pendingChestSessionId", pendingChestSessionId)
+		);
+		diagnostics.recordDecision(
+			event,
+			"markLootLineForProcessing",
+			"IGNORE_DUPLICATE_LOOT_LINE",
+			"chest_lifetime_dedup",
+			activeRunSessionId,
+			pendingChestSessionId,
+			"",
+			key,
+			diagnosticPayload("line", cleaned)
+		);
+	}
+
+	private void recordUnresolvedItemDiagnostic(String rawName, String normalizedName) {
+		if (normalizedName == null || normalizedName.isBlank()) return;
+		DetectionEvent event = diagnostics.recordEvent(
+			DetectionEventType.LOOT_OBSERVED,
+			DetectionSource.STRUCTURED_CHAT,
+			diagnosticPayload("rawName", rawName, "normalizedName", normalizedName, "pendingChestSessionId", pendingChestSessionId)
+		);
+		DiagnosticIncident incident = diagnostics.recordInvariantViolation(
+			TrackerInvariant.UNKNOWN_ITEM_CANNOT_USE_FIRST_SEARCH_RESULT,
+			DiagnosticSeverity.WARN,
+			event,
+			"unresolved-item|" + normalizedName,
+			"Loot identity was not an exact component ID, strict alias, or deterministic mapping. It was left unresolved.",
+			"DungeonRunTrackerFeature.resolveItemId",
+			"resolveItemId",
+			"KEEP_UNRESOLVED",
+			"no_strict_identity_mapping",
+			activeRunSessionId,
+			pendingChestSessionId,
+			"",
+			normalizedName,
+			diagnosticPayload("rawName", rawName, "normalizedName", normalizedName)
+		);
+		if (!incident.userNotified()) DungeonRunTracker.LOGGER.warn("[DRT] Unresolved loot identity: raw='{}' normalized='{}'", rawName, normalizedName);
+	}
+
+	private String openTrackingChestSession(String displayTitle, int containerId, DetectionSource source) {
+		String ownerRunId = pendingLootRunNumber > 0 && !pendingLootOrphaned ? activeRunSessionId : "";
+		String chestId = trackingSession.openChest(
+			ownerRunId,
+			displayTitle == null ? "" : displayTitle,
+			containerId,
+			source == null ? DetectionSource.CONFIRMED_GUI_COMPONENT : source
+		).id();
+		updateChestContextProjection(
+			chestId,
+			pendingLootFloor == null ? DungeonFloor.UNKNOWN : pendingLootFloor,
+			pendingLootOrphaned ? EvidenceStrength.GUI_TITLE_INFERENCE : EvidenceStrength.AUTHORITATIVE_INTERNAL_IDENTITY,
+			pendingLootOrphaned ? DetectionSource.GUI_TITLE_INFERENCE : DetectionSource.AUTHORITATIVE_INTERNAL_IDENTITY
+		);
+		return chestId;
+	}
+
+	private String nextChestSessionId(String ownerRunId) {
+		String owner = ownerRunId == null || ownerRunId.isBlank() ? "orphan" : ownerRunId;
+		return owner + "-chest-" + (++chestSessionSequence);
+	}
+
+	private String buildLootCommitFingerprint(DungeonRunRecord record) {
+		StringBuilder sb = new StringBuilder();
+		sb.append(record == null ? "" : nullToEmpty(record.runSessionId)).append('|')
+			.append(record == null ? "" : nullToEmpty(record.chestSessionId)).append('|')
+			.append(record == null ? "" : record.timestampEpochMillis).append('|')
+			.append(record == null ? "" : nullToEmpty(record.floor)).append('|')
+			.append(record == null ? "" : nullToEmpty(record.grade)).append('|')
+			.append(record == null ? "" : nullToEmpty(record.chestTitle)).append('|')
+			.append(record == null ? "" : record.totalCostCoins()).append('|');
+		if (record != null && record.lootEntries != null) {
+			for (DungeonLootEntry entry : record.lootEntries) {
+				if (entry == null) continue;
+				sb.append(lootKey(entry)).append('=').append(Math.max(1, entry.quantity)).append(';');
+			}
+		}
+		return UUID.nameUUIDFromBytes(sb.toString().getBytes(StandardCharsets.UTF_8)).toString();
 	}
 
 	private void notifyLootGuardInChat(String report) {
@@ -4038,23 +4944,87 @@ public final class DungeonRunTrackerFeature {
 		flushPendingLootRecord(false);
 	}
 
+	private List<DungeonLootEntry> authoritativePendingLootEntries() {
+		ChestSession chest = trackingSession.chest(pendingChestSessionId);
+		if (chest == null) {
+			return new ArrayList<>(pendingLootEntries);
+		}
+		List<ResolvedLoot> resolvedLoot = chest.resolvedLoot();
+		if (resolvedLoot.isEmpty()) {
+			return new ArrayList<>(pendingLootEntries);
+		}
+		List<DungeonLootEntry> entries = new ArrayList<>(resolvedLoot.size());
+		for (ResolvedLoot resolved : resolvedLoot) {
+			entries.add(new DungeonLootEntry(
+				resolved.rawName(),
+				resolved.resolved() ? resolved.itemId() : "",
+				resolved.quantity()
+			));
+		}
+		return entries;
+	}
+
+	private ChestCostBreakdown authoritativePendingChestCost() {
+		ChestSession chest = trackingSession.chest(pendingChestSessionId);
+		if (chest != null) {
+			return chest.cost();
+		}
+		return pendingLootCostBreakdown == null ? new ChestCostBreakdown() : pendingLootCostBreakdown.copy();
+	}
+
+	private DungeonFloor authoritativePendingChestFloor() {
+		ChestSession chest = trackingSession.chest(pendingChestSessionId);
+		if (chest != null && chest.contextFloor().isKnown()) {
+			DungeonFloor floor = chest.contextFloor().value();
+			return floor == null ? DungeonFloor.UNKNOWN : floor;
+		}
+		return pendingLootFloor == null ? DungeonFloor.UNKNOWN : pendingLootFloor;
+	}
+
+	private void updatePendingChestContextProjection(EvidenceStrength strength, DetectionSource source) {
+		if (pendingChestSessionId == null || pendingChestSessionId.isBlank()) return;
+		DungeonFloor floor = pendingLootFloor == null ? DungeonFloor.UNKNOWN : pendingLootFloor;
+		updateChestContextProjection(pendingChestSessionId, floor, strength, source);
+	}
+
+	private void updateChestContextProjection(String chestId, DungeonFloor floor, EvidenceStrength strength, DetectionSource source) {
+		if (chestId == null || chestId.isBlank()) return;
+		if (floor == DungeonFloor.UNKNOWN) return;
+		trackingSession.updateChestContextFloor(chestId, floor, strength, source);
+		trackingSession.updateChestContextMode(
+			chestId,
+			floor.isKuudra() ? RunMode.KUUDRA : RunMode.DUNGEON,
+			strength,
+			source
+		);
+	}
+
 	private void flushPendingLootRecord(boolean keepWindow) {
-		if (pendingLootEntries.isEmpty() || pendingLootRunNumber <= 0) {
+		List<DungeonLootEntry> committedLootEntries = authoritativePendingLootEntries();
+		if (committedLootEntries.isEmpty()) {
+			if (keepWindow) resetPendingChestState();
+			else clearLootWindow();
+			return;
+		}
+		boolean orphanCommit = canCommitUnassignedChestLoot();
+		if ((pendingLootRunNumber <= 0 || pendingLootOrphaned) && !orphanCommit) {
+			recordOrphanChestDiagnostic("orphan_loot_not_committed", System.currentTimeMillis());
 			if (keepWindow) resetPendingChestState();
 			else clearLootWindow();
 			return;
 		}
 		DrtConfig config = DrtConfigManager.getConfig();
-		for (DungeonLootEntry entry : pendingLootEntries) {
+		for (DungeonLootEntry entry : committedLootEntries) {
 			warnLootGuardsForEntry(entry);
 		}
-		warnLootGuardsForChest(pendingLootEntries);
-		long chestValueCoins = DungeonProfitPricing.calculateLootValue(pendingLootEntries, config);
-		ChestCostBreakdown costBreakdown = pendingLootCostBreakdown == null ? new ChestCostBreakdown() : pendingLootCostBreakdown.copy();
+		warnLootGuardsForChest(committedLootEntries);
+		long chestValueCoins = DungeonProfitPricing.calculateLootValue(committedLootEntries, config);
+		ChestCostBreakdown costBreakdown = authoritativePendingChestCost();
 		if (costBreakdown.usedKismetFeather) costBreakdown.kismetRerolledChestOpened = true;
 		DungeonFloor kuudraFloor = currentKuudraFloorForPricing();
-		if (pendingLootFloor == DungeonFloor.UNKNOWN && kuudraFloor != null && kuudraFloor.isKuudra()) {
+		if (!pendingLootOrphaned && pendingLootFloor == DungeonFloor.UNKNOWN && kuudraFloor != null && kuudraFloor.isKuudra()) {
 			pendingLootFloor = kuudraFloor;
+			updatePendingChestContextProjection(EvidenceStrength.RECENT_CONTEXT, DetectionSource.RECENT_CONTEXT);
 		}
 		String pendingChestTitle = pendingLootChestTitle == null ? "" : pendingLootChestTitle.toUpperCase(Locale.ROOT);
 		applyKuudraChestCostHint(pendingChestTitle, costBreakdown);
@@ -4064,7 +5034,7 @@ public final class DungeonRunTrackerFeature {
 		long chestProfitCoins = chestValueCoins - chestCostCoins;
 		DungeonRunTracker.LOGGER.info(
 			"[DRT][FLUSH] entries={} value={} cost={} base={} key={} kismet={} wheel={} kuudraKey={} profit={} floor={} chest='{}'",
-			pendingLootEntries.size(),
+			committedLootEntries.size(),
 			chestValueCoins,
 			chestCostCoins,
 			costBreakdown.baseChestCostCoins,
@@ -4073,45 +5043,79 @@ public final class DungeonRunTrackerFeature {
 			costBreakdown.wheelOfFateCostCoins,
 			costBreakdown.kuudraKeyCostCoins,
 			chestProfitCoins,
-			pendingLootFloor,
+			authoritativePendingChestFloor(),
 			pendingLootChestTitle
 		);
-		String floorName = pendingLootFloor != DungeonFloor.UNKNOWN ? pendingLootFloor.name() : "UNKNOWN";
-		String runGrade = pendingScoreGrade != null ? pendingScoreGrade : lastRecordedGrade;
+		DungeonFloor recordFloor = authoritativePendingChestFloor();
+		String floorName = recordFloor != DungeonFloor.UNKNOWN ? recordFloor.name() : "UNKNOWN";
+		String runGrade = orphanCommit ? "?" : pendingScoreGrade != null ? pendingScoreGrade : lastRecordedGrade;
 		DungeonRunRecord record = new DungeonRunRecord(
 			pendingLootRunTimestamp,
-			pendingLootRunNumber,
+			orphanCommit ? 0 : pendingLootRunNumber,
 			floorName,
 			runGrade,
 			pendingLootChestTitle,
 			chestCostCoins,
 			chestValueCoins,
 			chestProfitCoins,
-			pendingLootEntries
+			committedLootEntries
 		);
+		record.runSessionId = orphanCommit ? "" : activeRunSessionId == null ? "" : activeRunSessionId;
+		record.chestSessionId = pendingChestSessionId == null ? "" : pendingChestSessionId;
+		record.commitFingerprint = buildLootCommitFingerprint(record);
 		record.applyCostBreakdown(costBreakdown);
-		DrtConfigManager.addRunRecord(record);
-		sessionTotalProfit += chestProfitCoins;
-		sessionFloorProfitTotals.merge(floorName, chestProfitCoins, Long::sum);
+		var commitDecision = DrtConfigManager.addRunRecord(record);
+		if (commitDecision == dev.vy.drt.config.RunRecordCommitDecision.ADD_INCOMING
+			|| commitDecision == dev.vy.drt.config.RunRecordCommitDecision.REPLACE_EXISTING) {
+			trackingSession.updateChestCost(record.chestSessionId, costBreakdown);
+			trackingSession.commitChest(record.chestSessionId, record.commitFingerprint);
+			if (!orphanCommit) {
+				sessionTotalProfit += chestProfitCoins;
+				sessionFloorProfitTotals.merge(floorName, chestProfitCoins, Long::sum);
+			}
+		} else {
+			recordDuplicateCommitDiagnostic(commitDecision, record);
+		}
 		resyncLifetimeFromConfig();
 		if (keepWindow) resetPendingChestState();
 		else clearLootWindow();
 	}
 
+	private boolean canCommitUnassignedChestLoot() {
+		if (!pendingLootOrphaned) return false;
+		if (!pendingLootChestAssigned) return false;
+		if (pendingChestSessionId == null || pendingChestSessionId.isBlank()) return false;
+		ChestSession chest = trackingSession.chest(pendingChestSessionId);
+		if (chest == null) return false;
+		if (chest.state() == ChestState.COMMITTED) return false;
+		return true;
+	}
+
 	private void resetPendingChestState() {
 		lootCollectionUntilMillis = 0L;
+		pendingChestSessionId = nextChestSessionId(pendingLootRunNumber > 0 ? activeRunSessionId : "");
+		pendingLootOrphaned = pendingLootRunNumber <= 0;
 		pendingLootChestTitle = "";
 		pendingLootCostBreakdown = new ChestCostBreakdown();
 		pendingLootSeededFromGui = false;
+		pendingLootReconcilingGuiChat = false;
 		pendingLootChestAssigned = false;
 		pendingLootEntries.clear();
 		lootGuardWarnedKeys.clear();
 		recentLootMessages.clear();
+		pendingChestLootDedupKeys.clear();
+		ignoredPlayerInventoryDiagnosticKeys.clear();
 	}
 
 	private boolean markLootLineForProcessing(String cleaned, long now) {
 		if (cleaned == null || cleaned.isBlank()) return true;
-		String key = pendingLootRunNumber + "|" + cleaned.trim();
+		String key = (pendingChestSessionId == null || pendingChestSessionId.isBlank()
+			? Integer.toString(pendingLootRunNumber)
+			: pendingChestSessionId) + "|" + cleaned.trim();
+		if (!pendingChestLootDedupKeys.add(key)) {
+			recordLootDedupDiagnostic(key, cleaned);
+			return false;
+		}
 		for (var iterator = recentLootMessages.iterator(); iterator.hasNext();) {
 			PacketCapturedMessage captured = iterator.next();
 			if (now - captured.atMillis > MESSAGE_DEDUP_WINDOW_MS) {
@@ -4140,8 +5144,7 @@ public final class DungeonRunTrackerFeature {
 		String generatedKuudraId = generatedKuudraItemId(cleanedName);
 		if (generatedKuudraId != null) return generatedKuudraId;
 
-		List<PriceCache.SearchResult> searchResults = PriceCache.search(cleanedName, 5);
-		if (!searchResults.isEmpty()) return searchResults.getFirst().itemId();
+		recordUnresolvedItemDiagnostic(rawName, cleanedName);
 		return "";
 	}
 
@@ -4206,7 +5209,8 @@ public final class DungeonRunTrackerFeature {
 
 	private boolean looksLikeNonLootLine(String value) {
 		String normalized = value.toUpperCase(Locale.ROOT);
-		return normalized.contains("[NPC]") || normalized.contains("EXTRA STATS")
+		return isDrtClientMessage(value)
+			|| normalized.contains("[NPC]") || normalized.contains("EXTRA STATS")
 			|| normalized.contains("TEAM SCORE") || normalized.contains("CLICK")
 			|| normalized.contains("OPEN") || normalized.contains("CROESUS")
 			|| normalized.contains("THE CATACOMBS") || normalized.contains("KUUDRA DOWN")
@@ -4218,6 +5222,16 @@ public final class DungeonRunTrackerFeature {
 			// Party rare-drop announcements only (not chest lines like "RARE REWARD! Recombobulator 3000")
 			|| normalized.contains("FOUND A ") || normalized.contains("FOUND AN ")
 			|| normalized.contains("IN THEIR ") || normalized.contains("IN HIS ") || normalized.contains("IN HER ");
+	}
+
+	private boolean isDrtClientMessage(String value) {
+		if (value == null || value.isBlank()) return false;
+		String normalized = value.trim().toUpperCase(Locale.ROOT);
+		return normalized.startsWith("[DRT]")
+			|| normalized.startsWith("[COPY REPORT]")
+			|| normalized.startsWith("[COPY PATH]")
+			|| normalized.startsWith("[SAVE REPLAY]")
+			|| normalized.startsWith("[OPEN FOLDER]");
 	}
 
 	private boolean shouldIgnoreLootName(String value) {

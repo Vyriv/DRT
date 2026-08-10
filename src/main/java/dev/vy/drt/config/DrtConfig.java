@@ -19,12 +19,17 @@ public final class DrtConfig {
 	public String hudOverlayPreset = null;
 	public String customOverlayLayout = null;
 	public List<DungeonRunRecord> runHistory = new ArrayList<>();
+	/** Idempotent committed run completions; floorRunCounts is the compatibility cache. */
+	public List<DungeonRunCompletionRecord> runCompletions = new ArrayList<>();
 	public int nextChestLogNumber = 1;
 	public String selectedFloor = null;
 	public int witherEssenceValuePer = 2600;
 	public int undeadEssenceValuePer = 722;
 	public boolean onboardingComplete = false;
 	public String kuudraFaction = "MAGE";
+	/** Last Mage/Barbarian reputation read from tab (Crimson Isle). Used for emissary key coin discounts. */
+	public int kuudraReputation = 0;
+	public boolean kuudraReputationKnown = false;
 	public boolean kuudraPetEnabled = false;
 	public String kuudraPetRarity = "LEGENDARY";
 	public int kuudraPetLevel = 100;

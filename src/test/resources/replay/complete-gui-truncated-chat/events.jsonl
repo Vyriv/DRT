@@ -1,0 +1,4 @@
+{"type":"startRun","mode":"DUNGEON","floor":"M7","source":"CONFIRMED_SCOREBOARD","strength":"CONFIRMED_SCOREBOARD"}
+{"type":"openChest","owner":"active","chestTitle":"Bedrock Chest","containerId":306,"source":"CONFIRMED_GUI_COMPONENT"}
+{"type":"observeLoot","chestId":"last","source":"CONFIRMED_GUI_COMPONENT","slotOwner":"SERVER_CONTAINER","rawName":"Necron's Handle","normalizedName":"NECRON'S HANDLE","itemId":"NECRON_HANDLE","identityStrength":"EXACT_COMPONENT_ID","quantity":1,"containerId":306,"slotIndex":13,"dedupKey":"gui|306|13|NECRON_HANDLE"}
+{"type":"observeLoot","chestId":"last","source":"STRUCTURED_CHAT","slotOwner":"SERVER_CONTAINER","rawName":"Necron's Handle","normalizedName":"NECRON'S HANDLE","itemId":"NECRON_HANDLE","identityStrength":"STRUCTURED_CHAT","quantity":1,"containerId":306,"slotIndex":-1,"dedupKey":"chat|306|NECRON_HANDLE"}
