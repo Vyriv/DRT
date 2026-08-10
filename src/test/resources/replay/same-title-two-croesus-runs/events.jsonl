@@ -1,0 +1,8 @@
+{"type":"startRun","mode":"DUNGEON","floor":"F7","source":"CONFIRMED_SCOREBOARD","strength":"CONFIRMED_SCOREBOARD"}
+{"type":"completeRun","floor":"F7","grade":"S+","fingerprint":"f7-run-a"}
+{"type":"openChest","owner":"last","chestTitle":"Bedrock Chest","containerId":401,"source":"CONFIRMED_GUI_COMPONENT"}
+{"type":"observeLoot","chestId":"last","source":"CONFIRMED_GUI_COMPONENT","slotOwner":"SERVER_CONTAINER","rawName":"Wither Essence","normalizedName":"WITHER ESSENCE","itemId":"ESSENCE_WITHER","identityStrength":"EXACT_COMPONENT_ID","quantity":100,"containerId":401,"slotIndex":13,"dedupKey":"gui|401|13|ESSENCE_WITHER"}
+{"type":"startRun","mode":"DUNGEON","floor":"F7","source":"CONFIRMED_SCOREBOARD","strength":"CONFIRMED_SCOREBOARD"}
+{"type":"completeRun","floor":"F7","grade":"S+","fingerprint":"f7-run-b"}
+{"type":"openChest","owner":"last","chestTitle":"Bedrock Chest","containerId":402,"source":"CONFIRMED_GUI_COMPONENT"}
+{"type":"observeLoot","chestId":"last","source":"CONFIRMED_GUI_COMPONENT","slotOwner":"SERVER_CONTAINER","rawName":"Wither Essence","normalizedName":"WITHER ESSENCE","itemId":"ESSENCE_WITHER","identityStrength":"EXACT_COMPONENT_ID","quantity":100,"containerId":402,"slotIndex":13,"dedupKey":"gui|402|13|ESSENCE_WITHER"}

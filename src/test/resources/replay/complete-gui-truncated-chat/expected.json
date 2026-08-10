@@ -1,0 +1,12 @@
+{
+  "clockStart": "2024-01-01T00:00:00Z",
+  "activeRun": true,
+  "activeMode": "DUNGEON",
+  "activeFloor": "M7",
+  "completedRuns": 0,
+  "orphanChests": 0,
+  "loot": {
+    "itemId": "NECRON_HANDLE",
+    "quantity": 1
+  }
+}

@@ -15,6 +15,9 @@ public final class TabReader {
 	private TabReader() {
 	}
 
+	public record FactionReputation(String faction, int reputation) {
+	}
+
 	public static List<String> readRawLines(Minecraft client) {
 		if (client == null || client.gui == null) return List.of();
 		ClientPacketListener connection = client.getConnection();
@@ -53,6 +56,54 @@ public final class TabReader {
 			}
 		}
 		return false;
+	}
+
+	/**
+	 * Reads Crimson Isle tab widget lines like:
+	 * {@code Mage Reputation:} / {@code 470} / progress bar / {@code Neutral} {@code Friendly}.
+	 */
+	public static FactionReputation parseFactionReputation(List<String> normalizedLines) {
+		if (normalizedLines == null || normalizedLines.isEmpty()) return null;
+		for (int i = 0; i < normalizedLines.size(); i++) {
+			String line = normalizedLines.get(i);
+			if (line == null || line.isBlank()) continue;
+			boolean mage = line.contains("MAGE REPUTATION");
+			boolean barbarian = line.contains("BARBARIAN REPUTATION");
+			if (!mage && !barbarian) continue;
+			String faction = mage ? "MAGE" : "BARBARIAN";
+			Integer inline = extractReputationNumber(line);
+			if (inline != null) return new FactionReputation(faction, inline);
+			for (int j = i + 1; j < Math.min(i + 5, normalizedLines.size()); j++) {
+				String next = normalizedLines.get(j);
+				if (next == null || next.isBlank()) continue;
+				if (next.contains("%")) continue;
+				if (next.contains("NEUTRAL") || next.contains("FRIENDLY")
+					|| next.contains("TRUSTED") || next.contains("HONORED") || next.contains("HERO")
+					|| next.contains("HOSTILE") || next.contains("UNFRIENDLY")
+					|| next.contains("REPUTATION")) {
+					break;
+				}
+				Integer value = extractReputationNumber(next);
+				if (value != null) return new FactionReputation(faction, value);
+				break;
+			}
+		}
+		return null;
+	}
+
+	private static Integer extractReputationNumber(String normalizedLine) {
+		if (normalizedLine == null || normalizedLine.isBlank()) return null;
+		// Prefer an explicit trailing value: "MAGE REPUTATION: 12,000" or a bare "470".
+		int colon = normalizedLine.lastIndexOf(':');
+		String candidate = colon >= 0 ? normalizedLine.substring(colon + 1).trim() : normalizedLine.trim();
+		if (candidate.isEmpty()) return null;
+		// Reject progress labels / mixed text unless it is purely a number (optional commas).
+		if (!candidate.matches("[0-9][0-9,]*")) return null;
+		try {
+			return Integer.parseInt(candidate.replace(",", ""));
+		} catch (NumberFormatException ignored) {
+			return null;
+		}
 	}
 
 	public static String normalize(String value) {
