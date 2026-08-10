@@ -1,0 +1,5 @@
+{"type":"startRun","mode":"DUNGEON","floor":"M7","source":"CONFIRMED_SCOREBOARD","strength":"CONFIRMED_SCOREBOARD"}
+{"type":"openChest","owner":"active","chestTitle":"Bedrock Chest","containerId":901,"source":"CONFIRMED_GUI_COMPONENT"}
+{"type":"updateChestCost","chestId":"last","baseChestCostCoins":10000000,"source":"CONFIRMED_GUI_COMPONENT"}
+{"type":"abandonActiveRun","eventType":"WORLD_CHANGED","source":"SYSTEM","reason":"warp_with_pending_chest"}
+{"type":"observeLoot","chestId":"last","source":"STRUCTURED_CHAT","slotOwner":"SERVER_CONTAINER","rawName":"WITHER ESSENCE","normalizedName":"WITHER ESSENCE","itemId":"ESSENCE_WITHER","identityStrength":"STRUCTURED_CHAT","quantity":100,"containerId":901,"slotIndex":-1,"dedupKey":"chat|901|WITHER ESSENCE","advanceMillis":2000}

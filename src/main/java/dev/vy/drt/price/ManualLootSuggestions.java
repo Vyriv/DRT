@@ -300,8 +300,6 @@ public final class ManualLootSuggestions {
 		if (bookId != null) return bookId;
 		String generated = generatedItemId(normalized);
 		if (PriceCache.containsItemId(generated)) return generated;
-		List<PriceCache.SearchResult> hits = PriceCache.searchIndexed(normalized, 1);
-		if (!hits.isEmpty()) return hits.getFirst().itemId();
 		return generated;
 	}
 

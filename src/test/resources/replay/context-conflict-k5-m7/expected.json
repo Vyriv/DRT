@@ -1,0 +1,18 @@
+{
+  "clockStart": "2024-01-01T00:00:00Z",
+  "activeRun": true,
+  "activeMode": "DUNGEON",
+  "activeFloor": "M7",
+  "completedRuns": 0,
+  "chests": 1,
+  "orphanChests": 1,
+  "loot": {
+    "itemId": "ESSENCE_CRIMSON",
+    "quantity": 100
+  },
+  "invariants": [
+    "CONTEXT_CONFLICT_BLOCKS_NORMAL_LOOT_GUARD",
+    "HISTORICAL_REWARD_CLAIM_CANNOT_MUTATE_ACTIVE_RUN",
+    "PHYSICAL_LOCATION_DOES_NOT_IMPLY_CHEST_OWNERSHIP"
+  ]
+}

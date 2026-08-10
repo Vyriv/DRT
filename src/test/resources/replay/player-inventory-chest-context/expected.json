@@ -1,0 +1,12 @@
+{
+  "clockStart": "2024-01-01T00:00:00Z",
+  "activeRun": false,
+  "completedRuns": 1,
+  "chests": 1,
+  "chestMode": "DUNGEON",
+  "chestFloor": "M7",
+  "invariants": [
+    "PLAYER_INVENTORY_CANNOT_SET_RUN_FLOOR",
+    "PLAYER_INVENTORY_CANNOT_SET_RUN_MODE"
+  ]
+}

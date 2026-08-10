@@ -30,10 +30,16 @@ dependencies {
 	"mappings"(loom.officialMojangMappings())
 	"modImplementation"("net.fabricmc:fabric-loader:${project.property("loader_version")}")
 	"modImplementation"("net.fabricmc.fabric-api:fabric-api:${project.property("fabric_api_version")}")
+	testImplementation("org.junit.jupiter:junit-jupiter:5.10.3")
+	testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
 tasks.withType<JavaCompile>().configureEach {
 	options.release.set((project.property("java_version") as String).toInt())
+}
+
+tasks.withType<Test>().configureEach {
+	useJUnitPlatform()
 }
 
 java {

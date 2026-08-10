@@ -1,0 +1,17 @@
+{
+  "clockStart": "2024-01-01T00:00:00Z",
+  "activeRun": true,
+  "activeMode": "DUNGEON",
+  "activeFloor": "F7",
+  "completedRuns": 0,
+  "orphanChests": 1,
+  "loot": {
+    "itemId": "ESSENCE_WITHER",
+    "quantity": 50
+  },
+  "invariants": [
+    "ORPHAN_CHEST_CANNOT_SILENTLY_INVENT_RUN",
+    "HISTORICAL_REWARD_CLAIM_CANNOT_MUTATE_ACTIVE_RUN",
+    "PHYSICAL_LOCATION_DOES_NOT_IMPLY_CHEST_OWNERSHIP"
+  ]
+}

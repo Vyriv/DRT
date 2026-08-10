@@ -1,0 +1,15 @@
+{
+  "clockStart": "2024-01-01T00:00:00Z",
+  "activeRun": false,
+  "activeMode": "UNKNOWN",
+  "activeFloor": "UNKNOWN",
+  "completedRuns": 0,
+  "orphanChests": 1,
+  "loot": {
+    "itemId": "ESSENCE_WITHER",
+    "quantity": 100
+  },
+  "invariants": [
+    "ORPHAN_CHEST_CANNOT_SILENTLY_INVENT_RUN"
+  ]
+}

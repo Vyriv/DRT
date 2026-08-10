@@ -1,0 +1,13 @@
+{
+  "clockStart": "2024-01-01T00:00:00Z",
+  "activeRun": false,
+  "activeMode": "UNKNOWN",
+  "activeFloor": "UNKNOWN",
+  "completedRuns": 2,
+  "chests": 2,
+  "orphanChests": 0,
+  "loot": {
+    "itemId": "ESSENCE_WITHER",
+    "quantity": 100
+  }
+}
