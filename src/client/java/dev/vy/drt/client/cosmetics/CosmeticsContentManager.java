@@ -23,7 +23,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class CosmeticsContentManager {
 	private static final Gson GSON = new Gson();
 	private static final String PEOPLE_RESOURCE_PATH = "drt/content/people.json";
-	private static final String REMOTE_PEOPLE_URL = "https://plain-dawn-a5d2.ryaneagers2015.workers.dev/cosmetics/people";
+	private static final String REMOTE_PEOPLE_URL = "https://api.vyriv.dev/v1/cosmetics";
 	private static final HttpClient HTTP = HttpClient.newBuilder()
 		.connectTimeout(Duration.ofSeconds(5))
 		.build();
