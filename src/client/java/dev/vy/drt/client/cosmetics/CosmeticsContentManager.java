@@ -23,7 +23,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class CosmeticsContentManager {
 	private static final Gson GSON = new Gson();
 	private static final String PEOPLE_RESOURCE_PATH = "drt/content/people.json";
-	private static final String REMOTE_PEOPLE_URL = "https://plain-dawn-a5d2.ryaneagers2015.workers.dev/cosmetics/people";
+	private static final String REMOTE_PEOPLE_URL = "https://api.vyriv.dev/v1/cosmetics";
 	private static final HttpClient HTTP = HttpClient.newBuilder()
 			.connectTimeout(Duration.ofSeconds(5))
 			.build();
@@ -127,15 +127,15 @@ public final class CosmeticsContentManager {
 		LoadedBadge badge = entry.badge == null ? null : loadBadge(entry.badge);
 		LoadedRankPrefix rankPrefix = entry.rankPrefix == null ? null : loadRankPrefix(entry.rankPrefix);
 		return new LoadedPlayerCustomization(
-				entry.username,
-				blankToNull(entry.nickname),
-				blankToNull(entry.uuid),
-				entry.aliases == null ? List.of() : entry.aliases,
-				nameStyle,
-				badge,
-				rankPrefix,
-				blankToNull(entry.capeResourcePath),
-				blankToNull(entry.capeUrl));
+			entry.username,
+			blankToNull(entry.nickname),
+			blankToNull(entry.uuid),
+			entry.aliases == null ? List.of() : entry.aliases,
+			nameStyle,
+			badge,
+			rankPrefix,
+			blankToNull(entry.capeResourcePath),
+			blankToNull(entry.capeUrl));
 	}
 
 	private static LoadedNameStyle loadNameStyle(NameStyleFile style) {
@@ -197,20 +197,20 @@ public final class CosmeticsContentManager {
 		Float animationSpeed = rankPrefix.animationSpeed != null && rankPrefix.animationSpeed > 0.0F ? rankPrefix.animationSpeed : null;
 		Integer animationSteps = rankPrefix.animationSteps == null ? null : Math.max(2, rankPrefix.animationSteps);
 		float gradientSpacing = rankPrefix.gradientFrequency != null ? rankPrefix.gradientFrequency
-				: rankPrefix.gradientSpacing != null ? rankPrefix.gradientSpacing : 1.0F;
+			: rankPrefix.gradientSpacing != null ? rankPrefix.gradientSpacing : 1.0F;
 		gradientSpacing = Math.max(1.0F, Math.min(10.0F, gradientSpacing));
 		boolean animated = Boolean.TRUE.equals(rankPrefix.animated);
 
 		return switch (normalizedMode) {
 			case "copy_name", "copy-name", "copyname" ->
-					new LoadedRankPrefix(LoadedRankPrefix.Mode.COPY_NAME, text, 0xFFFFFF, 0xFFFFFF, rankPrefix.bold, animationSpeed, animationSteps, gradientSpacing);
+				new LoadedRankPrefix(LoadedRankPrefix.Mode.COPY_NAME, text, 0xFFFFFF, 0xFFFFFF, rankPrefix.bold, animationSpeed, animationSteps, gradientSpacing);
 			case "gradient" -> {
 				Integer left = parseColor(firstNonBlank(rankPrefix.leftColor, rankPrefix.color));
 				Integer right = parseColor(firstNonBlank(rankPrefix.rightColor, rankPrefix.color));
 				if (left == null || right == null) yield null;
 				LoadedRankPrefix.Mode mode = animated || animationSpeed != null
-						? LoadedRankPrefix.Mode.ANIMATED_GRADIENT
-						: LoadedRankPrefix.Mode.GRADIENT;
+					? LoadedRankPrefix.Mode.ANIMATED_GRADIENT
+					: LoadedRankPrefix.Mode.GRADIENT;
 				yield new LoadedRankPrefix(mode, text, left, right, rankPrefix.bold, animationSpeed, animationSteps, gradientSpacing);
 			}
 			case "animated_gradient", "animated-gradient", "animatedgradient" -> {
@@ -301,7 +301,7 @@ public final class CosmeticsContentManager {
 	}
 
 	public record LoadedPlayerCustomization(String username, String nickname, String uuid, List<String> aliases,
-	                                        LoadedNameStyle style, LoadedBadge badge, LoadedRankPrefix rankPrefix, String capeResourcePath, String capeUrl) {
+			LoadedNameStyle style, LoadedBadge badge, LoadedRankPrefix rankPrefix, String capeResourcePath, String capeUrl) {
 	}
 
 	public record LoadedNameStyle(Mode mode, int leftColor, int rightColor, boolean bold, List<Integer> letterColors,
@@ -319,7 +319,7 @@ public final class CosmeticsContentManager {
 	}
 
 	public record LoadedRankPrefix(Mode mode, String label, int leftColor, int rightColor, boolean bold,
-	                               Float animationSpeed, Integer animationSteps, float gradientSpacing) {
+			Float animationSpeed, Integer animationSteps, float gradientSpacing) {
 		public enum Mode {
 			SOLID,
 			GRADIENT,

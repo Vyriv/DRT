@@ -1,0 +1,4 @@
+{"type":"startRun","mode":"DUNGEON","floor":"M7","source":"CONFIRMED_SCOREBOARD","strength":"CONFIRMED_SCOREBOARD"}
+{"type":"completeRun","floor":"M7","grade":"S+","fingerprint":"m7-run-a"}
+{"type":"startRun","advanceMillis":500,"mode":"DUNGEON","floor":"M7","source":"CONFIRMED_SCOREBOARD","strength":"CONFIRMED_SCOREBOARD"}
+{"type":"completeRun","floor":"M7","grade":"S+","fingerprint":"m7-run-b"}

@@ -1,6 +1,7 @@
 package dev.vy.drt.client;
 
 import com.mojang.brigadier.Command;
+import com.mojang.brigadier.arguments.StringArgumentType;
 import dev.vy.drt.DungeonRunTracker;
 import dev.vy.drt.client.cosmetics.DrtCosmetics;
 import dev.vy.drt.client.screen.DungeonLootScreen;
@@ -97,7 +98,7 @@ public final class DrtClient implements ClientModInitializer {
 		ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> {
 			dispatcher.register(ClientCommands.literal("drt")
 				.executes(context -> {
-					context.getSource().sendError(Component.literal("§c[DRT] Invalid syntax, use /drt <config/loot/move/toggle>"));
+					context.getSource().sendError(Component.literal("§c[DRT] Invalid syntax, use /drt <config/loot/move/toggle/debug>"));
 					return 0;
 				})
 				.then(ClientCommands.literal("move")
@@ -167,6 +168,90 @@ public final class DrtClient implements ClientModInitializer {
 						client.player.sendSystemMessage(Component.literal("§a[DRT] HUD " + status + ". §7Loot tracking is still active."));
 						return Command.SINGLE_SUCCESS;
 					})
+				)
+				.then(ClientCommands.literal("debug")
+					.then(ClientCommands.literal("triggerincident")
+						.executes(context -> {
+							Minecraft client = context.getSource().getClient();
+							if (client.player == null) {
+								context.getSource().sendError(Component.literal("§c[DRT] Not in game"));
+								return 0;
+							}
+							return tracker.triggerSyntheticDiagnosticIncident("") ? Command.SINGLE_SUCCESS : 0;
+						})
+						.then(ClientCommands.literal("duplicate")
+							.executes(context -> {
+								Minecraft client = context.getSource().getClient();
+								if (client.player == null) {
+									context.getSource().sendError(Component.literal("§c[DRT] Not in game"));
+									return 0;
+								}
+								return tracker.triggerSyntheticDiagnosticIncident("duplicate") ? Command.SINGLE_SUCCESS : 0;
+							})
+						)
+						.then(ClientCommands.literal("new")
+							.executes(context -> {
+								Minecraft client = context.getSource().getClient();
+								if (client.player == null) {
+									context.getSource().sendError(Component.literal("§c[DRT] Not in game"));
+									return 0;
+								}
+								return tracker.triggerSyntheticDiagnosticIncident("new") ? Command.SINGLE_SUCCESS : 0;
+							})
+						)
+					)
+					.then(ClientCommands.literal("copyreport")
+						.then(ClientCommands.argument("reportId", StringArgumentType.word())
+							.executes(context -> {
+								Minecraft client = context.getSource().getClient();
+								if (client.player == null) {
+									context.getSource().sendError(Component.literal("§c[DRT] Not in game"));
+									return 0;
+								}
+								String reportId = StringArgumentType.getString(context, "reportId");
+								return tracker.copyDiagnosticReportToClipboard(reportId) ? Command.SINGLE_SUCCESS : 0;
+							})
+						)
+					)
+					.then(ClientCommands.literal("savereplay")
+						.then(ClientCommands.argument("reportId", StringArgumentType.word())
+							.executes(context -> {
+								Minecraft client = context.getSource().getClient();
+								if (client.player == null) {
+									context.getSource().sendError(Component.literal("§c[DRT] Not in game"));
+									return 0;
+								}
+								String reportId = StringArgumentType.getString(context, "reportId");
+								return tracker.saveDiagnosticReplay(reportId) ? Command.SINGLE_SUCCESS : 0;
+							})
+						)
+					)
+					.then(ClientCommands.literal("exportbug")
+						.then(ClientCommands.argument("reportId", StringArgumentType.word())
+							.executes(context -> {
+								Minecraft client = context.getSource().getClient();
+								if (client.player == null) {
+									context.getSource().sendError(Component.literal("§c[DRT] Not in game"));
+									return 0;
+								}
+								String reportId = StringArgumentType.getString(context, "reportId");
+								return tracker.exportDiagnosticBug(reportId) ? Command.SINGLE_SUCCESS : 0;
+							})
+						)
+					)
+					.then(ClientCommands.literal("copyzip")
+						.then(ClientCommands.argument("reportId", StringArgumentType.word())
+							.executes(context -> {
+								Minecraft client = context.getSource().getClient();
+								if (client.player == null) {
+									context.getSource().sendError(Component.literal("§c[DRT] Not in game"));
+									return 0;
+								}
+								String reportId = StringArgumentType.getString(context, "reportId");
+								return tracker.copyDiagnosticZipToClipboard(reportId) ? Command.SINGLE_SUCCESS : 0;
+							})
+						)
+					)
 				)
 			);
 		});

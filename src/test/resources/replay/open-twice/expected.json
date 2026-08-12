@@ -1,0 +1,14 @@
+{
+  "clockStart": "2024-01-01T00:00:00Z",
+  "activeRun": true,
+  "activeMode": "DUNGEON",
+  "activeFloor": "M7",
+  "completedRuns": 0,
+  "abandonedRuns": 0,
+  "chests": 2,
+  "orphanChests": 0,
+  "loot": {
+    "itemId": "ESSENCE_WITHER",
+    "quantity": 100
+  }
+}

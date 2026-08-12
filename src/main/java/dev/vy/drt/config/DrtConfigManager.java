@@ -16,6 +16,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 import net.fabricmc.loader.api.FabricLoader;
 
 public final class DrtConfigManager {
@@ -23,7 +24,9 @@ public final class DrtConfigManager {
 	private static final float MAX_HUD_SCALE = 2.0F;
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 	private static final Path CONFIG_PATH = FabricLoader.getInstance().getConfigDir().resolve("drt.json");
+	private static final long COMPLETION_SESSION_DEDUP_WINDOW_MS = 30L * 60L * 1000L;
 	private static DrtConfig config = new DrtConfig();
+	private static boolean primaryConfigMalformed;
 
 	private DrtConfigManager() {
 	}
@@ -34,32 +37,28 @@ public final class DrtConfigManager {
 			if (Files.notExists(CONFIG_PATH)) {
 				config = new DrtConfig();
 				applyFreshOverlayDefaults(config);
+				primaryConfigMalformed = false;
 				save();
 				return;
 			}
 			try (Reader reader = Files.newBufferedReader(CONFIG_PATH, StandardCharsets.UTF_8)) {
 				JsonObject root = JsonParser.parseReader(reader).getAsJsonObject();
-				DrtConfig loaded = GSON.fromJson(root, DrtConfig.class);
-				if (loaded == null) loaded = new DrtConfig();
-				if (loaded.floorRunCounts == null) loaded.floorRunCounts = new LinkedHashMap<>();
-				if (loaded.floorRunTimeMs == null) loaded.floorRunTimeMs = new LinkedHashMap<>();
-				if (loaded.runHistory == null) loaded.runHistory = new ArrayList<>();
-				loaded.hudScale = clampHudScale(loaded.hudScale);
-				loaded.hudVisibilityMode = normalizeHudVisibilityMode(loaded.hudVisibilityMode);
-				normalizeOnboardingSettings(loaded);
-				if (loaded.legacyRunsCompleted > 0 && !loaded.floorRunCounts.containsKey("M5")) {
-					loaded.floorRunCounts.put("M5", loaded.legacyRunsCompleted);
+				LoadedConfig loaded = normalizeLoadedConfig(GSON.fromJson(root, DrtConfig.class), root);
+				config = loaded.config();
+				primaryConfigMalformed = false;
+				if (loaded.migrated()) save();
+			} catch (com.google.gson.JsonSyntaxException | IllegalStateException e) {
+				DungeonRunTracker.LOGGER.error("[DRT] Config file malformed, preserving primary and attempting backup recovery", e);
+				primaryConfigMalformed = true;
+				DrtConfig recovered = tryRecoverFromBackup();
+				if (recovered != null) {
+					config = recovered;
+					DungeonRunTracker.LOGGER.warn("[DRT] Recovered config from {}", AtomicJsonFileStore.backupPath(CONFIG_PATH));
+				} else {
+					config = new DrtConfig();
+					applyFreshOverlayDefaults(config);
+					DungeonRunTracker.LOGGER.error("[DRT] Backup recovery failed; using in-memory defaults without overwriting malformed primary");
 				}
-				boolean migrated = normalizeRunHistory(loaded);
-				if (migrateOverlayPreset(loaded, root)) migrated = true;
-				if (normalizeCustomOverlayLayout(loaded)) migrated = true;
-				config = loaded;
-				if (migrated) save();
-			} catch (com.google.gson.JsonSyntaxException e) {
-				DungeonRunTracker.LOGGER.error("[DRT] Config file malformed, resetting to defaults", e);
-				config = new DrtConfig();
-				applyFreshOverlayDefaults(config);
-				save();
 			}
 		} catch (IOException e) {
 			DungeonRunTracker.LOGGER.error("[DRT] Failed to load config", e);
@@ -68,12 +67,44 @@ public final class DrtConfigManager {
 		}
 	}
 
+	private record LoadedConfig(DrtConfig config, boolean migrated) {
+	}
+
+	private static LoadedConfig normalizeLoadedConfig(DrtConfig loaded, JsonObject root) {
+				if (loaded == null) loaded = new DrtConfig();
+				if (loaded.floorRunCounts == null) loaded.floorRunCounts = new LinkedHashMap<>();
+				if (loaded.floorRunTimeMs == null) loaded.floorRunTimeMs = new LinkedHashMap<>();
+				if (loaded.runHistory == null) loaded.runHistory = new ArrayList<>();
+				if (loaded.runCompletions == null) loaded.runCompletions = new ArrayList<>();
+				loaded.hudScale = clampHudScale(loaded.hudScale);
+				loaded.hudVisibilityMode = normalizeHudVisibilityMode(loaded.hudVisibilityMode);
+				normalizeOnboardingSettings(loaded);
+				if (loaded.legacyRunsCompleted > 0 && !loaded.floorRunCounts.containsKey("M5")) {
+					loaded.floorRunCounts.put("M5", loaded.legacyRunsCompleted);
+				}
+				boolean migrated = normalizeRunHistory(loaded);
+				if (normalizeRunCompletions(loaded)) migrated = true;
+				if (migrateOverlayPreset(loaded, root)) migrated = true;
+				if (normalizeCustomOverlayLayout(loaded)) migrated = true;
+				return new LoadedConfig(loaded, migrated);
+	}
+
+	private static DrtConfig tryRecoverFromBackup() {
+		Path backup = AtomicJsonFileStore.backupPath(CONFIG_PATH);
+		if (Files.notExists(backup)) return null;
+		try (Reader reader = Files.newBufferedReader(backup, StandardCharsets.UTF_8)) {
+			JsonObject root = JsonParser.parseReader(reader).getAsJsonObject();
+			return normalizeLoadedConfig(GSON.fromJson(root, DrtConfig.class), root).config();
+		} catch (Exception recoveryFailure) {
+			DungeonRunTracker.LOGGER.error("[DRT] Failed to recover config backup", recoveryFailure);
+			return null;
+		}
+	}
+
 	public static synchronized void save() {
 		try {
-			Files.createDirectories(CONFIG_PATH.getParent());
-			try (Writer writer = Files.newBufferedWriter(CONFIG_PATH, StandardCharsets.UTF_8)) {
-				GSON.toJson(config, writer);
-			}
+			AtomicJsonFileStore.writeCrashSafe(CONFIG_PATH, GSON, config, primaryConfigMalformed);
+			primaryConfigMalformed = false;
 		} catch (IOException e) {
 			DungeonRunTracker.LOGGER.error("[DRT] Failed to save config", e);
 		}
@@ -100,19 +131,139 @@ public final class DrtConfigManager {
 		return records;
 	}
 
-	public static synchronized void addRunRecord(DungeonRunRecord record) {
-		if (record == null || record.lootEntries == null || record.lootEntries.isEmpty()) return;
+	public static synchronized List<DungeonRunCompletionRecord> getRunCompletions() {
+		List<DungeonRunCompletionRecord> records = new ArrayList<>();
+		if (config.runCompletions == null) return records;
+		for (DungeonRunCompletionRecord r : config.runCompletions) {
+			if (r != null) records.add(r.copy());
+		}
+		return records;
+	}
+
+	public static synchronized RunRecordCommitDecision addRunCompletionRecord(DungeonRunCompletionRecord record) {
+		if (record == null) return RunRecordCommitDecision.KEEP_EXISTING;
+		if (config.runCompletions == null) config.runCompletions = new ArrayList<>();
+		if (config.floorRunCounts == null) config.floorRunCounts = new LinkedHashMap<>();
+		DungeonRunCompletionRecord stored = record.copy();
+		stored.normalize();
+		if (stored.completionFingerprint == null || stored.completionFingerprint.isBlank()) {
+			stored.completionFingerprint = completionFingerprint(stored);
+		}
+		for (DungeonRunCompletionRecord existing : config.runCompletions) {
+			if (existing == null) continue;
+			existing.normalize();
+			boolean sameFingerprint = sameStableId(existing.completionFingerprint, stored.completionFingerprint);
+			boolean sameRunSession = sameStableId(existing.runSessionId, stored.runSessionId)
+				&& completionTimesNear(existing, stored);
+			if (!sameFingerprint && !sameRunSession) continue;
+			if (existing.equivalentTo(stored) || sameFingerprint) {
+				return RunRecordCommitDecision.KEEP_EXISTING;
+			}
+			DungeonRunTracker.LOGGER.warn(
+				"[DRT] Conflicting duplicate run completion kept existing: existingRunSession={} incomingRunSession={} fingerprint={}",
+				existing.runSessionId,
+				stored.runSessionId,
+				stored.completionFingerprint
+			);
+			return RunRecordCommitDecision.CONFLICT;
+		}
+		if (stored.completionId == null || stored.completionId.isBlank()) {
+			stored.completionId = "completion-" + UUID.randomUUID();
+		}
+		config.runCompletions.add(stored);
+		config.floorRunCounts.merge(stored.floor, 1, Integer::sum);
+		save();
+		return RunRecordCommitDecision.ADD_INCOMING;
+	}
+
+	public static synchronized RunRecordCommitDecision addRunRecord(DungeonRunRecord record) {
+		if (record == null || record.lootEntries == null || record.lootEntries.isEmpty()) return RunRecordCommitDecision.KEEP_EXISTING;
 		if (config.runHistory == null) config.runHistory = new ArrayList<>();
 		DungeonRunRecord stored = record.copy();
+		stored.normalizeCostBreakdown();
+		if (stored.commitFingerprint == null || stored.commitFingerprint.isBlank()) {
+			stored.commitFingerprint = commitFingerprint(stored);
+		}
+		RunRecordDeduplicator.DuplicateDecision decision = RunRecordDeduplicator.decide(config.runHistory, stored);
+		if (decision.action() == RunRecordCommitDecision.KEEP_EXISTING) {
+			return RunRecordCommitDecision.KEEP_EXISTING;
+		}
+		if (decision.action() == RunRecordCommitDecision.CONFLICT) {
+			DungeonRunTracker.LOGGER.warn(
+				"[DRT] Conflicting duplicate run record kept existing: index={} reason={} incomingFingerprint={}",
+				decision.existingIndex(),
+				decision.reason(),
+				stored.commitFingerprint
+			);
+			return RunRecordCommitDecision.CONFLICT;
+		}
+		if (decision.action() == RunRecordCommitDecision.REPLACE_EXISTING && decision.existingIndex() >= 0) {
+			DungeonRunRecord existing = config.runHistory.get(decision.existingIndex());
+			assignPersistentIds(stored, existing);
+			config.runHistory.set(decision.existingIndex(), stored);
+			save();
+			return RunRecordCommitDecision.REPLACE_EXISTING;
+		}
+		assignPersistentIds(stored, null);
+		config.runHistory.add(stored);
+		save();
+		return RunRecordCommitDecision.ADD_INCOMING;
+	}
+
+	private static void assignPersistentIds(DungeonRunRecord stored, DungeonRunRecord existing) {
+		if (stored == null) return;
+		if (stored.recordId == null || stored.recordId.isBlank()) {
+			stored.recordId = existing != null && existing.recordId != null && !existing.recordId.isBlank()
+				? existing.recordId
+				: "record-" + UUID.randomUUID();
+		}
+		if (stored.runSessionId == null || stored.runSessionId.isBlank()) {
+			stored.runSessionId = existing != null && existing.runSessionId != null && !existing.runSessionId.isBlank()
+				? existing.runSessionId
+				: "legacy-run-" + stored.recordId;
+		}
+		if (stored.chestSessionId == null || stored.chestSessionId.isBlank()) {
+			stored.chestSessionId = existing != null && existing.chestSessionId != null && !existing.chestSessionId.isBlank()
+				? existing.chestSessionId
+				: "legacy-chest-" + stored.recordId;
+		}
+		if (existing != null && existing.chestNumber > 0) {
+			stored.chestNumber = existing.chestNumber;
+			config.nextChestLogNumber = Math.max(Math.max(1, config.nextChestLogNumber), existing.chestNumber + 1);
+			return;
+		}
 		if (stored.chestNumber <= 0) {
 			stored.chestNumber = nextChestLogNumber();
 		} else {
 			config.nextChestLogNumber = Math.max(Math.max(1, config.nextChestLogNumber), stored.chestNumber + 1);
 		}
-		stored.normalizeCostBreakdown();
-		removeDuplicateRunRecord(stored);
-		config.runHistory.add(stored);
-		save();
+	}
+
+	private static String commitFingerprint(DungeonRunRecord record) {
+		if (record == null) return "";
+		StringBuilder sb = new StringBuilder();
+		if (record.chestSessionId != null && !record.chestSessionId.isBlank()) {
+			sb.append("chestSession=").append(record.chestSessionId).append('|');
+		}
+		sb.append(record.timestampEpochMillis).append('|')
+			.append(normalizeText(record.floor)).append('|')
+			.append(normalizeText(record.grade)).append('|')
+			.append(normalizeText(record.chestTitle)).append('|')
+			.append(record.totalCostCoins()).append('|');
+		LinkedHashMap<String, Integer> counts = lootCounts(record);
+		counts.forEach((key, quantity) -> sb.append(key).append('=').append(quantity).append(';'));
+		return UUID.nameUUIDFromBytes(sb.toString().getBytes(StandardCharsets.UTF_8)).toString();
+	}
+
+	private static String completionFingerprint(DungeonRunCompletionRecord record) {
+		if (record == null) return "";
+		String payload = normalizeText(record.runSessionId) + '|'
+			+ record.completedAtEpochMillis + '|'
+			+ normalizeText(record.mode) + '|'
+			+ normalizeText(record.floor) + '|'
+			+ normalizeText(record.grade) + '|'
+			+ Math.max(0L, record.runTimeMs);
+		return UUID.nameUUIDFromBytes(payload.getBytes(StandardCharsets.UTF_8)).toString();
 	}
 
 	public static synchronized void updateFloorRunCount(String floor, int count) {
@@ -171,6 +322,26 @@ public final class DrtConfigManager {
 		save();
 	}
 
+	/** Persist tab-detected faction reputation (and faction) when it changes. */
+	public static synchronized void updateKuudraReputation(String faction, int reputation) {
+		String normalizedFaction = normalizeKuudraFaction(faction);
+		int clamped = clamp(reputation, 0, 100_000);
+		boolean changed = false;
+		if (!normalizedFaction.equals(config.kuudraFaction)) {
+			config.kuudraFaction = normalizedFaction;
+			changed = true;
+		}
+		if (config.kuudraReputation != clamped) {
+			config.kuudraReputation = clamped;
+			changed = true;
+		}
+		if (!config.kuudraReputationKnown) {
+			config.kuudraReputationKnown = true;
+			changed = true;
+		}
+		if (changed) save();
+	}
+
 	public static synchronized void updateOnboardingSettings(
 		boolean onboardingComplete,
 		String kuudraFaction,
@@ -203,6 +374,7 @@ public final class DrtConfigManager {
 		if (config.floorRunTimeMs != null) config.floorRunTimeMs.clear();
 		config.legacyRunsCompleted = 0;
 		config.runHistory = new ArrayList<>();
+		config.runCompletions = new ArrayList<>();
 		config.nextChestLogNumber = 1;
 		save();
 	}
@@ -211,6 +383,7 @@ public final class DrtConfigManager {
 		if (config.floorRunCounts != null) config.floorRunCounts.remove(floor);
 		if (config.floorRunTimeMs != null) config.floorRunTimeMs.remove(floor);
 		if (config.runHistory != null) config.runHistory.removeIf(r -> r != null && floor.equals(r.floor));
+		if (config.runCompletions != null) config.runCompletions.removeIf(r -> r != null && floor.equals(r.floor));
 		save();
 	}
 
@@ -288,6 +461,7 @@ public final class DrtConfigManager {
 
 	private static void normalizeOnboardingSettings(DrtConfig loaded) {
 		loaded.kuudraFaction = normalizeKuudraFaction(loaded.kuudraFaction);
+		loaded.kuudraReputation = clamp(loaded.kuudraReputation, 0, 100_000);
 		loaded.kuudraPetRarity = normalizePetRarity(loaded.kuudraPetRarity);
 		loaded.kuudraPetLevel = clamp(loaded.kuudraPetLevel, 1, 100);
 		loaded.coolForgedLevel = clamp(loaded.coolForgedLevel, 1, 5);
@@ -414,6 +588,44 @@ public final class DrtConfigManager {
 		return changed;
 	}
 
+	private static boolean normalizeRunCompletions(DrtConfig loaded) {
+		if (loaded.runCompletions == null) {
+			loaded.runCompletions = new ArrayList<>();
+			return true;
+		}
+		boolean changed = false;
+		Set<String> fingerprints = new HashSet<>();
+		Set<String> runSessionIds = new HashSet<>();
+		for (int i = loaded.runCompletions.size() - 1; i >= 0; i--) {
+			DungeonRunCompletionRecord record = loaded.runCompletions.get(i);
+			if (record == null) {
+				loaded.runCompletions.remove(i);
+				changed = true;
+				continue;
+			}
+			String beforeId = record.completionId;
+			String beforeFingerprint = record.completionFingerprint;
+			record.normalize();
+			if (record.completionFingerprint.isBlank()) {
+				record.completionFingerprint = completionFingerprint(record);
+			}
+			if (record.completionId.isBlank()) {
+				record.completionId = "completion-" + UUID.randomUUID();
+			}
+			boolean duplicateFingerprint = !record.completionFingerprint.isBlank() && !fingerprints.add(record.completionFingerprint);
+			boolean duplicateRunSession = !record.runSessionId.isBlank() && !runSessionIds.add(record.runSessionId);
+			if (duplicateFingerprint || duplicateRunSession) {
+				loaded.runCompletions.remove(i);
+				changed = true;
+				continue;
+			}
+			if (!sameText(beforeId, record.completionId) || !sameText(beforeFingerprint, record.completionFingerprint)) {
+				changed = true;
+			}
+		}
+		return changed;
+	}
+
 	private static boolean deduplicateRunHistory(List<DungeonRunRecord> records) {
 		if (records == null || records.size() < 2) return false;
 		boolean changed = false;
@@ -422,8 +634,8 @@ public final class DrtConfigManager {
 			if (left == null) continue;
 			for (int j = records.size() - 1; j > i; j--) {
 				DungeonRunRecord right = records.get(j);
-				if (!areDuplicateLootRecords(left, right)) continue;
-				DungeonRunRecord keep = preferredLootRecord(left, right);
+				if (!RunRecordDeduplicator.areDuplicateLootRecords(left, right)) continue;
+				DungeonRunRecord keep = RunRecordDeduplicator.preferredForMigration(left, right);
 				records.set(i, keep);
 				records.remove(j);
 				left = keep;
@@ -431,62 +643,6 @@ public final class DrtConfigManager {
 			}
 		}
 		return changed;
-	}
-
-	private static void removeDuplicateRunRecord(DungeonRunRecord incoming) {
-		if (incoming == null || config.runHistory == null || config.runHistory.isEmpty()) return;
-		for (int i = config.runHistory.size() - 1; i >= 0; i--) {
-			DungeonRunRecord existing = config.runHistory.get(i);
-			if (!areDuplicateLootRecords(existing, incoming)) continue;
-			DungeonRunRecord keep = preferredLootRecord(existing, incoming);
-			if (keep == existing) return;
-			config.runHistory.remove(i);
-			return;
-		}
-	}
-
-	private static DungeonRunRecord preferredLootRecord(DungeonRunRecord left, DungeonRunRecord right) {
-		if (left == null) return right;
-		if (right == null) return left;
-		int leftQuantity = totalLootQuantity(left);
-		int rightQuantity = totalLootQuantity(right);
-		if (leftQuantity != rightQuantity) return leftQuantity < rightQuantity ? left : right;
-		if (left.chestValueCoins != right.chestValueCoins) return left.chestValueCoins <= right.chestValueCoins ? left : right;
-		return left.timestampEpochMillis <= right.timestampEpochMillis ? left : right;
-	}
-
-	private static boolean areDuplicateLootRecords(DungeonRunRecord left, DungeonRunRecord right) {
-		if (left == null || right == null) return false;
-		if (Math.abs(left.timestampEpochMillis - right.timestampEpochMillis) > 30_000L) return false;
-		if (!sameText(left.floor, right.floor)) return false;
-		if (!sameText(left.chestTitle, right.chestTitle)) return false;
-		if (left.totalCostCoins() != right.totalCostCoins()) return false;
-		return sameLootShape(left, right);
-	}
-
-	private static boolean sameLootShape(DungeonRunRecord left, DungeonRunRecord right) {
-		if (left.lootEntries == null || right.lootEntries == null || left.lootEntries.isEmpty() || right.lootEntries.isEmpty()) return false;
-		LinkedHashMap<String, Integer> leftCounts = lootCounts(left);
-		LinkedHashMap<String, Integer> rightCounts = lootCounts(right);
-		if (!leftCounts.keySet().equals(rightCounts.keySet())) return false;
-		Integer multiplier = null;
-		for (String key : leftCounts.keySet()) {
-			int leftQuantity = Math.max(1, leftCounts.getOrDefault(key, 0));
-			int rightQuantity = Math.max(1, rightCounts.getOrDefault(key, 0));
-			if (leftQuantity == rightQuantity) continue;
-			if (leftQuantity == rightQuantity * 2) {
-				if (multiplier != null && multiplier != 2) return false;
-				multiplier = 2;
-				continue;
-			}
-			if (rightQuantity == leftQuantity * 2) {
-				if (multiplier != null && multiplier != -2) return false;
-				multiplier = -2;
-				continue;
-			}
-			return false;
-		}
-		return true;
 	}
 
 	private static LinkedHashMap<String, Integer> lootCounts(DungeonRunRecord record) {
@@ -497,15 +653,6 @@ public final class DrtConfigManager {
 			counts.merge(lootKey(entry), Math.max(1, entry.quantity), Integer::sum);
 		}
 		return counts;
-	}
-
-	private static int totalLootQuantity(DungeonRunRecord record) {
-		int total = 0;
-		if (record == null || record.lootEntries == null) return total;
-		for (DungeonLootEntry entry : record.lootEntries) {
-			if (entry != null) total += Math.max(1, entry.quantity);
-		}
-		return total;
 	}
 
 	private static String lootKey(DungeonLootEntry entry) {
@@ -519,6 +666,19 @@ public final class DrtConfigManager {
 		String leftText = left == null ? "" : left.trim();
 		String rightText = right == null ? "" : right.trim();
 		return leftText.equalsIgnoreCase(rightText);
+	}
+
+	private static boolean sameStableId(String left, String right) {
+		return left != null && !left.isBlank() && right != null && !right.isBlank() && left.equals(right);
+	}
+
+	private static boolean completionTimesNear(DungeonRunCompletionRecord left, DungeonRunCompletionRecord right) {
+		if (left == null || right == null) return false;
+		return Math.abs(left.completedAtEpochMillis - right.completedAtEpochMillis) <= COMPLETION_SESSION_DEDUP_WINDOW_MS;
+	}
+
+	private static String normalizeText(String value) {
+		return value == null ? "" : value.trim().toUpperCase(java.util.Locale.ROOT);
 	}
 
 	private static int nextChestLogNumber() {
