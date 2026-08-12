@@ -42,6 +42,13 @@ import dev.vy.drt.tracking.SlotOwner;
 import dev.vy.drt.tracking.SyntheticDiagnosticIncidentFactory;
 import dev.vy.drt.tracking.TrackingSession;
 import dev.vy.drt.tracking.TrackerInvariant;
+import java.awt.Desktop;
+import java.awt.Toolkit;
+import java.awt.datatransfer.DataFlavor;
+import java.awt.datatransfer.Transferable;
+import java.awt.datatransfer.UnsupportedFlavorException;
+import java.io.File;
+import java.io.IOException;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -54,6 +61,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.UUID;
 import java.util.regex.Matcher;
@@ -89,19 +97,20 @@ public final class DungeonRunTrackerFeature {
 	private static final long DUNGEON_SIGNAL_GRACE_MS = 15_000L;
 	private static final long MESSAGE_DEDUP_WINDOW_MS = 2_000L;
 	private static final long LOOT_WINDOW_MS = 180_000L;
+	private static final long LATE_LOOT_REATTACH_MS = 15 * 60_000L;
 	private static final long LOOT_COLLECTION_MS = 3_000L;
 	private static final long REWARD_MODIFIER_SCAN_INTERVAL_MS = 300L;
-	private static final Pattern ESSENCE_PATTERN = Pattern.compile("^(?:\\+\\s*)?(WITHER|UNDEAD|SPIDER|DRAGON|ICE|DIAMOND|GOLD|CRIMSON) ESSENCE(?:\\s*[xX]\\s*(\\d+))?$");
-	private static final Pattern RECEIVED_PATTERN = Pattern.compile("^YOU RECEIVED\\s+(.+?)(?:\\s*[xX]\\s*(\\d+))?!?$");
-	private static final Pattern PLUS_PATTERN = Pattern.compile("^\\+\\s*(.+?)(?:\\s*[xX]\\s*(\\d+))?$");
-	private static final Pattern TRAILING_QUANTITY_PATTERN = Pattern.compile("^(.+?)\\s*[xX]\\s*(\\d+)$");
+	private static final Pattern ESSENCE_PATTERN = Pattern.compile("^(?:\\+\\s*)?(WITHER|UNDEAD|SPIDER|DRAGON|ICE|DIAMOND|GOLD|CRIMSON) ESSENCE(?:\\s*[xX×]\\s*(\\d+))?$");
+	private static final Pattern RECEIVED_PATTERN = Pattern.compile("^YOU RECEIVED\\s+(.+?)(?:\\s*[xX×]\\s*(\\d+))?!?$");
+	private static final Pattern PLUS_PATTERN = Pattern.compile("^\\+\\s*(.+?)(?:\\s*[xX×]\\s*(\\d+))?$");
+	private static final Pattern TRAILING_QUANTITY_PATTERN = Pattern.compile("^(.+?)\\s*[xX×]\\s*(\\d+)$");
 	/** Chest loot rare line, e.g. "RARE REWARD! Recombobulator 3000" (not party announcements). */
 	private static final Pattern RARE_REWARD_ITEM_PATTERN = Pattern.compile(
 		"^(?:RARE REWARD|CRAZY RARE(?: REWARD)?|INSANE REWARD|PRAY RNGESUS)!?\\s+(.+)$",
 		Pattern.CASE_INSENSITIVE);
 	private static final Pattern COIN_PATTERN = Pattern.compile("([-+]?\\d[\\d,]*(?:\\.\\d+)?)\\s*([kmb])?(?:\\s*Coins)?", Pattern.CASE_INSENSITIVE);
-	private static final Pattern QUANTITY_PREFIX_PATTERN = Pattern.compile("^(\\d+)x?\\s+(.+)$");
-	private static final Pattern QUANTITY_SUFFIX_PATTERN = Pattern.compile("^(.+?)\\s+x(\\d+)$", Pattern.CASE_INSENSITIVE);
+	private static final Pattern QUANTITY_PREFIX_PATTERN = Pattern.compile("^(\\d+)x?\\s+(.+)$", Pattern.CASE_INSENSITIVE);
+	private static final Pattern QUANTITY_SUFFIX_PATTERN = Pattern.compile("^(.+?)\\s+[xX×]\\s*(\\d+)$");
 	private static final Pattern ENCHANTED_BOOK_PATTERN = Pattern.compile("^Enchanted Book \\((.+) ([IVX]+)\\)$", Pattern.CASE_INSENSITIVE);
 	private static final Pattern BOSS_TIME_PATTERN = Pattern.compile("Defeated .+ in (\\d+)m\\s+(\\d+)s", Pattern.CASE_INSENSITIVE);
 	private static final Pattern SHORT_FLOOR_PATTERN = Pattern.compile("(?:^|[^A-Z0-9])([FM])\\s*([1-7])(?:$|[^A-Z0-9])");
@@ -301,6 +310,7 @@ public final class DungeonRunTrackerFeature {
 		new dev.vy.drt.tracking.SystemTrackerClock(),
 		diagnostics
 	);
+	private final String clientTrackingInstanceId = "live-" + UUID.randomUUID().toString().substring(0, 8);
 
 	private boolean enabled;
 	private HudVisibilityMode hudVisibilityMode = HudVisibilityMode.DEFAULT;
@@ -349,6 +359,8 @@ public final class DungeonRunTrackerFeature {
 	private boolean pendingLootSeededFromGui;
 	private boolean pendingLootReconcilingGuiChat;
 	private boolean pendingLootChestAssigned;
+	/** Incident id waiting for a non-null player so chat notify can be delivered. */
+	private String pendingIncidentChatNotifyId = "";
 	private int openedRewardChestsInLootWindow;
 	/** Canonical titles already counted in the current loot window (used to ignore Croesus re-views). */
 	private final Set<String> openedRewardChestTitlesInLootWindow = new HashSet<>();
@@ -535,6 +547,7 @@ public final class DungeonRunTrackerFeature {
 		}
 
 		long now = System.currentTimeMillis();
+		flushPendingIncidentChatNotify();
 		resumeCurrentRunAfterUnavailable(now);
 		captureOpenedRewardChestLootIfViewing(client, now);
 		if (lootCollectionUntilMillis > 0L && now > lootCollectionUntilMillis) {
@@ -1449,7 +1462,9 @@ public final class DungeonRunTrackerFeature {
 		if (handleKuudraLine(cleaned, now)) return;
 
 		if (isDungeonEntryMessage(cleaned)) {
-			beginNewDungeonRun(now);
+			if (shouldBeginNewDungeonRunFromEntry(now)) {
+				beginNewDungeonRun(now);
+			}
 			insideDungeon = true;
 		}
 
@@ -2428,7 +2443,7 @@ public final class DungeonRunTrackerFeature {
 
 		if (canonicalRewardTitle != null) {
 			if (lootWindowUntilMillis <= 0L || now > lootWindowUntilMillis) {
-				startAdHocLootWindow(now);
+				startLateOwnedOrAdHocLootWindow(now, menuTitleFloor);
 				if (menuTitleFloor != DungeonFloor.UNKNOWN) {
 					pendingLootFloor = menuTitleFloor;
 					updatePendingChestContextProjection(EvidenceStrength.GUI_TITLE_INFERENCE, DetectionSource.GUI_TITLE_INFERENCE);
@@ -2646,22 +2661,12 @@ public final class DungeonRunTrackerFeature {
 			if (isContentsSectionEnd(line)) break;
 			if (isContentsMetaLine(line)) continue;
 
-			String itemName = line;
-			int quantity = 1;
-			Matcher pre = QUANTITY_PREFIX_PATTERN.matcher(line);
-			Matcher suf = QUANTITY_SUFFIX_PATTERN.matcher(line);
-			if (pre.matches()) {
-				quantity = Integer.parseInt(pre.group(1));
-				itemName = pre.group(2).trim();
-			} else if (suf.matches()) {
-				quantity = Integer.parseInt(suf.group(2));
-				itemName = suf.group(1).trim();
-			}
-			if (shouldIgnoreLootName(itemName)) continue;
+			ParsedLootName parsed = parseLootDisplayName(line);
+			if (parsed.name().isBlank() || shouldIgnoreLootName(parsed.name())) continue;
 
-			String itemId = resolveItemId(itemName);
-			if (!itemId.isEmpty() || looksReasonableLootName(itemName)) {
-				entries.add(new DungeonLootEntry(itemName, itemId, quantity));
+			String itemId = resolveItemId(parsed.name());
+			if (!itemId.isEmpty() || looksReasonableLootName(parsed.name())) {
+				entries.add(new DungeonLootEntry(parsed.name(), itemId, parsed.quantity()));
 			}
 		}
 		ChestCostBreakdown breakdown = new ChestCostBreakdown(costCoins);
@@ -2855,10 +2860,13 @@ public final class DungeonRunTrackerFeature {
 			String cleaned = normalize(rawName);
 			if (rawName.isBlank() || shouldIgnoreLootName(rawName) || looksLikeNonLootLine(cleaned)) continue;
 
-			int quantity = Math.max(1, stack.getCount());
-			String itemId = resolveItemId(rawName);
-			if (itemId.isEmpty() && !looksReasonableLootName(rawName)) continue;
-			DungeonLootEntry entry = new DungeonLootEntry(rawName, itemId, quantity);
+			ParsedLootName parsed = parseLootDisplayName(rawName);
+			if (parsed.name().isBlank() || shouldIgnoreLootName(parsed.name()) || looksLikeNonLootLine(normalize(parsed.name()))) continue;
+
+			int quantity = Math.max(Math.max(1, stack.getCount()), parsed.quantity());
+			String itemId = resolveItemId(parsed.name());
+			if (itemId.isEmpty() && !looksReasonableLootName(parsed.name())) continue;
+			DungeonLootEntry entry = new DungeonLootEntry(parsed.name(), itemId, quantity);
 			observeTrackingLoot(entry, DetectionSource.CONFIRMED_GUI_COMPONENT, menu.containerId, slotIndex, SlotOwner.SERVER_CONTAINER, "gui");
 			mergePendingLootEntry(entry, true);
 			found = true;
@@ -2875,7 +2883,11 @@ public final class DungeonRunTrackerFeature {
 			|| stack.is(Items.BLACK_STAINED_GLASS_PANE) || stack.is(Items.BARRIER)
 			|| stack.is(Items.AIR)) return true;
 		String name = normalize(cleanText(stack.getHoverName().getString()));
-		return name.contains("STAINED GLASS");
+		return name.contains("STAINED GLASS")
+			|| name.equals("GO BACK")
+			|| name.equals("CLOSE")
+			|| name.equals("REROLL CHEST")
+			|| name.startsWith("REROLL ");
 	}
 
 	private boolean shouldAssignArmedKismetToOpenedChest(String normalizedTitle) {
@@ -3592,6 +3604,12 @@ public final class DungeonRunTrackerFeature {
 			|| cleaned.startsWith("MASTER MODE CATACOMBS - FLOOR ");
 	}
 
+	private boolean shouldBeginNewDungeonRunFromEntry(long now) {
+		if (currentRunActive || runCountedThisDungeon) return false;
+		if (now <= dungeonSignalUntilMillis && activeRunSessionId != null && !activeRunSessionId.isBlank()) return false;
+		return true;
+	}
+
 	private boolean isKuudraEntryMessage(String cleaned) {
 		if (cleaned == null || cleaned.isBlank()) return false;
 		if (cleaned.contains("KUUDRA'S HOLLOW") || cleaned.contains("KUUDRA HOLLOW")) return true;
@@ -3912,11 +3930,7 @@ public final class DungeonRunTrackerFeature {
 		);
 		var completionCommit = DrtConfigManager.addRunCompletionRecord(completionRecord);
 		if (completionCommit != dev.vy.drt.config.RunRecordCommitDecision.ADD_INCOMING) {
-			if (completionCommit == dev.vy.drt.config.RunRecordCommitDecision.KEEP_EXISTING) {
-				recordCompletionDuplicateDecision(completionFingerprint, now, key, g);
-			} else {
-				recordCompletionDuplicateDiagnostic(completionFingerprint, now, key, g);
-			}
+			recordCompletionPersistenceDiagnostic(completionCommit, completionFingerprint, now, key, g, runTimeMs);
 			runCountedThisDungeon = true;
 			return;
 		}
@@ -3947,6 +3961,38 @@ public final class DungeonRunTrackerFeature {
 	private void startAdHocLootWindow(long now) {
 		startLootWindow(now, 0, DungeonFloor.UNKNOWN);
 		recordOrphanChestDiagnostic("ad_hoc_reward_without_run_owner", now);
+	}
+
+	private void startLateOwnedOrAdHocLootWindow(long now, DungeonFloor floorHint) {
+		DungeonFloor ownerFloor = lateLootOwnerFloor(floorHint, now);
+		if (ownerFloor != DungeonFloor.UNKNOWN) {
+			startLootWindow(now, Math.max(1, totalRunsCompleted()), ownerFloor);
+			updatePendingChestContextProjection(EvidenceStrength.RECENT_CONTEXT, DetectionSource.RECENT_CONTEXT);
+			return;
+		}
+		startAdHocLootWindow(now);
+	}
+
+	private DungeonFloor lateLootOwnerFloor(DungeonFloor floorHint, long now) {
+		if (!runCountedThisDungeon) return DungeonFloor.UNKNOWN;
+		// Croesus is normally opened outside the dungeon instance (hub / island). Do not
+		// require insideDungeon/insideKuudra — only a recent completed run session.
+		if (activeRunSessionId == null || activeRunSessionId.isBlank()) return DungeonFloor.UNKNOWN;
+		if (lastRunRecordMillis <= 0L || now - lastRunRecordMillis > LATE_LOOT_REATTACH_MS) return DungeonFloor.UNKNOWN;
+		RunSession run = trackingSession.run(activeRunSessionId);
+		if (run == null || run.state() != RunState.COMPLETED) return DungeonFloor.UNKNOWN;
+		DungeonFloor recordedFloor = lastRunRecordFloor == null ? DungeonFloor.UNKNOWN : lastRunRecordFloor;
+		DungeonFloor contextFloor = currentFloor == null ? DungeonFloor.UNKNOWN : currentFloor;
+		DungeonFloor hintedFloor = floorHint == null ? DungeonFloor.UNKNOWN : floorHint;
+		if (hintedFloor != DungeonFloor.UNKNOWN && recordedFloor != DungeonFloor.UNKNOWN && hintedFloor != recordedFloor) {
+			return DungeonFloor.UNKNOWN;
+		}
+		if (hintedFloor != DungeonFloor.UNKNOWN && contextFloor != DungeonFloor.UNKNOWN && hintedFloor != contextFloor) {
+			return DungeonFloor.UNKNOWN;
+		}
+		if (hintedFloor != DungeonFloor.UNKNOWN) return hintedFloor;
+		if (recordedFloor != DungeonFloor.UNKNOWN) return recordedFloor;
+		return contextFloor;
 	}
 
 	private void clearLootWindow() {
@@ -3989,7 +4035,7 @@ public final class DungeonRunTrackerFeature {
 	private void handleLootMessage(String rawText, String cleaned, long now) {
 		if (isDrtClientMessage(cleaned) || isDrtClientMessage(rawText)) return;
 		if ((lootWindowUntilMillis <= 0L || now > lootWindowUntilMillis) && isLootHeader(cleaned)) {
-			startAdHocLootWindow(now);
+			startLateOwnedOrAdHocLootWindow(now, rewardContextFloorFromTitle(cleaned));
 		}
 		if (lootWindowUntilMillis <= 0L || now > lootWindowUntilMillis) return;
 		if (handleModifierMessage(cleaned)) return;
@@ -4017,6 +4063,7 @@ public final class DungeonRunTrackerFeature {
 			return;
 		}
 		if (lootCollectionUntilMillis <= 0L || now > lootCollectionUntilMillis) return;
+		if (!pendingLootChestAssigned) return;
 		DungeonLootEntry parsed = parseLootEntry(rawText, cleaned);
 		if (parsed == null) return;
 		observeTrackingLoot(parsed, DetectionSource.STRUCTURED_CHAT, -1, -1, SlotOwner.SERVER_CONTAINER, cleaned);
@@ -4259,12 +4306,16 @@ public final class DungeonRunTrackerFeature {
 		String dedupBasis
 	) {
 		if (incoming == null || pendingChestSessionId == null || pendingChestSessionId.isBlank()) return;
-		String normalizedName = sanitizeLootName(incoming.rawName).toUpperCase(Locale.ROOT);
+		String normalizedName = stripTrailingLootQuantity(sanitizeLootName(incoming.rawName)).toUpperCase(Locale.ROOT);
 		String identityKey = lootKey(incoming);
-		String dedupKey = pendingChestSessionId + "|"
-			+ (source == null ? DetectionSource.NONE : source).name() + "|"
-			+ (dedupBasis == null || dedupBasis.isBlank() ? identityKey : dedupBasis.trim()) + "|"
-			+ Math.max(1, incoming.quantity);
+		String dedupKey = lootObservationDedupKey(
+			source,
+			containerId,
+			slotIndex,
+			identityKey,
+			dedupBasis,
+			Math.max(1, incoming.quantity)
+		);
 		DetectionEvent event = diagnostics.recordEvent(
 			DetectionEventType.LOOT_OBSERVED,
 			source == null ? DetectionSource.NONE : source,
@@ -4293,6 +4344,25 @@ public final class DungeonRunTrackerFeature {
 			slotOwner,
 			dedupKey
 		));
+	}
+
+	private String lootObservationDedupKey(
+		DetectionSource source,
+		int containerId,
+		int slotIndex,
+		String identityKey,
+		String dedupBasis,
+		int quantity
+	) {
+		// Always include identity + slot. A bare basis like "gui" previously collapsed every
+		// qty=1 GUI stack into one ChestSession observation, so flush only kept the first drop.
+		return (pendingChestSessionId == null ? "" : pendingChestSessionId) + "|"
+			+ (source == null ? DetectionSource.NONE : source).name() + "|"
+			+ containerId + "|"
+			+ slotIndex + "|"
+			+ (identityKey == null ? "" : identityKey) + "|"
+			+ (dedupBasis == null || dedupBasis.isBlank() ? "-" : dedupBasis.trim()) + "|"
+			+ Math.max(1, quantity);
 	}
 
 	private LootIdentityStrength lootIdentityStrength(DungeonLootEntry entry) {
@@ -4448,6 +4518,10 @@ public final class DungeonRunTrackerFeature {
 					.append('\n');
 			}
 		}
+		List<DungeonLootEntry> authoritative = authoritativePendingLootEntries();
+		if (authoritative.size() != pendingLootEntries.size()) {
+			sb.append("authoritativeLootCount=").append(authoritative.size()).append('\n');
+		}
 		sb.append('\n');
 		sb.append("--- end ---\n");
 		return sb.toString();
@@ -4563,23 +4637,63 @@ public final class DungeonRunTrackerFeature {
 	private void notifyTrackingIncidentInChat(DiagnosticIncident incident) {
 		if (incident == null || incident.userNotified()) return;
 		Minecraft client = Minecraft.getInstance();
-		if (client.player == null) return;
-		var message = Component.literal("[DRT] \u26A0 Tracking issue detected.\n")
-			.withStyle(Style.EMPTY.withColor(ChatFormatting.GOLD))
-			.append(Component.literal("Something inconsistent happened while tracking this run/chest.\n")
-				.withStyle(ChatFormatting.YELLOW))
-			.append(Component.literal("[Export Bug]")
-				.withStyle(Style.EMPTY
-					.withColor(ChatFormatting.AQUA)
-					.withUnderlined(true)
-					.withClickEvent(new ClickEvent.RunCommand("/drt debug exportbug " + incident.id()))
-					.withHoverEvent(new HoverEvent.ShowText(Component.literal("Save the replay bundle and report.txt for this issue")))));
-		//? if >= 26.1 {
-		client.player.sendSystemMessage(message);
-		//? } else {
-		/*client.player.displayClientMessage(message, false);
-		*///?}
+		if (client.player == null) {
+			pendingIncidentChatNotifyId = incident.id();
+			return;
+		}
+		pendingIncidentChatNotifyId = "";
 		incident.markUserNotified();
+
+		Path replayPath = null;
+		try {
+			replayPath = diagnostics.saveReplayBundle(
+				diagnosticReplayParentDir(),
+				incident,
+				diagnosticExpected(incident),
+				diagnosticState(incident)
+			);
+		} catch (Exception e) {
+			DungeonRunTracker.LOGGER.warn("[DRT] Failed to auto-save diagnostic bug export: {}", e.getMessage());
+		}
+
+		String reportId = incident.id();
+		String pathText = replayPath == null ? "" : replayPath.toAbsolutePath().toString();
+		DungeonRunTracker.LOGGER.warn(
+			"[DRT] Tracking issue detected reportId={} path='{}'",
+			reportId,
+			pathText.isBlank() ? "(unsaved)" : pathText
+		);
+
+		var message = Component.literal("[DRT] Tracking issue detected (report " + reportId + ").\n")
+			.withStyle(Style.EMPTY.withColor(ChatFormatting.GOLD))
+			.append(Component.literal("Chest/run ownership looked inconsistent — loot may be unassigned.\n")
+				.withStyle(ChatFormatting.YELLOW));
+		if (!pathText.isBlank()) {
+			message = message.append(Component.literal("Bug zip saved:\n")
+					.withStyle(ChatFormatting.GRAY))
+				.append(Component.literal(pathText + "\n")
+					.withStyle(Style.EMPTY
+						.withColor(ChatFormatting.AQUA)
+						.withClickEvent(new ClickEvent.CopyToClipboard(pathText))
+						.withHoverEvent(new HoverEvent.ShowText(Component.literal("Click to copy zip path")))));
+		}
+		message = message.append(Component.literal("[Copy Bug Report]")
+			.withStyle(Style.EMPTY
+				.withColor(ChatFormatting.AQUA)
+				.withUnderlined(true)
+				.withClickEvent(new ClickEvent.SuggestCommand("/drt debug exportbug " + reportId))
+				.withHoverEvent(new HoverEvent.ShowText(Component.literal("Click to fill /drt debug exportbug " + reportId)))));
+		sendDrtSystemMessage(client, message);
+	}
+
+	private void flushPendingIncidentChatNotify() {
+		if (pendingIncidentChatNotifyId == null || pendingIncidentChatNotifyId.isBlank()) return;
+		DiagnosticIncident incident = diagnostics.incidentById(pendingIncidentChatNotifyId);
+		if (incident == null) {
+			pendingIncidentChatNotifyId = "";
+			return;
+		}
+		notifyTrackingIncidentInChat(incident);
 	}
 
 	public boolean triggerSyntheticDiagnosticIncident(String mode) {
@@ -4631,25 +4745,95 @@ public final class DungeonRunTrackerFeature {
 			return false;
 		}
 		try {
-			Path replayDir = diagnostics.saveReplayBundle(
+			Path replayPath = diagnostics.saveReplayBundle(
 				diagnosticReplayParentDir(),
 				incident,
 				diagnosticExpected(incident),
 				diagnosticState(incident)
 			);
-			var message = Component.literal("§a[DRT] Bug export saved successfully.\n")
-				.append(Component.literal("[Copy Path]")
-					.withStyle(Style.EMPTY
-						.withColor(ChatFormatting.GREEN)
-						.withUnderlined(true)
-						.withClickEvent(new ClickEvent.CopyToClipboard(replayDir.toAbsolutePath().toString()))
-						.withHoverEvent(new HoverEvent.ShowText(Component.literal("Copy saved bug export folder path")))));
-			sendDrtSystemMessage(client, message);
-			return true;
+			return copyDiagnosticZipPathToClipboard(client, replayPath);
 		} catch (Exception e) {
 			DungeonRunTracker.LOGGER.warn("[DRT] Failed to save diagnostic bug export: {}", e.getMessage());
 			sendDrtSystemMessage(client, Component.literal("§c[DRT] Failed to export bug: " + e.getMessage()));
 			return false;
+		}
+	}
+
+	public boolean copyDiagnosticZipToClipboard(String reportId) {
+		DiagnosticIncident incident = diagnostics.incidentById(reportId);
+		Minecraft client = Minecraft.getInstance();
+		if (client.player == null) return false;
+		if (incident == null) {
+			sendDrtSystemMessage(client, Component.literal("§c[DRT] Diagnostic report not found: " + nullToEmpty(reportId)));
+			return false;
+		}
+		Path replayPath;
+		try {
+			replayPath = diagnosticReplayZipPath(incident);
+		} catch (Exception e) {
+			DungeonRunTracker.LOGGER.warn("[DRT] Failed to prepare diagnostic zip for clipboard: {}", e.getMessage());
+			sendDrtSystemMessage(client, Component.literal("§c[DRT] Failed to prepare bug export zip: " + e.getMessage()));
+			return false;
+		}
+
+		return copyDiagnosticZipPathToClipboard(client, replayPath);
+	}
+
+	private boolean copyDiagnosticZipPathToClipboard(Minecraft client, Path replayPath) {
+		try {
+			Toolkit.getDefaultToolkit()
+				.getSystemClipboard()
+				.setContents(new SingleFileTransferable(replayPath.toAbsolutePath().toFile()), null);
+			sendDrtSystemMessage(client, Component.literal("§a[DRT] Bug report copied. Please dm it to Vyirv on discord :)."));
+			return true;
+		} catch (Throwable copyFailure) {
+			DungeonRunTracker.LOGGER.warn("[DRT] Failed to copy diagnostic zip file to clipboard: {}", copyFailure.getMessage());
+			openDiagnosticZipFolder(client, replayPath);
+			return false;
+		}
+	}
+
+	private Path diagnosticReplayZipPath(DiagnosticIncident incident) throws IOException {
+		if (incident == null) throw new IOException("Missing diagnostic incident");
+		String replayPath = incident.replayPath();
+		if (replayPath != null && !replayPath.isBlank()) {
+			Path path = Path.of(replayPath);
+			if (Files.isRegularFile(path)) return path;
+		}
+		return diagnostics.saveReplayBundle(
+			diagnosticReplayParentDir(),
+			incident,
+			diagnosticExpected(incident),
+			diagnosticState(incident)
+		);
+	}
+
+	private void openDiagnosticZipFolder(Minecraft client, Path replayPath) {
+		Path folder = replayPath == null ? diagnosticReplayParentDir() : replayPath.toAbsolutePath().getParent();
+		if (folder == null) folder = diagnosticReplayParentDir();
+		try {
+			openFolder(folder);
+			sendDrtSystemMessage(client, Component.literal("§e[DRT] Could not copy the ZIP directly, so opened the export folder."));
+		} catch (Throwable openFailure) {
+			DungeonRunTracker.LOGGER.warn("[DRT] Failed to open diagnostic export folder: {}", openFailure.getMessage());
+			sendDrtSystemMessage(client, Component.literal("§c[DRT] Could not copy the ZIP or open the export folder."));
+		}
+	}
+
+	private static void openFolder(Path folder) throws IOException {
+		if (folder == null) throw new IOException("Missing export folder");
+		File file = folder.toFile();
+		if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.OPEN)) {
+			Desktop.getDesktop().open(file);
+			return;
+		}
+		String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
+		if (os.contains("win")) {
+			new ProcessBuilder("explorer", file.getAbsolutePath()).start();
+		} else if (os.contains("mac")) {
+			new ProcessBuilder("open", file.getAbsolutePath()).start();
+		} else {
+			new ProcessBuilder("xdg-open", file.getAbsolutePath()).start();
 		}
 	}
 
@@ -4779,6 +4963,51 @@ public final class DungeonRunTrackerFeature {
 		);
 	}
 
+	private void recordCompletionPersistenceDiagnostic(
+		dev.vy.drt.config.RunRecordCommitDecision decision,
+		String completionFingerprint,
+		long now,
+		String floor,
+		String grade,
+		long runTimeMs
+	) {
+		DetectionEvent event = diagnostics.recordEvent(
+			DetectionEventType.PERSISTENCE,
+			DetectionSource.PERSISTENCE,
+			diagnosticPayload(
+				"decision", decision == null ? "" : decision.name(),
+				"completionFingerprint", completionFingerprint,
+				"floor", floor,
+				"grade", grade,
+				"runTimeMs", runTimeMs,
+				"atMillis", now
+			)
+		);
+		DiagnosticIncident incident = diagnostics.recordInvariantViolation(
+			TrackerInvariant.ONE_RUN_COMPLETION_COUNTS_AT_MOST_ONCE,
+			decision == dev.vy.drt.config.RunRecordCommitDecision.CONFLICT ? DiagnosticSeverity.ERROR : DiagnosticSeverity.WARN,
+			event,
+			"completion-persistence|" + completionFingerprint,
+			"Run completion persistence rejected a completed run. DRT did not add this completion to history.",
+			"DungeonRunTrackerFeature.recordCompletedRun/DrtConfigManager.addRunCompletionRecord",
+			"recordCompletedRun",
+			decision == null ? "UNKNOWN" : decision.name(),
+			"completion_persistence_rejected",
+			activeRunSessionId,
+			pendingChestSessionId,
+			"",
+			completionFingerprint,
+			diagnosticPayload(
+				"decision", decision == null ? "" : decision.name(),
+				"completionFingerprint", completionFingerprint,
+				"floor", floor,
+				"grade", grade,
+				"runTimeMs", runTimeMs
+			)
+		);
+		notifyTrackingIncidentInChat(incident);
+	}
+
 	private void recordOrphanChestDiagnostic(String reason, long now) {
 		DetectionEvent event = diagnostics.recordEvent(
 			DetectionEventType.CHEST_OPENED,
@@ -4902,7 +5131,7 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private String nextChestSessionId(String ownerRunId) {
-		String owner = ownerRunId == null || ownerRunId.isBlank() ? "orphan" : ownerRunId;
+		String owner = ownerRunId == null || ownerRunId.isBlank() ? clientTrackingInstanceId + "-orphan" : ownerRunId;
 		return owner + "-chest-" + (++chestSessionSequence);
 	}
 
@@ -5133,7 +5362,7 @@ public final class DungeonRunTrackerFeature {
 		String enchantedBookId = resolveEnchantedBookId(rawName);
 		if (enchantedBookId != null) return enchantedBookId;
 
-		String cleanedName = sanitizeLootName(rawName).toUpperCase(Locale.ROOT);
+		String cleanedName = stripTrailingLootQuantity(sanitizeLootName(rawName)).toUpperCase(Locale.ROOT);
 		// Shiny dungeon drops share the base item id/price (e.g. "Shiny Necron's Handle").
 		if (cleanedName.startsWith("SHINY ")) {
 			cleanedName = cleanedName.substring("SHINY ".length()).trim();
@@ -5146,6 +5375,40 @@ public final class DungeonRunTrackerFeature {
 
 		recordUnresolvedItemDiagnostic(rawName, cleanedName);
 		return "";
+	}
+
+	private record ParsedLootName(String name, int quantity) {}
+
+	private ParsedLootName parseLootDisplayName(String rawName) {
+		String sanitized = sanitizeLootName(rawName);
+		if (sanitized.isBlank()) return new ParsedLootName("", 1);
+
+		Matcher essenceMatcher = ESSENCE_PATTERN.matcher(sanitized.toUpperCase(Locale.ROOT));
+		if (essenceMatcher.matches()) {
+			String essenceName = essenceMatcher.group(1) + " ESSENCE";
+			return new ParsedLootName(essenceName, parsePositiveInt(essenceMatcher.group(2), 1));
+		}
+
+		Matcher pre = QUANTITY_PREFIX_PATTERN.matcher(sanitized);
+		if (pre.matches()) {
+			return new ParsedLootName(pre.group(2).trim(), parsePositiveInt(pre.group(1), 1));
+		}
+		Matcher suf = QUANTITY_SUFFIX_PATTERN.matcher(sanitized);
+		if (suf.matches()) {
+			return new ParsedLootName(suf.group(1).trim(), parsePositiveInt(suf.group(2), 1));
+		}
+		Matcher trailing = TRAILING_QUANTITY_PATTERN.matcher(sanitized);
+		if (trailing.matches()) {
+			return new ParsedLootName(trailing.group(1).trim(), parsePositiveInt(trailing.group(2), 1));
+		}
+		return new ParsedLootName(sanitized, 1);
+	}
+
+	private String stripTrailingLootQuantity(String name) {
+		if (name == null || name.isBlank()) return "";
+		Matcher trailing = TRAILING_QUANTITY_PATTERN.matcher(name.trim());
+		if (trailing.matches()) return trailing.group(1).trim();
+		return name.trim();
 	}
 
 	private String generatedKuudraItemId(String cleanedName) {
@@ -5167,6 +5430,8 @@ public final class DungeonRunTrackerFeature {
 	private String sanitizeLootName(String name) {
 		String sanitized = ChatFormatting.stripFormatting(name);
 		if (sanitized == null) return "";
+		sanitized = sanitized.replace('\u00A0', ' ').replace('\u202F', ' ');
+		sanitized = sanitized.replace('×', 'x').replace('✕', 'x').replace('✖', 'x');
 		sanitized = sanitized.replaceFirst("^(?i)[A-Z ]+ REWARD!\\s*", "");
 		sanitized = sanitized.replaceAll("[✪★☆]", "");
 		sanitized = sanitized.replaceAll("\\s+", " ").trim();
@@ -5234,8 +5499,39 @@ public final class DungeonRunTrackerFeature {
 			|| normalized.startsWith("[OPEN FOLDER]");
 	}
 
+	private static final class SingleFileTransferable implements Transferable {
+		private final List<File> files;
+
+		private SingleFileTransferable(File file) {
+			this.files = List.of(file);
+		}
+
+		@Override
+		public DataFlavor[] getTransferDataFlavors() {
+			return new DataFlavor[] {DataFlavor.javaFileListFlavor};
+		}
+
+		@Override
+		public boolean isDataFlavorSupported(DataFlavor flavor) {
+			return DataFlavor.javaFileListFlavor.equals(flavor);
+		}
+
+		@Override
+		public Object getTransferData(DataFlavor flavor) throws UnsupportedFlavorException {
+			if (!isDataFlavorSupported(flavor)) throw new UnsupportedFlavorException(flavor);
+			return files;
+		}
+	}
+
 	private boolean shouldIgnoreLootName(String value) {
-		return value != null && sanitizeLootName(value).equalsIgnoreCase("Ancient Rose");
+		if (value == null) return false;
+		String sanitized = stripTrailingLootQuantity(sanitizeLootName(value)).toUpperCase(Locale.ROOT);
+		return sanitized.equals("ANCIENT ROSE")
+			|| sanitized.equals("ENCHANTED BOOK")
+			|| sanitized.equals("GO BACK")
+			|| sanitized.equals("CLOSE")
+			|| sanitized.equals("REROLL CHEST")
+			|| sanitized.startsWith("REROLL ");
 	}
 
 	private boolean looksReasonableLootName(String value) {
@@ -5259,7 +5555,7 @@ public final class DungeonRunTrackerFeature {
 
 	private String lootKey(DungeonLootEntry entry) {
 		if (entry.itemId != null && !entry.itemId.isBlank()) return "id:" + entry.itemId;
-		return "raw:" + sanitizeLootName(entry.rawName).toUpperCase(Locale.ROOT);
+		return "raw:" + stripTrailingLootQuantity(sanitizeLootName(entry.rawName)).toUpperCase(Locale.ROOT);
 	}
 
 	private int parsePositiveInt(String value, int fallback) {
@@ -5324,6 +5620,8 @@ public final class DungeonRunTrackerFeature {
 		aliases.put("PHANTOM ROD", "PHANTOM_ROD");
 		aliases.put("SCYTHE BLADE", "SCYTHE_BLADE");
 		aliases.put("FUMING POTATO BOOK", "FUMING_POTATO_BOOK");
+		aliases.put("HOT POTATO BOOK", "HOT_POTATO_BOOK");
+		aliases.put("DARK ORB", "DARK_ORB");
 		aliases.put("SPIRIT SWORD", "SPIRIT_SWORD");
 		aliases.put("SPIRIT WING", "SPIRIT_WING");
 		aliases.put("SPIRIT LEAP", "SPIRIT_LEAP");
