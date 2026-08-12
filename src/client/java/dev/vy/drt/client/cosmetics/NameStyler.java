@@ -972,9 +972,6 @@ public final class NameStyler {
 	private record RankPrefixReplacement(String before, String replacement, boolean copyName) {
 	}
 
-	private record RankPrefixReplacement(String before, String replacement, boolean copyName) {
-	}
-
 	private record TextCacheKey(long version, TransformKind kind, String plain, int styleHash, long frame) {
 	}
 
