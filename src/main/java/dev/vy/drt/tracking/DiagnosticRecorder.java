@@ -3,8 +3,6 @@ package dev.vy.drt.tracking;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -18,6 +16,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.function.Supplier;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 public final class DiagnosticRecorder {
 	public static final String REPORT_SCHEMA = "drt-tracker-report-v1";
@@ -239,11 +239,11 @@ public final class DiagnosticRecorder {
 	public synchronized Path saveReplayBundle(Path parentDir, DiagnosticIncident incident, Map<String, Object> expected, Map<String, Object> reportState) throws IOException {
 		Objects.requireNonNull(parentDir, "parentDir");
 		Objects.requireNonNull(incident, "incident");
-		Path dir = parentDir.resolve("drt-report-" + incident.id());
-		Files.createDirectories(dir);
+		Files.createDirectories(parentDir);
+		Path zipPath = parentDir.resolve("drt-report-" + incident.id() + ".zip");
 
 		String previousReplayPath = incident.replayPath();
-		incident.setReplayPath(dir.toAbsolutePath().toString());
+		incident.setReplayPath(zipPath.toAbsolutePath().toString());
 		try {
 			Map<String, Object> manifest = new LinkedHashMap<>();
 			manifest.put("schema", REPLAY_SCHEMA);
@@ -259,7 +259,6 @@ public final class DiagnosticRecorder {
 			manifest.put("suggestedInvestigation", incident.investigationLocation());
 			manifest.put("violatedInvariants", incident.invariants().stream().map(Enum::name).toList());
 			manifest.put("incidentEntries", incident.entries().stream().map(this::entryMap).toList());
-			writeUtf8(dir.resolve("manifest.json"), GSON.toJson(manifest));
 
 			StringBuilder jsonl = new StringBuilder();
 			for (DetectionEvent event : events) {
@@ -272,12 +271,22 @@ public final class DiagnosticRecorder {
 				row.put("payload", event.safePayload());
 				jsonl.append(JSONL_GSON.toJson(row)).append('\n');
 			}
-			writeUtf8(dir.resolve("events.jsonl"), jsonl.toString());
-			writeUtf8(dir.resolve("expected.json"), GSON.toJson(expected == null ? Map.of() : safeMap(expected)));
-			writeUtf8(dir.resolve("report.txt"), buildHumanReport(incident, reportState));
-			return dir;
+
+			try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(
+				zipPath,
+				StandardOpenOption.CREATE,
+				StandardOpenOption.TRUNCATE_EXISTING,
+				StandardOpenOption.WRITE
+			))) {
+				writeZipEntry(zip, "manifest.json", GSON.toJson(manifest));
+				writeZipEntry(zip, "events.jsonl", jsonl.toString());
+				writeZipEntry(zip, "expected.json", GSON.toJson(expected == null ? Map.of() : safeMap(expected)));
+				writeZipEntry(zip, "report.txt", buildHumanReport(incident, reportState));
+			}
+			return zipPath;
 		} catch (IOException e) {
 			incident.setReplayPath(previousReplayPath);
+			Files.deleteIfExists(zipPath);
 			throw e;
 		}
 	}
@@ -300,17 +309,10 @@ public final class DiagnosticRecorder {
 		return row;
 	}
 
-	private static void writeUtf8(Path path, String content) throws IOException {
-		byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
-		try (FileChannel channel = FileChannel.open(
-			path,
-			StandardOpenOption.CREATE,
-			StandardOpenOption.TRUNCATE_EXISTING,
-			StandardOpenOption.WRITE
-		)) {
-			channel.write(ByteBuffer.wrap(bytes));
-			channel.force(true);
-		}
+	private static void writeZipEntry(ZipOutputStream zip, String name, String content) throws IOException {
+		zip.putNextEntry(new ZipEntry(name));
+		zip.write((content == null ? "" : content).getBytes(StandardCharsets.UTF_8));
+		zip.closeEntry();
 	}
 
 	private static Map<String, Object> safeMap(Map<String, Object> input) {

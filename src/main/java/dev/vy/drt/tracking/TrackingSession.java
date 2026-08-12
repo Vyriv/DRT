@@ -6,12 +6,14 @@ import java.util.ArrayDeque;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 public final class TrackingSession {
 	private static final int RECENT_COMPLETED_LIMIT = 16;
 
 	private final String id;
 	private final String serverInstanceId;
+	private final String localSessionId;
 	private final TrackerClock clock;
 	private final DiagnosticRecorder diagnostics;
 	private final Map<String, RunSession> runs = new LinkedHashMap<>();
@@ -24,6 +26,7 @@ public final class TrackingSession {
 	public TrackingSession(String id, String serverInstanceId, TrackerClock clock, DiagnosticRecorder diagnostics) {
 		this.id = id == null || id.isBlank() ? "tracking-session" : id;
 		this.serverInstanceId = serverInstanceId == null || serverInstanceId.isBlank() ? "server-unknown" : serverInstanceId;
+		this.localSessionId = this.id + "-" + UUID.randomUUID().toString().substring(0, 8);
 		this.clock = clock == null ? new SystemTrackerClock() : clock;
 		this.diagnostics = diagnostics == null ? new DiagnosticRecorder(this.clock) : diagnostics;
 	}
@@ -507,11 +510,11 @@ public final class TrackingSession {
 	}
 
 	private String nextRunId() {
-		return id + "-run-" + (++runCounter);
+		return localSessionId + "-run-" + (++runCounter);
 	}
 
 	private String nextChestId() {
-		return id + "-chest-" + (++chestCounter);
+		return localSessionId + "-chest-" + (++chestCounter);
 	}
 
 	private static Map<String, Object> payload(Object... keyValues) {

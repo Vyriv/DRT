@@ -24,6 +24,7 @@ public final class DrtConfigManager {
 	private static final float MAX_HUD_SCALE = 2.0F;
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 	private static final Path CONFIG_PATH = FabricLoader.getInstance().getConfigDir().resolve("drt.json");
+	private static final long COMPLETION_SESSION_DEDUP_WINDOW_MS = 30L * 60L * 1000L;
 	private static DrtConfig config = new DrtConfig();
 	private static boolean primaryConfigMalformed;
 
@@ -152,7 +153,8 @@ public final class DrtConfigManager {
 			if (existing == null) continue;
 			existing.normalize();
 			boolean sameFingerprint = sameStableId(existing.completionFingerprint, stored.completionFingerprint);
-			boolean sameRunSession = sameStableId(existing.runSessionId, stored.runSessionId);
+			boolean sameRunSession = sameStableId(existing.runSessionId, stored.runSessionId)
+				&& completionTimesNear(existing, stored);
 			if (!sameFingerprint && !sameRunSession) continue;
 			if (existing.equivalentTo(stored) || sameFingerprint) {
 				return RunRecordCommitDecision.KEEP_EXISTING;
@@ -668,6 +670,11 @@ public final class DrtConfigManager {
 
 	private static boolean sameStableId(String left, String right) {
 		return left != null && !left.isBlank() && right != null && !right.isBlank() && left.equals(right);
+	}
+
+	private static boolean completionTimesNear(DungeonRunCompletionRecord left, DungeonRunCompletionRecord right) {
+		if (left == null || right == null) return false;
+		return Math.abs(left.completedAtEpochMillis - right.completedAtEpochMillis) <= COMPLETION_SESSION_DEDUP_WINDOW_MS;
 	}
 
 	private static String normalizeText(String value) {
