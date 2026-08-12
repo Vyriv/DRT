@@ -3960,7 +3960,12 @@ public final class DungeonRunTrackerFeature {
 
 	private void startAdHocLootWindow(long now) {
 		startLootWindow(now, 0, DungeonFloor.UNKNOWN);
-		recordOrphanChestDiagnostic("ad_hoc_reward_without_run_owner", now);
+		// Historical Croesus opens with no recent tracked completion are expected.
+		// Only escalate to a user-facing bug export when ownership should have existed.
+		boolean unexpectedOrphan = runCountedThisDungeon
+			|| (activeRunSessionId != null && !activeRunSessionId.isBlank())
+			|| (lastRunRecordMillis > 0L && now - lastRunRecordMillis <= LATE_LOOT_REATTACH_MS);
+		recordOrphanChestDiagnostic("ad_hoc_reward_without_run_owner", now, unexpectedOrphan);
 	}
 
 	private void startLateOwnedOrAdHocLootWindow(long now, DungeonFloor floorHint) {
@@ -3974,6 +3979,12 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private DungeonFloor lateLootOwnerFloor(DungeonFloor floorHint, long now) {
+		DungeonFloor live = lateLootOwnerFloorFromLiveMemory(floorHint, now);
+		if (live != DungeonFloor.UNKNOWN) return live;
+		return lateLootOwnerFloorFromPersistedCompletion(floorHint, now);
+	}
+
+	private DungeonFloor lateLootOwnerFloorFromLiveMemory(DungeonFloor floorHint, long now) {
 		if (!runCountedThisDungeon) return DungeonFloor.UNKNOWN;
 		// Croesus is normally opened outside the dungeon instance (hub / island). Do not
 		// require insideDungeon/insideKuudra — only a recent completed run session.
@@ -3981,18 +3992,87 @@ public final class DungeonRunTrackerFeature {
 		if (lastRunRecordMillis <= 0L || now - lastRunRecordMillis > LATE_LOOT_REATTACH_MS) return DungeonFloor.UNKNOWN;
 		RunSession run = trackingSession.run(activeRunSessionId);
 		if (run == null || run.state() != RunState.COMPLETED) return DungeonFloor.UNKNOWN;
-		DungeonFloor recordedFloor = lastRunRecordFloor == null ? DungeonFloor.UNKNOWN : lastRunRecordFloor;
-		DungeonFloor contextFloor = currentFloor == null ? DungeonFloor.UNKNOWN : currentFloor;
-		DungeonFloor hintedFloor = floorHint == null ? DungeonFloor.UNKNOWN : floorHint;
-		if (hintedFloor != DungeonFloor.UNKNOWN && recordedFloor != DungeonFloor.UNKNOWN && hintedFloor != recordedFloor) {
+		return chooseLateLootFloor(floorHint, lastRunRecordFloor, currentFloor);
+	}
+
+	private DungeonFloor lateLootOwnerFloorFromPersistedCompletion(DungeonFloor floorHint, long now) {
+		DungeonRunCompletionRecord recent = mostRecentPersistedCompletion(now);
+		if (recent == null) return DungeonFloor.UNKNOWN;
+		DungeonFloor recordedFloor = configFloor(recent.floor);
+		DungeonFloor chosen = chooseLateLootFloor(floorHint, recordedFloor, currentFloor);
+		if (chosen == DungeonFloor.UNKNOWN) return DungeonFloor.UNKNOWN;
+		if (!restoreLiveOwnershipFromPersistedCompletion(recent, recordedFloor == DungeonFloor.UNKNOWN ? chosen : recordedFloor, now)) {
 			return DungeonFloor.UNKNOWN;
 		}
-		if (hintedFloor != DungeonFloor.UNKNOWN && contextFloor != DungeonFloor.UNKNOWN && hintedFloor != contextFloor) {
+		DungeonRunTracker.LOGGER.info(
+			"[DRT] Reattached late chest ownership from persisted completion: floor={} grade={} ageMs={}",
+			chosen.name(),
+			recent.grade,
+			Math.max(0L, now - recent.completedAtEpochMillis)
+		);
+		return chosen;
+	}
+
+	private DungeonFloor chooseLateLootFloor(DungeonFloor floorHint, DungeonFloor recordedFloor, DungeonFloor contextFloor) {
+		DungeonFloor hinted = floorHint == null ? DungeonFloor.UNKNOWN : floorHint;
+		DungeonFloor recorded = recordedFloor == null ? DungeonFloor.UNKNOWN : recordedFloor;
+		DungeonFloor context = contextFloor == null ? DungeonFloor.UNKNOWN : contextFloor;
+		if (hinted != DungeonFloor.UNKNOWN && recorded != DungeonFloor.UNKNOWN && hinted != recorded) {
 			return DungeonFloor.UNKNOWN;
 		}
-		if (hintedFloor != DungeonFloor.UNKNOWN) return hintedFloor;
-		if (recordedFloor != DungeonFloor.UNKNOWN) return recordedFloor;
-		return contextFloor;
+		if (hinted != DungeonFloor.UNKNOWN && context != DungeonFloor.UNKNOWN && hinted != context) {
+			return DungeonFloor.UNKNOWN;
+		}
+		if (hinted != DungeonFloor.UNKNOWN) return hinted;
+		if (recorded != DungeonFloor.UNKNOWN) return recorded;
+		return context;
+	}
+
+	private DungeonRunCompletionRecord mostRecentPersistedCompletion(long now) {
+		DungeonRunCompletionRecord best = null;
+		for (DungeonRunCompletionRecord record : DrtConfigManager.getRunCompletions()) {
+			if (record == null || record.completedAtEpochMillis <= 0L) continue;
+			if (now - record.completedAtEpochMillis > LATE_LOOT_REATTACH_MS) continue;
+			if (configFloor(record.floor) == DungeonFloor.UNKNOWN) continue;
+			if (best == null || record.completedAtEpochMillis > best.completedAtEpochMillis) {
+				best = record;
+			}
+		}
+		return best;
+	}
+
+	private boolean restoreLiveOwnershipFromPersistedCompletion(
+		DungeonRunCompletionRecord recent,
+		DungeonFloor floor,
+		long now
+	) {
+		if (recent == null || floor == null || floor == DungeonFloor.UNKNOWN) return false;
+		RunMode mode = floor.isKuudra() ? RunMode.KUUDRA : RunMode.DUNGEON;
+		RunSession run = trackingSession.startRun(
+			mode,
+			floor,
+			DetectionSource.RECENT_CONTEXT,
+			EvidenceStrength.RECENT_CONTEXT
+		);
+		String grade = recent.grade == null || recent.grade.isBlank() ? "?" : recent.grade;
+		String fingerprint = recent.completionFingerprint;
+		if (fingerprint == null || fingerprint.isBlank()) {
+			fingerprint = run.id() + "|" + floor.name() + "|" + grade + "|" + Math.max(0L, recent.runTimeMs);
+		}
+		if (!trackingSession.completeRun(run.id(), floor, grade, fingerprint)) {
+			return false;
+		}
+		activeRunSessionId = run.id();
+		currentRunCompletionFingerprint = fingerprint;
+		lastRunRecordMillis = recent.completedAtEpochMillis > 0L ? recent.completedAtEpochMillis : now;
+		lastRunRecordFloor = floor;
+		lastRunRecordGrade = grade;
+		lastRecordedGrade = grade;
+		runCountedThisDungeon = true;
+		if (currentFloor == null || currentFloor == DungeonFloor.UNKNOWN) {
+			currentFloor = floor;
+		}
+		return true;
 	}
 
 	private void clearLootWindow() {
@@ -4666,7 +4746,7 @@ public final class DungeonRunTrackerFeature {
 
 		var message = Component.literal("[DRT] Tracking issue detected (report " + reportId + ").\n")
 			.withStyle(Style.EMPTY.withColor(ChatFormatting.GOLD))
-			.append(Component.literal("Chest/run ownership looked inconsistent — loot may be unassigned.\n")
+			.append(Component.literal("Chest/run ownership looked inconsistent. Loot may be unassigned.\n")
 				.withStyle(ChatFormatting.YELLOW));
 		if (!pathText.isBlank()) {
 			message = message.append(Component.literal("Bug zip saved:\n")
@@ -5009,6 +5089,10 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private void recordOrphanChestDiagnostic(String reason, long now) {
+		recordOrphanChestDiagnostic(reason, now, true);
+	}
+
+	private void recordOrphanChestDiagnostic(String reason, long now, boolean notifyUser) {
 		DetectionEvent event = diagnostics.recordEvent(
 			DetectionEventType.CHEST_OPENED,
 			DetectionSource.RECENT_CONTEXT,
@@ -5017,7 +5101,8 @@ public final class DungeonRunTrackerFeature {
 				"atMillis", now,
 				"currentFloor", floorName(currentFloor),
 				"pendingLootFloor", floorName(pendingLootFloor),
-				"pendingChestSessionId", pendingChestSessionId
+				"pendingChestSessionId", pendingChestSessionId,
+				"notifyUser", notifyUser
 			)
 		);
 		DiagnosticIncident incident = diagnostics.recordInvariantViolation(
@@ -5036,7 +5121,15 @@ public final class DungeonRunTrackerFeature {
 			pendingChestSessionId,
 			diagnosticState()
 		);
-		notifyTrackingIncidentInChat(incident);
+		if (notifyUser) {
+			notifyTrackingIncidentInChat(incident);
+		} else {
+			DungeonRunTracker.LOGGER.info(
+				"[DRT] Unowned reward chest kept unassigned (expected historical/no-recent-run open): chest={}",
+				pendingChestSessionId
+			);
+			incident.markUserNotified();
+		}
 	}
 
 	private void recordDuplicateCommitDiagnostic(dev.vy.drt.config.RunRecordCommitDecision decision, DungeonRunRecord record) {
