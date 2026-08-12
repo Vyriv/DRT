@@ -1,0 +1,3 @@
+{"type":"startRun","mode":"DUNGEON","floor":"M7","source":"CONFIRMED_SCOREBOARD","strength":"CONFIRMED_SCOREBOARD"}
+{"type":"completeRun","floor":"M7","grade":"S+","fingerprint":"m7-committed-run"}
+{"type":"completeKnownRun","run":"last","floor":"K5","grade":"S+","fingerprint":"m7-committed-run-conflict","advanceMillis":15000}

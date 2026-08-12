@@ -1,0 +1,4 @@
+{"type":"startRun","mode":"DUNGEON","floor":"M7","source":"CONFIRMED_SCOREBOARD","strength":"CONFIRMED_SCOREBOARD"}
+{"type":"completeRun","floor":"M7","grade":"S+","fingerprint":"m7-player-inventory-cost"}
+{"type":"openChest","owner":"last","chestTitle":"Bedrock Chest","containerId":905,"source":"CONFIRMED_GUI_COMPONENT"}
+{"type":"updateChestCost","chestId":"last","baseChestCostCoins":10000000,"source":"PLAYER_INVENTORY"}

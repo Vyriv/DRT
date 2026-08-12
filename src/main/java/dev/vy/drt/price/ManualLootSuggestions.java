@@ -21,41 +21,41 @@ public final class ManualLootSuggestions {
 	);
 
 	private static final List<String> COMMON_DUNGEON_CHEST_REWARDS = List.of(
-			"Hot Potato Book",
-			"Fuming Potato Book",
-			"Recombobulator 3000",
-			"Necromancer's Brooch",
-			"Enchanted Book (Bank I)",
-			"Enchanted Book (Bank II)",
-			"Enchanted Book (Bank III)",
-			"Enchanted Book (Ultimate Jerry I)",
-			"Enchanted Book (Ultimate Jerry II)",
-			"Enchanted Book (Ultimate Jerry III)",
-			"Enchanted Book (Infinite Quiver VI)",
-			"Enchanted Book (Infinite Quiver VII)",
-			"Enchanted Book (Feather Falling VI)",
-			"Enchanted Book (Feather Falling VII)",
-			"Enchanted Book (Rejuvenate I)",
-			"Enchanted Book (Rejuvenate II)",
-			"Enchanted Book (Rejuvenate III)",
-			"Enchanted Book (Combo I)",
-			"Enchanted Book (Combo II)",
-			"Enchanted Book (No Pain No Gain I)",
-			"Enchanted Book (No Pain No Gain II)",
-			"Enchanted Book (Ultimate Wise I)",
-			"Enchanted Book (Ultimate Wise II)",
-			"Enchanted Book (Wisdom I)",
-			"Enchanted Book (Wisdom II)",
-			"Enchanted Book (Last Stand I)",
-			"Enchanted Book (Last Stand II)",
-			"Enchanted Book (Rend I)",
-			"Enchanted Book (Rend II)",
-			"Enchanted Book (Overload I)",
-			"Enchanted Book (Lethality VI)",
-			"Enchanted Book (Swarm I)",
-			"Enchanted Book (Soul Eater I)",
-			"Enchanted Book (One For All I)",
-			"Enchanted Book (Thunderlord VII)"
+		"Hot Potato Book",
+		"Fuming Potato Book",
+		"Recombobulator 3000",
+		"Necromancer's Brooch",
+		"Enchanted Book (Bank I)",
+		"Enchanted Book (Bank II)",
+		"Enchanted Book (Bank III)",
+		"Enchanted Book (Ultimate Jerry I)",
+		"Enchanted Book (Ultimate Jerry II)",
+		"Enchanted Book (Ultimate Jerry III)",
+		"Enchanted Book (Infinite Quiver VI)",
+		"Enchanted Book (Infinite Quiver VII)",
+		"Enchanted Book (Feather Falling VI)",
+		"Enchanted Book (Feather Falling VII)",
+		"Enchanted Book (Rejuvenate I)",
+		"Enchanted Book (Rejuvenate II)",
+		"Enchanted Book (Rejuvenate III)",
+		"Enchanted Book (Combo I)",
+		"Enchanted Book (Combo II)",
+		"Enchanted Book (No Pain No Gain I)",
+		"Enchanted Book (No Pain No Gain II)",
+		"Enchanted Book (Ultimate Wise I)",
+		"Enchanted Book (Ultimate Wise II)",
+		"Enchanted Book (Wisdom I)",
+		"Enchanted Book (Wisdom II)",
+		"Enchanted Book (Last Stand I)",
+		"Enchanted Book (Last Stand II)",
+		"Enchanted Book (Rend I)",
+		"Enchanted Book (Rend II)",
+		"Enchanted Book (Overload I)",
+		"Enchanted Book (Lethality VI)",
+		"Enchanted Book (Swarm I)",
+		"Enchanted Book (Soul Eater I)",
+		"Enchanted Book (One For All I)",
+		"Enchanted Book (Thunderlord VII)"
 	);
 
 	private static final List<String> F1_DROPS = List.of(
@@ -73,9 +73,9 @@ public final class ManualLootSuggestions {
 			"Spirit Boots", "Spirit Wing", "Spirit Bone"
 	);
 	private static final List<String> F5_DROPS = List.of(
-			"Dark Orb", "Shadow Assassin Helmet", "Shadow Assassin Chestplate", "Shadow Assassin Leggings",
-			"Shadow Assassin Boots", "Shadow Assassin Cloak", "Livid Dagger", "Shadow Fury",
-			"Last Breath", "Warped Stone", "Enchanted Book (Legion I)"
+		"Dark Orb", "Shadow Assassin Helmet", "Shadow Assassin Chestplate", "Shadow Assassin Leggings",
+		"Shadow Assassin Boots", "Shadow Assassin Cloak", "Livid Dagger", "Shadow Fury",
+		"Last Breath", "Warped Stone", "Enchanted Book (Legion I)"
 	);
 	private static final List<String> F6_DROPS = List.of(
 			"Giant Tooth", "Sadan's Brooch", "Necromancer Lord Helmet", "Necromancer Lord Chestplate",
@@ -181,7 +181,7 @@ public final class ManualLootSuggestions {
 			if (floor.isKuudra() != currentFloor.isKuudra()) continue;
 			// F5 and M5 share the same unique pool — do not treat that as "elsewhere".
 			if (floor.isCatacombs() && currentFloor.isCatacombs()
-					&& floor.floorNumber() == currentFloor.floorNumber()) {
+				&& floor.floorNumber() == currentFloor.floorNumber()) {
 				continue;
 			}
 			List<String> uniques = floorUniqueDrops(floor);
@@ -300,8 +300,6 @@ public final class ManualLootSuggestions {
 		if (bookId != null) return bookId;
 		String generated = generatedItemId(normalized);
 		if (PriceCache.containsItemId(generated)) return generated;
-		List<PriceCache.SearchResult> hits = PriceCache.searchIndexed(normalized, 1);
-		if (!hits.isEmpty()) return hits.getFirst().itemId();
 		return generated;
 	}
 

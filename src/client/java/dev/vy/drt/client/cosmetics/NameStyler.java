@@ -23,7 +23,11 @@ public final class NameStyler {
 	private static final float ANIMATED_GRADIENT_SPEED = 0.04F;
 	private static final int LARGE_LOBBY_ANIMATION_THRESHOLD = 40;
 	private static final float THROTTLED_ANIMATION_FPS = 15.0F;
-	private static final Pattern TRAILING_RANK_PREFIX = Pattern.compile("\\[[^\\]]+]\\s*$");
+	private static final Pattern TRAILING_BRACKET_PREFIX = Pattern.compile("(\\[[^\\]]+])(\\s*)$");
+	/** SkyBlock tab/chat level tags like [435] or [1,234] — never treat these as Hypixel ranks. */
+	private static final Pattern SKYBLOCK_LEVEL_INNER = Pattern.compile("^\\d[\\d,]*$");
+	/** Dungeon class tags like [M]/[T]/[H]/[B]/[A] — keep next to the name. */
+	private static final Pattern DUNGEON_CLASS_INNER = Pattern.compile("^[MTHBA]$", Pattern.CASE_INSENSITIVE);
 
 	private static final NameStylerLruCache<ColorizedCacheKey, Component> COLORIZED_TEXT_CACHE = new NameStylerLruCache<>(TEXT_CACHE_LIMIT);
 	private static final NameStylerLruCache<AnimatedGradientCacheKey, AnimatedGradientStyle> ANIMATED_GRADIENT_CACHE = new NameStylerLruCache<>(512);
@@ -371,8 +375,8 @@ public final class NameStyler {
 		int currentIndex = 0;
 		for (ResolvedOrderedMatch match : plan.matches) {
 			RankPrefixReplacement rankReplacement = resolveRankPrefixReplacement(
-					source.plain.substring(currentIndex, match.start),
-					match.customization);
+				source.plain.substring(currentIndex, match.start),
+				match.customization);
 
 			if (rankReplacement != null) {
 				if (!rankReplacement.before().isEmpty()) {
@@ -523,17 +527,40 @@ public final class NameStyler {
 
 	private static RankPrefixReplacement resolveRankPrefixReplacement(String prefixPlain, PlayerCustomizationRegistry.PlayerCustomization customization) {
 		if (!customization.hasRankPrefix() || prefixPlain == null || prefixPlain.isEmpty()) return null;
-		Matcher matcher = TRAILING_RANK_PREFIX.matcher(prefixPlain);
-		if (!matcher.find()) return null;
-
-		String matched = matcher.group();
-		int bracketEnd = matched.indexOf(']') + 1;
-		String trailingWhitespace = bracketEnd >= 0 && bracketEnd <= matched.length() ? matched.substring(bracketEnd) : "";
 		PlayerCustomizationRegistry.NameRankPrefix rankPrefix = customization.nameRankPrefix();
-		return new RankPrefixReplacement(
-				prefixPlain.substring(0, matcher.start()),
-				rankPrefix.label() + trailingWhitespace,
+		if (rankPrefix == null) return null;
+
+		String work = prefixPlain;
+		StringBuilder protectedSuffix = new StringBuilder();
+		// Peel trailing SkyBlock level / dungeon class brackets so we keep them next to the name.
+		while (true) {
+			Matcher protectedMatcher = TRAILING_BRACKET_PREFIX.matcher(work);
+			if (!protectedMatcher.find()) break;
+			String bracket = protectedMatcher.group(1);
+			String inner = bracket.substring(1, bracket.length() - 1);
+			if (!isProtectedNonRankBracketInner(inner)) break;
+			protectedSuffix.insert(0, protectedMatcher.group(0));
+			work = work.substring(0, protectedMatcher.start());
+		}
+
+		Matcher rankMatcher = TRAILING_BRACKET_PREFIX.matcher(work);
+		if (rankMatcher.find()) {
+			String trailingWhitespace = rankMatcher.group(2);
+			return new RankPrefixReplacement(
+				work.substring(0, rankMatcher.start()),
+				rankPrefix.label() + trailingWhitespace + protectedSuffix,
 				rankPrefix.copyName());
+		}
+
+		// No Hypixel rank tag — leave level/class tags alone; do not insert a custom prefix.
+		return null;
+	}
+
+	private static boolean isProtectedNonRankBracketInner(String inner) {
+		if (inner == null || inner.isBlank()) return false;
+		String trimmed = inner.trim();
+		return SKYBLOCK_LEVEL_INNER.matcher(trimmed).matches()
+			|| DUNGEON_CLASS_INNER.matcher(trimmed).matches();
 	}
 
 	private static Component styledRankPrefix(String text, PlayerCustomizationRegistry.PlayerCustomization customization, Style baseStyle, double animationTime) {
@@ -551,8 +578,8 @@ public final class NameStyler {
 		if (rankPrefix.animatedGradient()) {
 			AnimatedGradientStyle animatedStyle = resolveRankAnimatedGradientStyle(rankPrefix);
 			return animatedStyle == null
-					? Component.literal(text).setStyle(rankStyle.withColor(colors.left()))
-					: animatedGradientText(text, animatedStyle, rankStyle, animationTime);
+				? Component.literal(text).setStyle(rankStyle.withColor(colors.left()))
+				: animatedGradientText(text, animatedStyle, rankStyle, animationTime);
 		}
 
 		if (colors.left() == colors.right()) {
@@ -773,7 +800,30 @@ public final class NameStyler {
 
 	private static int chatHeaderBoundary(String plain) {
 		int delimiter = plain.indexOf(": ");
-		return delimiter == -1 ? Integer.MAX_VALUE : delimiter;
+		if (delimiter == -1) return Integer.MAX_VALUE;
+		// Party/guild roster lines use labels like "Party Moderators: [MVP+] Name".
+		// That colon is not a chat-message delimiter — style the whole line so ranks replace.
+		if (isRosterOrListLabel(plain.substring(0, delimiter))) return Integer.MAX_VALUE;
+		return delimiter;
+	}
+
+	private static boolean isRosterOrListLabel(String beforeColon) {
+		if (beforeColon == null || beforeColon.isBlank()) return false;
+		String upper = beforeColon.trim().toUpperCase(Locale.ROOT);
+		return upper.startsWith("PARTY ")
+			|| upper.equals("PARTY LEADER")
+			|| upper.equals("PARTY MODERATORS")
+			|| upper.equals("PARTY MEMBERS")
+			|| upper.startsWith("GUILD ")
+			|| upper.equals("OFFICER")
+			|| upper.startsWith("OFFICER ")
+			|| upper.startsWith("ONLINE ")
+			|| upper.startsWith("TOTAL ")
+			|| upper.endsWith(" MEMBERS")
+			|| upper.endsWith(" MEMBER")
+			|| upper.equals("LEADER")
+			|| upper.equals("MEMBERS")
+			|| upper.equals("MODERATORS");
 	}
 
 	private static boolean hasPlainBadgeImmediatelyAfter(String text, int startIndex, String badgeText) {
@@ -917,6 +967,9 @@ public final class NameStyler {
 	                                    PlayerCustomizationRegistry.PlayerCustomization customization, boolean isAnimatedGradient,
 	                                    boolean hasBadge, boolean hasDecorations, boolean hasExplicitNameColors, boolean hasBadgeAlready,
 	                                    boolean hasTrailingContent) {
+	}
+
+	private record RankPrefixReplacement(String before, String replacement, boolean copyName) {
 	}
 
 	private record RankPrefixReplacement(String before, String replacement, boolean copyName) {

@@ -1,0 +1,10 @@
+{
+  "clockStart": "2024-01-01T00:00:00Z",
+  "activeRun": true,
+  "activeMode": "DUNGEON",
+  "activeFloor": "F7",
+  "completedRuns": 0,
+  "abandonedRuns": 1,
+  "chests": 0,
+  "orphanChests": 0
+}

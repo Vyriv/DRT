@@ -236,35 +236,35 @@ public final class PlayerCustomizationRegistry {
 		NameBadge badge = entry.badge() == null ? null : new NameBadge(entry.badge().label(), entry.badge().color(), entry.badge().bold());
 		NameRankPrefix rankPrefix = toRankPrefix(entry.rankPrefix());
 		return new PlayerCustomization(
-				username,
-				blankToNull(entry.nickname()),
-				uuid,
-				entry.aliases(),
-				colors,
-				letterColors,
-				animated,
-				entry.style() == null ? null : entry.style().animationSpeed(),
-				entry.style() == null ? null : entry.style().animationSteps(),
-				entry.style() != null && entry.style().bold(),
-				badge,
-				rankPrefix,
-				blankToNull(entry.capeResourcePath()),
-				blankToNull(entry.capeUrl()));
+			username,
+			blankToNull(entry.nickname()),
+			uuid,
+			entry.aliases(),
+			colors,
+			letterColors,
+			animated,
+			entry.style() == null ? null : entry.style().animationSpeed(),
+			entry.style() == null ? null : entry.style().animationSteps(),
+			entry.style() != null && entry.style().bold(),
+			badge,
+			rankPrefix,
+			blankToNull(entry.capeResourcePath()),
+			blankToNull(entry.capeUrl()));
 	}
 
 	private static NameRankPrefix toRankPrefix(CosmeticsContentManager.LoadedRankPrefix entry) {
 		if (entry == null) return null;
 		return switch (entry.mode()) {
 			case COPY_NAME -> new NameRankPrefix(entry.label(), NameRankPrefix.Mode.COPY_NAME, null, entry.bold(),
-					entry.animationSpeed(), entry.animationSteps());
+				entry.animationSpeed(), entry.animationSteps());
 			case SOLID -> new NameRankPrefix(entry.label(), NameRankPrefix.Mode.SOLID, NameColors.solid(entry.leftColor()), entry.bold(),
-					entry.animationSpeed(), entry.animationSteps());
+				entry.animationSpeed(), entry.animationSteps());
 			case GRADIENT -> new NameRankPrefix(entry.label(), NameRankPrefix.Mode.GRADIENT,
-					new NameColors(entry.leftColor(), entry.rightColor(), entry.gradientSpacing()), entry.bold(),
-					entry.animationSpeed(), entry.animationSteps());
+				new NameColors(entry.leftColor(), entry.rightColor(), entry.gradientSpacing()), entry.bold(),
+				entry.animationSpeed(), entry.animationSteps());
 			case ANIMATED_GRADIENT -> new NameRankPrefix(entry.label(), NameRankPrefix.Mode.ANIMATED_GRADIENT,
-					new NameColors(entry.leftColor(), entry.rightColor(), entry.gradientSpacing()), entry.bold(),
-					entry.animationSpeed(), entry.animationSteps());
+				new NameColors(entry.leftColor(), entry.rightColor(), entry.gradientSpacing()), entry.bold(),
+				entry.animationSpeed(), entry.animationSteps());
 		};
 	}
 
@@ -319,9 +319,9 @@ public final class PlayerCustomizationRegistry {
 	}
 
 	public record PlayerCustomization(String username, String nickname, UUID uuid, List<String> aliases,
-	                                  NameColors nameColors, List<Integer> nameLetterColors, boolean nameAnimated, Float nameAnimationSpeed,
-	                                  Integer nameAnimationSteps, boolean nameBold, NameBadge nameBadge, NameRankPrefix nameRankPrefix,
-	                                  String capeResourcePath, String capeUrl) {
+			NameColors nameColors, List<Integer> nameLetterColors, boolean nameAnimated, Float nameAnimationSpeed,
+			Integer nameAnimationSteps, boolean nameBold, NameBadge nameBadge, NameRankPrefix nameRankPrefix,
+			String capeResourcePath, String capeUrl) {
 		public PlayerCustomization {
 			aliases = aliases == null ? List.of() : aliases.stream()
 					.filter(alias -> alias != null && !alias.isBlank())
@@ -410,20 +410,20 @@ public final class PlayerCustomizationRegistry {
 					.toList();
 
 			return new PlayerCustomization(
-					resolvedUsername,
-					resolvedNickname,
-					resolvedUuid,
-					mergedAliases,
-					overlay.nameColors != null ? overlay.nameColors : nameColors,
-					!overlay.nameLetterColors.isEmpty() ? overlay.nameLetterColors : nameLetterColors,
-					overlay.nameAnimated || nameAnimated,
-					overlay.nameAnimationSpeed != null ? overlay.nameAnimationSpeed : nameAnimationSpeed,
-					overlay.nameAnimationSteps != null ? overlay.nameAnimationSteps : nameAnimationSteps,
-					overlay.nameBold || nameBold,
-					overlay.nameBadge != null ? overlay.nameBadge : nameBadge,
-					overlay.nameRankPrefix != null ? overlay.nameRankPrefix : nameRankPrefix,
-					overlay.capeResourcePath != null ? overlay.capeResourcePath : capeResourcePath,
-					overlay.capeUrl != null ? overlay.capeUrl : capeUrl);
+				resolvedUsername,
+				resolvedNickname,
+				resolvedUuid,
+				mergedAliases,
+				overlay.nameColors != null ? overlay.nameColors : nameColors,
+				!overlay.nameLetterColors.isEmpty() ? overlay.nameLetterColors : nameLetterColors,
+				overlay.nameAnimated || nameAnimated,
+				overlay.nameAnimationSpeed != null ? overlay.nameAnimationSpeed : nameAnimationSpeed,
+				overlay.nameAnimationSteps != null ? overlay.nameAnimationSteps : nameAnimationSteps,
+				overlay.nameBold || nameBold,
+				overlay.nameBadge != null ? overlay.nameBadge : nameBadge,
+				overlay.nameRankPrefix != null ? overlay.nameRankPrefix : nameRankPrefix,
+				overlay.capeResourcePath != null ? overlay.capeResourcePath : capeResourcePath,
+				overlay.capeUrl != null ? overlay.capeUrl : capeUrl);
 		}
 
 		private static void addName(List<String> names, String value) {

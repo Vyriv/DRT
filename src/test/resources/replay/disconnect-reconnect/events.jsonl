@@ -1,0 +1,3 @@
+{"type":"startRun","mode":"DUNGEON","floor":"M7","source":"CONFIRMED_SCOREBOARD","strength":"CONFIRMED_SCOREBOARD"}
+{"type":"abandonActiveRun","eventType":"SERVER_CHANGED","source":"SYSTEM","reason":"disconnect"}
+{"type":"startRun","advanceMillis":5000,"mode":"DUNGEON","floor":"F7","source":"CONFIRMED_SCOREBOARD","strength":"CONFIRMED_SCOREBOARD"}

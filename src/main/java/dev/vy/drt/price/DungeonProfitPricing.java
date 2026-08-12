@@ -96,7 +96,33 @@ public final class DungeonProfitPricing {
 			: ITEM_ENCHANTED_MYCELIUM;
 		long materialCost = resolveMaterialCost(factionMaterial, recipe.factionMaterialCount, config);
 		long starCost = resolveMaterialCost(ITEM_CORRUPTED_NETHER_STAR, 2, config);
-		return Math.max(0L, recipe.coinCost) + materialCost + starCost;
+		long coinCost = applyKuudraKeyCoinDiscount(recipe.coinCost, reputationForKeyDiscount(config));
+		return Math.max(0L, coinCost) + materialCost + starCost;
+	}
+
+	/**
+	 * Emissary coin discount by faction reputation:
+	 * 0 → 0%, 1k → 5%, 3k → 10%, 7k → 15%, 12k → 20%.
+	 * Materials are not discounted.
+	 */
+	public static int kuudraKeyCoinDiscountPercent(int reputation) {
+		if (reputation >= 12_000) return 20;
+		if (reputation >= 7_000) return 15;
+		if (reputation >= 3_000) return 10;
+		if (reputation >= 1_000) return 5;
+		return 0;
+	}
+
+	public static long applyKuudraKeyCoinDiscount(long coinCost, int reputation) {
+		if (coinCost <= 0L) return 0L;
+		int percent = kuudraKeyCoinDiscountPercent(reputation);
+		if (percent <= 0) return coinCost;
+		return coinCost * (100L - percent) / 100L;
+	}
+
+	private static int reputationForKeyDiscount(DrtConfig config) {
+		if (config == null || !config.kuudraReputationKnown) return 0;
+		return Math.max(0, config.kuudraReputation);
 	}
 
 	public static long resolveModifierCost(String itemId, DrtConfig config) {
