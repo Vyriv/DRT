@@ -4,6 +4,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 public final class DungeonRunRecord {
+	public String recordId = "";
+	public String runSessionId = "";
+	public String chestSessionId = "";
+	public String commitFingerprint = "";
 	public long timestampEpochMillis;
 	public int runNumber;
 	public int chestNumber;
@@ -55,6 +59,10 @@ public final class DungeonRunRecord {
 
 	public DungeonRunRecord copy() {
 		DungeonRunRecord copy = new DungeonRunRecord(timestampEpochMillis, runNumber, chestNumber, floor, grade, chestTitle, chestCostCoins, chestValueCoins, chestProfitCoins, lootEntries);
+		copy.recordId = recordId == null ? "" : recordId;
+		copy.runSessionId = runSessionId == null ? "" : runSessionId;
+		copy.chestSessionId = chestSessionId == null ? "" : chestSessionId;
+		copy.commitFingerprint = commitFingerprint == null ? "" : commitFingerprint;
 		copy.applyCostBreakdown(toCostBreakdown());
 		copy.normalizeCostBreakdown();
 		return copy;

@@ -1,0 +1,2 @@
+{"type":"openChest","owner":"","chestTitle":"Unknown Bedrock Chest","containerId":307,"source":"CONFIRMED_GUI_COMPONENT"}
+{"type":"observeLoot","chestId":"last","source":"STRUCTURED_CHAT","slotOwner":"SERVER_CONTAINER","rawName":"Wither Essence","normalizedName":"WITHER ESSENCE","itemId":"ESSENCE_WITHER","identityStrength":"STRUCTURED_CHAT","quantity":100,"containerId":307,"slotIndex":-1,"dedupKey":"chat|307|WITHER ESSENCE"}

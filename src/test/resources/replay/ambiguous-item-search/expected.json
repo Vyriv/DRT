@@ -1,0 +1,15 @@
+{
+  "clockStart": "2024-01-01T00:00:00Z",
+  "activeRun": true,
+  "activeMode": "DUNGEON",
+  "activeFloor": "M7",
+  "completedRuns": 0,
+  "orphanChests": 0,
+  "loot": {
+    "itemId": "",
+    "quantity": 1
+  },
+  "invariants": [
+    "UNKNOWN_ITEM_CANNOT_USE_FIRST_SEARCH_RESULT"
+  ]
+}

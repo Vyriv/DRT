@@ -1,0 +1,3 @@
+{"type":"startRun","mode":"DUNGEON","floor":"M7","source":"CONFIRMED_SCOREBOARD","strength":"CONFIRMED_SCOREBOARD"}
+{"type":"openChest","owner":"","chestTitle":"Bedrock Chest","containerId":903,"source":"CONFIRMED_GUI_COMPONENT"}
+{"type":"observeLoot","chestId":"last","source":"STRUCTURED_CHAT","slotOwner":"SERVER_CONTAINER","rawName":"WITHER ESSENCE","normalizedName":"WITHER ESSENCE","itemId":"ESSENCE_WITHER","identityStrength":"STRUCTURED_CHAT","quantity":100,"containerId":903,"slotIndex":-1,"dedupKey":"chat|903|WITHER ESSENCE"}
