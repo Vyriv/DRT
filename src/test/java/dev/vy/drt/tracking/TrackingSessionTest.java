@@ -26,6 +26,18 @@ class TrackingSessionTest {
 	}
 
 	@Test
+	void runIdsAreUniqueAcrossTrackingSessionInstances() {
+		FakeTrackerClock clock = new FakeTrackerClock(Instant.EPOCH);
+		TrackingSession first = new TrackingSession("live", "server", clock, new DiagnosticRecorder(clock));
+		TrackingSession second = new TrackingSession("live", "server", clock, new DiagnosticRecorder(clock));
+
+		RunSession firstRun = first.startRun(RunMode.DUNGEON, DungeonFloor.M5, DetectionSource.STRUCTURED_CHAT, EvidenceStrength.STRUCTURED_CHAT);
+		RunSession secondRun = second.startRun(RunMode.DUNGEON, DungeonFloor.M5, DetectionSource.STRUCTURED_CHAT, EvidenceStrength.STRUCTURED_CHAT);
+
+		assertFalse(firstRun.id().equals(secondRun.id()));
+	}
+
+	@Test
 	void oneRunCompletionCountsAtMostOncePerSession() {
 		FakeTrackerClock clock = new FakeTrackerClock(Instant.EPOCH);
 		DiagnosticRecorder diagnostics = new DiagnosticRecorder(clock);
@@ -137,6 +149,37 @@ class TrackingSessionTest {
 		assertEquals("", snapshot.chestOwners().get(chest.id()));
 		assertTrue(snapshot.invariants().contains(TrackerInvariant.HISTORICAL_REWARD_CLAIM_CANNOT_MUTATE_ACTIVE_RUN.name()));
 		assertTrue(snapshot.invariants().contains(TrackerInvariant.PHYSICAL_LOCATION_DOES_NOT_IMPLY_CHEST_OWNERSHIP.name()));
+	}
+
+	@Test
+	void distinctGuiStacksWithSameQuantityAreNotCollapsed() {
+		FakeTrackerClock clock = new FakeTrackerClock(Instant.EPOCH);
+		DiagnosticRecorder diagnostics = new DiagnosticRecorder(clock);
+		TrackingSession session = new TrackingSession("test", "server", clock, diagnostics);
+		RunSession run = session.startRun(RunMode.DUNGEON, DungeonFloor.M5, DetectionSource.CONFIRMED_SCOREBOARD, EvidenceStrength.CONFIRMED_SCOREBOARD);
+		ChestSession chest = session.openChest(run.id(), "Gold Chest", 77, DetectionSource.CONFIRMED_GUI_COMPONENT);
+
+		// Regression: a bare "gui|1" dedup key used to drop every subsequent qty=1 GUI stack.
+		assertTrue(session.observeLoot(chest.id(), new LootObservation(
+			"wither", 1L, DetectionSource.CONFIRMED_GUI_COMPONENT,
+			"WITHER ESSENCE", "WITHER ESSENCE", "ESSENCE_WITHER", LootIdentityStrength.STRICT_ALIAS,
+			1, 77, 10, SlotOwner.SERVER_CONTAINER,
+			"chest|CONFIRMED_GUI_COMPONENT|77|10|id:ESSENCE_WITHER|gui|1"
+		)));
+		assertTrue(session.observeLoot(chest.id(), new LootObservation(
+			"undead", 2L, DetectionSource.CONFIRMED_GUI_COMPONENT,
+			"UNDEAD ESSENCE", "UNDEAD ESSENCE", "ESSENCE_UNDEAD", LootIdentityStrength.STRICT_ALIAS,
+			1, 77, 11, SlotOwner.SERVER_CONTAINER,
+			"chest|CONFIRMED_GUI_COMPONENT|77|11|id:ESSENCE_UNDEAD|gui|1"
+		)));
+		assertTrue(session.observeLoot(chest.id(), new LootObservation(
+			"book", 3L, DetectionSource.CONFIRMED_GUI_COMPONENT,
+			"Enchanted Book (Rejuvenate I)", "ENCHANTED BOOK (REJUVENATE I)", "ENCHANTMENT_REJUVENATE_1", LootIdentityStrength.STRICT_ALIAS,
+			1, 77, 12, SlotOwner.SERVER_CONTAINER,
+			"chest|CONFIRMED_GUI_COMPONENT|77|12|id:ENCHANTMENT_REJUVENATE_1|gui|1"
+		)));
+
+		assertEquals(3, chest.resolvedLoot().size());
 	}
 
 	@Test

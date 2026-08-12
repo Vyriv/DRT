@@ -13,6 +13,7 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.zip.ZipFile;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -54,20 +55,26 @@ class DiagnosticRecorderTest {
 		DiagnosticRecorder recorder = recorder(clock);
 		DiagnosticIncident incident = SyntheticDiagnosticIncidentFactory.record(recorder, SyntheticDiagnosticIncidentFactory.DEFAULT_ROOT_KEY, 0);
 
-		Path replayDir = recorder.saveReplayBundle(tempDir.resolve("drt").resolve("replays"), incident, SyntheticDiagnosticIncidentFactory.expected(incident));
+		Path replayZip = recorder.saveReplayBundle(tempDir.resolve("drt").resolve("replays"), incident, SyntheticDiagnosticIncidentFactory.expected(incident));
 
-		assertTrue(Files.isDirectory(replayDir));
-		assertTrue(replayDir.getFileName().toString().contains(incident.id()));
-		String manifest = Files.readString(replayDir.resolve("manifest.json"), StandardCharsets.UTF_8);
-		String events = Files.readString(replayDir.resolve("events.jsonl"), StandardCharsets.UTF_8);
-		String expected = Files.readString(replayDir.resolve("expected.json"), StandardCharsets.UTF_8);
-		String report = Files.readString(replayDir.resolve("report.txt"), StandardCharsets.UTF_8);
+		assertTrue(Files.isRegularFile(replayZip));
+		assertTrue(replayZip.getFileName().toString().contains(incident.id()));
+		assertTrue(replayZip.getFileName().toString().endsWith(".zip"));
+		String manifest;
+		String events;
+		String expected;
+		String report;
+		try (ZipFile zip = new ZipFile(replayZip.toFile())) {
+			manifest = readZipEntry(zip, "manifest.json");
+			events = readZipEntry(zip, "events.jsonl");
+			expected = readZipEntry(zip, "expected.json");
+			report = readZipEntry(zip, "report.txt");
+		}
 		JsonParser.parseString(manifest).getAsJsonObject();
 		for (String line : events.split("\\R")) {
 			if (!line.isBlank()) JsonParser.parseString(line).getAsJsonObject();
 		}
 		JsonParser.parseString(expected).getAsJsonObject();
-		ReplayFixture.load(replayDir);
 
 		assertTrue(manifest.contains("\"incidentType\": \"SYNTHETIC_TEST\""));
 		assertTrue(manifest.contains("\"reportId\": \"" + incident.id() + "\""));
@@ -77,7 +84,7 @@ class DiagnosticRecorderTest {
 		assertTrue(expected.contains("SYNTHETIC_TEST"));
 		assertTrue(report.contains("DRT DIAGNOSTIC REPORT"));
 		assertTrue(report.contains("reportId=" + incident.id()));
-		assertTrue(report.contains("replayPath=" + replayDir.toAbsolutePath()));
+		assertTrue(report.contains("replayPath=" + replayZip.toAbsolutePath()));
 		assertNoUnrelatedPrivateData(manifest + events + expected + report);
 	}
 
@@ -133,6 +140,14 @@ class DiagnosticRecorderTest {
 		String lower = text.toLowerCase();
 		for (String forbidden : List.of("party chat", "guild chat", "private message", "sessiontoken", "auth token")) {
 			assertTrue(!lower.contains(forbidden), "unexpected private data marker: " + forbidden);
+		}
+	}
+
+	private static String readZipEntry(ZipFile zip, String name) throws Exception {
+		var entry = zip.getEntry(name);
+		assertNotNull(entry);
+		try (var stream = zip.getInputStream(entry)) {
+			return new String(stream.readAllBytes(), StandardCharsets.UTF_8);
 		}
 	}
 }
