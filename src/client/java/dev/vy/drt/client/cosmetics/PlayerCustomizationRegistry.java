@@ -23,8 +23,8 @@ public final class PlayerCustomizationRegistry {
 			PlayerCustomization customization = toCustomization(entry);
 			if (customization == null) continue;
 			String key = customization.uuid != null
-				? "uuid:" + customization.uuid.toString().toLowerCase(Locale.ROOT)
-				: "name:" + normalizedNameKey(customization.username);
+					? "uuid:" + customization.uuid.toString().toLowerCase(Locale.ROOT)
+					: "name:" + normalizedNameKey(customization.username);
 			merged.putIfAbsent(key, customization);
 		}
 		loadedEntries = List.copyOf(merged.values());
@@ -143,19 +143,19 @@ public final class PlayerCustomizationRegistry {
 		ComparatorByCandidateLength.sort(scoreboardGradientNameCandidates);
 
 		snapshot = new Snapshot(
-			snapshot.version + 1L,
-			List.copyOf(effectiveEntries),
-			Map.copyOf(byName),
-			Map.copyOf(byUuid),
-			List.copyOf(allNameCandidates),
-			List.copyOf(nameplateDisplayCandidates),
-			List.copyOf(chatHeaderNameCandidates),
-			List.copyOf(styledNameCandidates),
-			List.copyOf(gradientNameCandidates),
-			List.copyOf(scoreboardDisplayNameCandidates),
-			List.copyOf(scoreboardStyledNameCandidates),
-			List.copyOf(scoreboardGradientNameCandidates),
-			effectiveEntries.stream().anyMatch(PlayerCustomization::hasCapeCustomization));
+				snapshot.version + 1L,
+				List.copyOf(effectiveEntries),
+				Map.copyOf(byName),
+				Map.copyOf(byUuid),
+				List.copyOf(allNameCandidates),
+				List.copyOf(nameplateDisplayCandidates),
+				List.copyOf(chatHeaderNameCandidates),
+				List.copyOf(styledNameCandidates),
+				List.copyOf(gradientNameCandidates),
+				List.copyOf(scoreboardDisplayNameCandidates),
+				List.copyOf(scoreboardStyledNameCandidates),
+				List.copyOf(scoreboardGradientNameCandidates),
+				effectiveEntries.stream().anyMatch(PlayerCustomization::hasCapeCustomization));
 	}
 
 	private static List<NameCandidate> exactCandidates(PlayerCustomization customization, List<String> names) {
@@ -324,10 +324,10 @@ public final class PlayerCustomizationRegistry {
 			String capeResourcePath, String capeUrl) {
 		public PlayerCustomization {
 			aliases = aliases == null ? List.of() : aliases.stream()
-				.filter(alias -> alias != null && !alias.isBlank())
-				.map(String::trim)
-				.distinct()
-				.toList();
+					.filter(alias -> alias != null && !alias.isBlank())
+					.map(String::trim)
+					.distinct()
+					.toList();
 			nameLetterColors = nameLetterColors == null ? List.of() : List.copyOf(nameLetterColors);
 		}
 
@@ -404,10 +404,10 @@ public final class PlayerCustomizationRegistry {
 			addName(mergedAliases, username);
 			addName(mergedAliases, overlay.username);
 			mergedAliases = mergedAliases.stream()
-				.map(String::trim)
-				.filter(alias -> !alias.isEmpty() && !alias.equalsIgnoreCase(resolvedUsername))
-				.distinct()
-				.toList();
+					.map(String::trim)
+					.filter(alias -> !alias.isEmpty() && !alias.equalsIgnoreCase(resolvedUsername))
+					.distinct()
+					.toList();
 
 			return new PlayerCustomization(
 				resolvedUsername,
@@ -442,11 +442,11 @@ public final class PlayerCustomizationRegistry {
 	}
 
 	private record Snapshot(long version, List<PlayerCustomization> entries, Map<String, PlayerCustomization> byName,
-			Map<UUID, PlayerCustomization> byUuid, List<NameCandidate> allNameCandidates,
-			List<NameCandidate> nameplateDisplayCandidates, List<NameCandidate> chatHeaderNameCandidates,
-			List<NameCandidate> styledNameCandidates, List<NameCandidate> gradientNameCandidates,
-			List<NameCandidate> scoreboardDisplayNameCandidates, List<NameCandidate> scoreboardStyledNameCandidates,
-			List<NameCandidate> scoreboardGradientNameCandidates, boolean hasCapeCustomizations) {
+	                        Map<UUID, PlayerCustomization> byUuid, List<NameCandidate> allNameCandidates,
+	                        List<NameCandidate> nameplateDisplayCandidates, List<NameCandidate> chatHeaderNameCandidates,
+	                        List<NameCandidate> styledNameCandidates, List<NameCandidate> gradientNameCandidates,
+	                        List<NameCandidate> scoreboardDisplayNameCandidates, List<NameCandidate> scoreboardStyledNameCandidates,
+	                        List<NameCandidate> scoreboardGradientNameCandidates, boolean hasCapeCustomizations) {
 		static Snapshot empty() {
 			return new Snapshot(0L, List.of(), Map.of(), Map.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), false);
 		}
