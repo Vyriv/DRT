@@ -207,7 +207,7 @@ public final class NameStyler {
 	}
 
 	private static FormattedCharSequence applyCachedOrderedTextTransform(FormattedCharSequence text, TransformKind kind,
-			NameStylerIdentityCache<FormattedCharSequence, FormattedCharSequence> identityCache) {
+	                                                                     NameStylerIdentityCache<FormattedCharSequence, FormattedCharSequence> identityCache) {
 		if (text == null) return null;
 		checkRegistryVersion();
 		if (candidatesForKind(kind).isEmpty()) return text;
@@ -232,7 +232,7 @@ public final class NameStyler {
 		if (plan.hasAnimatedGradient) {
 			long frame = currentAnimationFrameIndex(animationTime);
 			OrderedTextAnimatedFrameCacheKey key = new OrderedTextAnimatedFrameCacheKey(PlayerCustomizationRegistry.version(), kind, source.plain,
-				source.styleHash, frame);
+					source.styleHash, frame);
 			transformed = ORDERED_TEXT_ANIMATED_FRAME_CACHE.getCached(key);
 			if (transformed == null) {
 				transformed = rebuildComponentFromPlan(source, plan, animationTime, kind).getVisualOrderText();
@@ -297,8 +297,8 @@ public final class NameStyler {
 			}
 
 			if (kind.includeBadges && customization.hasBadge()
-				&& !hasPlainBadgeImmediatelyAfter(raw, match.index() + match.matchedName().length(), customization.nameBadge().label())
-				&& !(kind.terminalBadgesOnly && hasPlainVisibleContentAfter(raw, match.index() + match.matchedName().length()))) {
+					&& !hasPlainBadgeImmediatelyAfter(raw, match.index() + match.matchedName().length(), customization.nameBadge().label())
+					&& !(kind.terminalBadgesOnly && hasPlainVisibleContentAfter(raw, match.index() + match.matchedName().length()))) {
 				output.append(' ');
 				output.append(buildLegacyHexColorCode(customization.nameBadge().color()));
 				if (customization.nameBadge().bold()) output.append('§').append('l');
@@ -352,17 +352,17 @@ public final class NameStyler {
 			boolean animated = customization.animatedGradient();
 			String badgeText = customization.nameBadge() == null ? null : customization.nameBadge().label();
 			matches.add(new ResolvedOrderedMatch(
-				start,
-				end,
-				content,
-				styleAt(runs, start),
-				customization,
-				animated,
-				customization.hasBadge(),
-				customization.hasDecorations(),
-				customization.hasExplicitNameColors(),
-				kind.includeBadges && badgeText != null && hasPlainBadgeImmediatelyAfter(plain, end, badgeText),
-				kind.terminalBadgesOnly && hasPlainVisibleContentAfter(plain, end)));
+					start,
+					end,
+					content,
+					styleAt(runs, start),
+					customization,
+					animated,
+					customization.hasBadge(),
+					customization.hasDecorations(),
+					customization.hasExplicitNameColors(),
+					kind.includeBadges && badgeText != null && hasPlainBadgeImmediatelyAfter(plain, end, badgeText),
+					kind.terminalBadgesOnly && hasPlainVisibleContentAfter(plain, end)));
 			hasAnimatedGradient = hasAnimatedGradient || animated;
 			searchIndex = end;
 		}
@@ -450,8 +450,8 @@ public final class NameStyler {
 			}
 			AnimatedGradientStyle animatedStyle = resolveAnimatedGradientStyle(customization);
 			return animatedStyle == null
-				? Component.literal(content).setStyle(effectiveBaseStyle)
-				: animatedGradientText(content, animatedStyle, effectiveBaseStyle, animationTime);
+					? Component.literal(content).setStyle(effectiveBaseStyle)
+					: animatedGradientText(content, animatedStyle, effectiveBaseStyle, animationTime);
 		}
 
 		if (!customization.nameLetterColors().isEmpty()) {
@@ -469,7 +469,7 @@ public final class NameStyler {
 
 	private static Component staticGradientText(String content, PlayerCustomizationRegistry.NameColors colors, Style baseStyle) {
 		ColorizedCacheKey key = new ColorizedCacheKey(content.toLowerCase(Locale.ROOT),
-			"gradient:" + colors.left() + ':' + colors.right() + ':' + colors.spacing(), List.of(colors.left(), colors.right()));
+				"gradient:" + colors.left() + ':' + colors.right() + ':' + colors.spacing(), List.of(colors.left(), colors.right()));
 		Component cached = COLORIZED_TEXT_CACHE.getCached(key);
 		if (cached == null) {
 			MutableComponent gradientText = Component.empty();
@@ -964,9 +964,9 @@ public final class NameStyler {
 	}
 
 	private record ResolvedOrderedMatch(int start, int end, String content, Style baseStyle,
-			PlayerCustomizationRegistry.PlayerCustomization customization, boolean isAnimatedGradient,
-			boolean hasBadge, boolean hasDecorations, boolean hasExplicitNameColors, boolean hasBadgeAlready,
-			boolean hasTrailingContent) {
+	                                    PlayerCustomizationRegistry.PlayerCustomization customization, boolean isAnimatedGradient,
+	                                    boolean hasBadge, boolean hasDecorations, boolean hasExplicitNameColors, boolean hasBadgeAlready,
+	                                    boolean hasTrailingContent) {
 	}
 
 	private record RankPrefixReplacement(String before, String replacement, boolean copyName) {
