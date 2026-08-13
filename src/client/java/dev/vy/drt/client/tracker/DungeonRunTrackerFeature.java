@@ -119,35 +119,35 @@ public final class DungeonRunTrackerFeature {
 	private static final Pattern KUUDRA_PAREN_TIER_PATTERN = Pattern.compile("\\(\\s*[KT]\\s*([1-5])\\s*\\)", Pattern.CASE_INSENSITIVE);
 	private static final Pattern SCORE_GRADE_PATTERN = Pattern.compile("\\bSCORE\\b.*(?:\\((S\\+|S|A|B|C|D)\\)|(?:^|\\s)(S\\+|S|A|B|C|D)\\s*$)", Pattern.CASE_INSENSITIVE);
 	private static final Set<String> REWARD_CHEST_TITLES = Set.of(
-		"WOOD CHEST", "GOLD CHEST", "DIAMOND CHEST", "EMERALD CHEST", "OBSIDIAN CHEST", "BEDROCK CHEST",
-		"FREE CHEST", "PAID CHEST"
+			"WOOD CHEST", "GOLD CHEST", "DIAMOND CHEST", "EMERALD CHEST", "OBSIDIAN CHEST", "BEDROCK CHEST",
+			"FREE CHEST", "PAID CHEST"
 	);
 	private static final Map<String, String> TIER_NAME_TO_CHEST_TITLE = Map.of(
-		"WOOD", "WOOD CHEST", "GOLD", "GOLD CHEST", "DIAMOND", "DIAMOND CHEST",
-		"EMERALD", "EMERALD CHEST", "OBSIDIAN", "OBSIDIAN CHEST", "BEDROCK", "BEDROCK CHEST",
-		"FREE", "FREE CHEST", "PAID", "PAID CHEST"
+			"WOOD", "WOOD CHEST", "GOLD", "GOLD CHEST", "DIAMOND", "DIAMOND CHEST",
+			"EMERALD", "EMERALD CHEST", "OBSIDIAN", "OBSIDIAN CHEST", "BEDROCK", "BEDROCK CHEST",
+			"FREE", "FREE CHEST", "PAID", "PAID CHEST"
 	);
 	/** Longest / most specific names first so Infernal cannot lose to a weaker token. */
 	private static final List<Map.Entry<String, DungeonFloor>> KUUDRA_TIER_NAMES = List.of(
-		Map.entry("INFERNAL", DungeonFloor.K5),
-		Map.entry("BURNING", DungeonFloor.K3),
-		Map.entry("FIERY", DungeonFloor.K4),
-		Map.entry("BASIC", DungeonFloor.K1),
-		Map.entry("HOT", DungeonFloor.K2)
+			Map.entry("INFERNAL", DungeonFloor.K5),
+			Map.entry("BURNING", DungeonFloor.K3),
+			Map.entry("FIERY", DungeonFloor.K4),
+			Map.entry("BASIC", DungeonFloor.K1),
+			Map.entry("HOT", DungeonFloor.K2)
 	);
 	/** Paid-chest Cost lines name the key; longest first so "HOT KUUDRA KEY" beats bare "KUUDRA KEY". */
 	private static final List<Map.Entry<String, DungeonFloor>> KUUDRA_KEY_NAMES = List.of(
-		Map.entry("INFERNAL KUUDRA KEY", DungeonFloor.K5),
-		Map.entry("FIERY KUUDRA KEY", DungeonFloor.K4),
-		Map.entry("BURNING KUUDRA KEY", DungeonFloor.K3),
-		Map.entry("HOT KUUDRA KEY", DungeonFloor.K2),
-		Map.entry("BASIC KUUDRA KEY", DungeonFloor.K1),
-		Map.entry("KUUDRA KEY", DungeonFloor.K1)
+			Map.entry("INFERNAL KUUDRA KEY", DungeonFloor.K5),
+			Map.entry("FIERY KUUDRA KEY", DungeonFloor.K4),
+			Map.entry("BURNING KUUDRA KEY", DungeonFloor.K3),
+			Map.entry("HOT KUUDRA KEY", DungeonFloor.K2),
+			Map.entry("BASIC KUUDRA KEY", DungeonFloor.K1),
+			Map.entry("KUUDRA KEY", DungeonFloor.K1)
 	);
 	private static final Set<String> ULTIMATE_ENCHANTS = Set.of(
-		"LEGION", "ULTIMATE_WISE", "LAST_STAND", "SOUL_EATER", "SWARM", "COMBO", "REND",
-		"NO_PAIN_NO_GAIN", "ONE_FOR_ALL", "CHIMERA", "BANK", "JERRY", "INFERNO",
-		"FATAL_TEMPO", "DUPLEX", "FLASH", "HABANERO_TACTICS"
+			"LEGION", "ULTIMATE_WISE", "LAST_STAND", "SOUL_EATER", "SWARM", "COMBO", "REND",
+			"NO_PAIN_NO_GAIN", "ONE_FOR_ALL", "CHIMERA", "BANK", "JERRY", "INFERNO",
+			"FATAL_TEMPO", "DUPLEX", "FLASH", "HABANERO_TACTICS"
 	);
 	private static final Map<String, String> ITEM_ID_ALIASES = createItemIdAliases();
 	private static final String ITEM_DUNGEON_CHEST_KEY = "DUNGEON_CHEST_KEY";
@@ -280,8 +280,8 @@ public final class DungeonRunTrackerFeature {
 			profileTag.put("properties", propsList);
 			ItemStack skull = new ItemStack(Items.PLAYER_HEAD);
 			ResolvableProfile.CODEC.parse(NbtOps.INSTANCE, profileTag)
-				.result()
-				.ifPresent(profile -> skull.set(DataComponents.PROFILE, profile));
+					.result()
+					.ifPresent(profile -> skull.set(DataComponents.PROFILE, profile));
 			return skull;
 		} catch (Exception e) {
 			if (!iconCacheLoadWarningLogged) {
@@ -425,8 +425,8 @@ public final class DungeonRunTrackerFeature {
 		OverlayPreset loadedPreset = OverlayPreset.fromConfig(config.hudOverlayPreset);
 		overlayPreset = loadedPreset == null ? OverlayPreset.LEGACY : loadedPreset;
 		customOverlayLayout = config.customOverlayLayout == null || config.customOverlayLayout.isBlank()
-			? OverlayLayouts.DEFAULT_CUSTOM_LAYOUT
-			: config.customOverlayLayout;
+				? OverlayLayouts.DEFAULT_CUSTOM_LAYOUT
+				: config.customOverlayLayout;
 		hudX = Math.max(0, config.hudX);
 		hudY = Math.max(0, config.hudY);
 		hudScale = clampHudScale(config.hudScale);
@@ -741,8 +741,8 @@ public final class DungeonRunTrackerFeature {
 
 	public void setCustomOverlayLayout(String layout, boolean activateCustom) {
 		customOverlayLayout = layout == null || layout.isBlank()
-			? OverlayLayouts.DEFAULT_CUSTOM_LAYOUT
-			: layout.replace("\r\n", "\n").replace('\r', '\n');
+				? OverlayLayouts.DEFAULT_CUSTOM_LAYOUT
+				: layout.replace("\r\n", "\n").replace('\r', '\n');
 		if (activateCustom) {
 			overlayPreset = OverlayPreset.CUSTOM;
 			DrtConfigManager.updateOverlaySettings(OverlayPreset.CUSTOM.name(), customOverlayLayout);
@@ -758,8 +758,8 @@ public final class DungeonRunTrackerFeature {
 	public OverlayStats currentOverlayStats() {
 		String floorTag = selectedFloor == null ? "All" : selectedFloor.name();
 		long lifetimeProfit = selectedFloor == null
-			? totalLifetimeProfit
-			: floorProfitTotals.getOrDefault(selectedFloor.name(), 0L);
+				? totalLifetimeProfit
+				: floorProfitTotals.getOrDefault(selectedFloor.name(), 0L);
 		int sessionRunCount = displaySessionRuns();
 		long sessionProfit = displaySessionProfit();
 		long sessionRunTimeMs = displaySessionRunTimeMs();
@@ -771,47 +771,47 @@ public final class DungeonRunTrackerFeature {
 		long avgRunTimeMs = sessionRunCount > 0 ? sessionRunTimeMs / sessionRunCount : 0L;
 		long avgProfitPerRun = sessionRunCount > 0 ? sessionProfit / sessionRunCount : 0L;
 		int totalRuns = selectedFloor == null
-			? totalRunsCompleted()
-			: floorRunCounts.getOrDefault(selectedFloor.name(), 0);
+				? totalRunsCompleted()
+				: floorRunCounts.getOrDefault(selectedFloor.name(), 0);
 		return new OverlayStats(
-			floorTag,
-			totalRuns,
-			sessionRunCount,
-			avgRunTimeMs,
-			sessionRunTimeMs,
-			totalRunTimeMs,
-			runsPerHr,
-			gradeRunCounts.getOrDefault("S", 0),
-			gradeRunCounts.getOrDefault("S+", 0),
-			lifetimeProfit,
-			sessionProfit,
-			avgProfitPerRun,
-			profitPerHr,
-			runsPerHrPaused,
-			"Reset " + floorTag
+				floorTag,
+				totalRuns,
+				sessionRunCount,
+				avgRunTimeMs,
+				sessionRunTimeMs,
+				totalRunTimeMs,
+				runsPerHr,
+				gradeRunCounts.getOrDefault("S", 0),
+				gradeRunCounts.getOrDefault("S+", 0),
+				lifetimeProfit,
+				sessionProfit,
+				avgProfitPerRun,
+				profitPerHr,
+				runsPerHrPaused,
+				"Reset " + floorTag
 		);
 	}
 
 	public OverlayLayout buildHudLayout(Minecraft client, boolean includeResetLine) {
 		return OverlayLayouts.build(
-			overlayPreset,
-			currentOverlayStats(),
-			text -> client.font.width(text),
-			client.font.lineHeight,
-			customOverlayLayout,
-			includeResetLine
+				overlayPreset,
+				currentOverlayStats(),
+				text -> client.font.width(text),
+				client.font.lineHeight,
+				customOverlayLayout,
+				includeResetLine
 		);
 	}
 
 	public OverlayLayout buildPreviewLayout(Minecraft client, OverlayPreset preset, String customText) {
 		OverlayPreset safe = preset == null ? OverlayPreset.LEGACY : preset;
 		return OverlayLayouts.build(
-			safe,
-			OverlayStats.previewSample(),
-			text -> client.font.width(text),
-			client.font.lineHeight,
-			customText == null ? customOverlayLayout : customText,
-			false
+				safe,
+				OverlayStats.previewSample(),
+				text -> client.font.width(text),
+				client.font.lineHeight,
+				customText == null ? customOverlayLayout : customText,
+				false
 		);
 	}
 
@@ -1044,13 +1044,13 @@ public final class DungeonRunTrackerFeature {
 		int y = Math.max(6, Math.min(screenH - 12, bounds.top() + 2));
 
 		int keyY = y
-			+ lineH + 8
-			+ shownItemRows * rowH
-			+ essenceRows * rowH
-			+ (hiddenRows > 0 ? rowH : 0)
-			+ 8
-			+ lineH + 8
-			+ lineH;
+				+ lineH + 8
+				+ shownItemRows * rowH
+				+ essenceRows * rowH
+				+ (hiddenRows > 0 ? rowH : 0)
+				+ 8
+				+ lineH + 8
+				+ lineH;
 		return pointInRect(mouseX, mouseY, x, keyY - 4, CHEST_OVERLAY_W, lineH + 2);
 	}
 
@@ -1440,9 +1440,9 @@ public final class DungeonRunTrackerFeature {
 		String text = message.getString();
 		if (text == null || text.isEmpty()) return true;
 		text = text
-			.replace("\r\n", "\n")
-			.replace('\r', '\n')
-			.trim();
+				.replace("\r\n", "\n")
+				.replace('\r', '\n')
+				.trim();
 		if (text.isEmpty()) return true;
 		long now = System.currentTimeMillis();
 		for (var iterator = recentSystemMessages.iterator(); iterator.hasNext();) {
@@ -1594,8 +1594,8 @@ public final class DungeonRunTrackerFeature {
 		if (hoverRow != null) drawSlotHighlight(g, hoverRow, hoverColor, true);
 		if (tooltipRow != null) {
 			drawTooltip(client, g, List.of(
-				"Click to open " + tooltipRow.displayName + " chest",
-				"Right-click to open and confirm reward"
+					"Click to open " + tooltipRow.displayName + " chest",
+					"Right-click to open and confirm reward"
 			), mouseX, mouseY);
 		}
 		return true;
@@ -1706,23 +1706,23 @@ public final class DungeonRunTrackerFeature {
 			int slotX = slot == null ? bounds.left : bounds.left + slot.x;
 			int slotY = slot == null ? bounds.top : bounds.top + slot.y;
 			byTitle.put(canonicalKey, new CroesusChestRow(
-				canonicalKey,
-				display,
-				stack.copy(),
-				slotIndex,
-				slotX,
-				slotY,
-				normalProfit,
-				keyCost > 0L ? normalProfit - keyCost : Long.MIN_VALUE,
-				offer.alreadyOpened,
-				kismetRerolled
+					canonicalKey,
+					display,
+					stack.copy(),
+					slotIndex,
+					slotX,
+					slotY,
+					normalProfit,
+					keyCost > 0L ? normalProfit - keyCost : Long.MIN_VALUE,
+					offer.alreadyOpened,
+					kismetRerolled
 			));
 		}
 
 		List<CroesusChestRow> rows = new ArrayList<>();
 		List<String> orderedTitles = kuudraContext
-			? List.of("FREE CHEST", "PAID CHEST")
-			: List.of("BEDROCK CHEST", "OBSIDIAN CHEST", "EMERALD CHEST", "DIAMOND CHEST", "GOLD CHEST", "WOOD CHEST");
+				? List.of("FREE CHEST", "PAID CHEST")
+				: List.of("BEDROCK CHEST", "OBSIDIAN CHEST", "EMERALD CHEST", "DIAMOND CHEST", "GOLD CHEST", "WOOD CHEST");
 		for (String title : orderedTitles) {
 			CroesusChestRow row = byTitle.get(title);
 			if (row != null) rows.add(row);
@@ -1974,18 +1974,18 @@ public final class DungeonRunTrackerFeature {
 	private boolean isCroesusMainMenuTitle(String normalizedTitle) {
 		if (normalizedTitle == null || normalizedTitle.isBlank()) return false;
 		return normalizedTitle.equals("CROESUS")
-			|| normalizedTitle.equals("CROESUS CHEST")
-			|| normalizedTitle.equals("CROESUS MENU")
-			|| normalizedTitle.equals("VESUVIUS")
-			|| normalizedTitle.contains("VESUVIUS");
+				|| normalizedTitle.equals("CROESUS CHEST")
+				|| normalizedTitle.equals("CROESUS MENU")
+				|| normalizedTitle.equals("VESUVIUS")
+				|| normalizedTitle.contains("VESUVIUS");
 	}
 
 	private boolean isCroesusChestListTitle(String normalizedTitle) {
 		if (normalizedTitle == null || normalizedTitle.isBlank()) return false;
 		if (canonicalRewardChestTitle(normalizedTitle) != null) return false;
 		return isRewardsMenuTitle(normalizedTitle)
-			|| normalizedTitle.contains("CROESUS")
-			|| normalizedTitle.contains("VESUVIUS");
+				|| normalizedTitle.contains("CROESUS")
+				|| normalizedTitle.contains("VESUVIUS");
 	}
 
 	private boolean croesusRunHasUnopenedChest(ItemStack stack) {
@@ -2002,10 +2002,10 @@ public final class DungeonRunTrackerFeature {
 		if (normalized.contains("NO CHESTS OPENED YET")) return true;
 		if (normalized.contains("NO UNOPENED") || normalized.contains("NO UNCLAIMED") || normalized.contains("0 UNOPENED") || normalized.contains("0 UNCLAIMED")) return false;
 		return normalized.contains("UNOPENED")
-			|| normalized.contains("UNCLAIMED")
-			|| normalized.contains("AVAILABLE")
-			|| normalized.contains("OPENABLE")
-			|| normalized.contains("NOT OPENED");
+				|| normalized.contains("UNCLAIMED")
+				|| normalized.contains("AVAILABLE")
+				|| normalized.contains("OPENABLE")
+				|| normalized.contains("NOT OPENED");
 	}
 
 	private OverlayChestData currentOverlayChestData(Minecraft client) {
@@ -2079,8 +2079,8 @@ public final class DungeonRunTrackerFeature {
 	private boolean shouldPreviewArmedKismetForChest(String canonicalTitle) {
 		if (!nextOpenedChestUsesKismetFeather && !rewardMenuKismetRerollPending) return false;
 		return rewardMenuKismetRerolledChestTitle != null
-			&& !rewardMenuKismetRerolledChestTitle.isBlank()
-			&& rewardMenuKismetRerolledChestTitle.equals(canonicalTitle);
+				&& !rewardMenuKismetRerolledChestTitle.isBlank()
+				&& rewardMenuKismetRerolledChestTitle.equals(canonicalTitle);
 	}
 
 	private String canonicalRewardChestTitle(String normalizedTitle) {
@@ -2178,18 +2178,18 @@ public final class DungeonRunTrackerFeature {
 		if (itemId == null || itemId.isBlank()) return false;
 		String id = itemId.toUpperCase(Locale.ROOT);
 		return id.startsWith("SHARD_")
-			|| id.contains("KUUDRA")
-			|| id.startsWith("CRIMSON_")
-			|| id.startsWith("TERROR_")
-			|| id.startsWith("AURORA_")
-			|| id.startsWith("FERVOR_")
-			|| id.startsWith("HOLLOW_")
-			|| id.startsWith("HOT_")
-			|| id.startsWith("BURNING_")
-			|| id.startsWith("FIERY_")
-			|| id.startsWith("INFERNAL_")
-			|| id.startsWith("MOLTEN_")
-			|| id.equals("TORMENTOR");
+				|| id.contains("KUUDRA")
+				|| id.startsWith("CRIMSON_")
+				|| id.startsWith("TERROR_")
+				|| id.startsWith("AURORA_")
+				|| id.startsWith("FERVOR_")
+				|| id.startsWith("HOLLOW_")
+				|| id.startsWith("HOT_")
+				|| id.startsWith("BURNING_")
+				|| id.startsWith("FIERY_")
+				|| id.startsWith("INFERNAL_")
+				|| id.startsWith("MOLTEN_")
+				|| id.equals("TORMENTOR");
 	}
 
 	private boolean isEssenceEntry(DungeonLootEntry entry) {
@@ -2305,9 +2305,9 @@ public final class DungeonRunTrackerFeature {
 	private List<String> splitMessageLines(String rawText) {
 		if (rawText == null || rawText.isBlank()) return List.of();
 		String expanded = rawText
-			.replace("\\r\\n", "\n")
-			.replace("\\n", "\n")
-			.replace("\\r", "\n");
+				.replace("\\r\\n", "\n")
+				.replace("\\n", "\n")
+				.replace("\\r", "\n");
 		String[] pieces = expanded.split("\\R");
 		List<String> lines = new ArrayList<>(pieces.length);
 		for (String piece : pieces) {
@@ -2387,7 +2387,7 @@ public final class DungeonRunTrackerFeature {
 		DungeonFloor detectedKuudraTier = detectKuudraTierFromLines(scoreboardLines);
 		if (detectedKuudraTier == DungeonFloor.UNKNOWN) detectedKuudraTier = detectKuudraTierFromLines(tabLines);
 		boolean tierImpliesKuudra = detectedKuudraTier != DungeonFloor.UNKNOWN
-			&& (wasKuudra || currentRunActive || inCrimsonIsle || isKuudra(scoreboardLines) || isKuudra(tabLines));
+				&& (wasKuudra || currentRunActive || inCrimsonIsle || isKuudra(scoreboardLines) || isKuudra(tabLines));
 		insideDungeon = isDungeon(scoreboardLines) || isDungeonTab(tabLines) || now <= dungeonSignalUntilMillis;
 		insideKuudra = tierImpliesKuudra || isKuudra(scoreboardLines) || isKuudra(tabLines) || now <= kuudraSignalUntilMillis;
 
@@ -2604,8 +2604,8 @@ public final class DungeonRunTrackerFeature {
 			cachedChestOfferFingerprintsByTitle.put(canonicalKey, fingerprint);
 		}
 		if ((nextOpenedChestUsesKismetFeather || rewardMenuKismetRerollPending)
-			&& rewardMenuKismetRerolledChestTitle.isBlank()
-			&& changedExistingOffers.size() == 1) {
+				&& rewardMenuKismetRerolledChestTitle.isBlank()
+				&& changedExistingOffers.size() == 1) {
 			rewardMenuKismetRerolledChestTitle = changedExistingOffers.get(0);
 		}
 	}
@@ -2735,8 +2735,8 @@ public final class DungeonRunTrackerFeature {
 		}
 		boolean alreadyChargedKey = samePendingChest && pendingLootCostBreakdown != null && pendingLootCostBreakdown.usedDungeonChestKey;
 		ChestCostBreakdown previousBreakdown = samePendingChest && pendingLootCostBreakdown != null
-			? pendingLootCostBreakdown.copy()
-			: null;
+				? pendingLootCostBreakdown.copy()
+				: null;
 		if (pendingLootChestAssigned && !samePendingChest) {
 			if (hadPendingEntries) {
 				flushPendingLootRecord(true);
@@ -2782,7 +2782,7 @@ public final class DungeonRunTrackerFeature {
 		// Key only when chat/marker said so, or preview open-button required a key for this open.
 		// Do NOT bill a key just because this is the Nth chest in the loot window (breaks Croesus).
 		if ((alreadyChargedKey || paidWithDungeonChestKey || nextOpenedChestUsesDungeonChestKey)
-			&& isCatacombsRewardChest(normalizedTitle)) {
+				&& isCatacombsRewardChest(normalizedTitle)) {
 			pendingLootCostBreakdown.usedDungeonChestKey = true;
 			nextOpenedChestUsesDungeonChestKey = false;
 			lastRewardModifierScanHadKeyRequirement = false;
@@ -2880,8 +2880,8 @@ public final class DungeonRunTrackerFeature {
 	private boolean isRewardChestUiStack(ItemStack stack) {
 		if (stack == null || stack.isEmpty()) return true;
 		if (stack.is(Items.LIGHT_GRAY_STAINED_GLASS_PANE) || stack.is(Items.GRAY_STAINED_GLASS_PANE)
-			|| stack.is(Items.BLACK_STAINED_GLASS_PANE) || stack.is(Items.BARRIER)
-			|| stack.is(Items.AIR)) return true;
+				|| stack.is(Items.BLACK_STAINED_GLASS_PANE) || stack.is(Items.BARRIER)
+				|| stack.is(Items.AIR)) return true;
 		String name = normalize(cleanText(stack.getHoverName().getString()));
 		return name.contains("STAINED GLASS")
 			|| name.equals("GO BACK")
@@ -2908,13 +2908,13 @@ public final class DungeonRunTrackerFeature {
 	private boolean isKuudraPaidRewardChest(String normalizedTitle) {
 		if (normalizedTitle == null || normalizedTitle.isBlank()) return false;
 		return isKuudraRewardContext(normalizedTitle)
-			&& (normalizedTitle.equals("PAID CHEST") || normalizedTitle.contains("PAID"));
+				&& (normalizedTitle.equals("PAID CHEST") || normalizedTitle.contains("PAID"));
 	}
 
 	private boolean isKuudraRewardChest(String normalizedTitle) {
 		if (normalizedTitle == null || normalizedTitle.isBlank()) return false;
 		return isKuudraRewardContext(normalizedTitle)
-			&& (normalizedTitle.equals("FREE CHEST") || normalizedTitle.equals("PAID CHEST"));
+				&& (normalizedTitle.equals("FREE CHEST") || normalizedTitle.equals("PAID CHEST"));
 	}
 
 	private boolean isTrackedRewardChest(String canonicalTitle, boolean kuudraContext) {
@@ -2988,8 +2988,8 @@ public final class DungeonRunTrackerFeature {
 		}
 		rememberKuudraTier(keyTier, true);
 		if (pendingLootFloor == null
-			|| !pendingLootFloor.isKuudra()
-			|| kuudraTierNumber(keyTier) > kuudraTierNumber(pendingLootFloor)) {
+				|| !pendingLootFloor.isKuudra()
+				|| kuudraTierNumber(keyTier) > kuudraTierNumber(pendingLootFloor)) {
 			pendingLootFloor = keyTier;
 			updatePendingChestContextProjection(EvidenceStrength.CONFIRMED_GUI_COMPONENT, DetectionSource.CONFIRMED_GUI_COMPONENT);
 		}
@@ -3062,18 +3062,18 @@ public final class DungeonRunTrackerFeature {
 		if (normalized.contains("ALREADY OPENED")) return false;
 		if (normalized.contains("REQUIRES") || normalized.contains("REQUIRE") || normalized.contains("NEEDS") || normalized.contains("NEED")) return false;
 		return normalized.contains("USED")
-			|| normalized.contains("CONSUMED")
-			|| normalized.contains("UNLOCKED")
-			|| normalized.contains("OPEN ANOTHER")
-			|| normalized.contains("EXTRA CHEST");
+				|| normalized.contains("CONSUMED")
+				|| normalized.contains("UNLOCKED")
+				|| normalized.contains("OPEN ANOTHER")
+				|| normalized.contains("EXTRA CHEST");
 	}
 
 	private boolean lineIndicatesDungeonChestKeyRequirement(String normalized) {
 		if (normalized == null || !normalized.contains("DUNGEON CHEST KEY")) return false;
 		return normalized.contains("REQUIRES")
-			|| normalized.contains("REQUIRE")
-			|| normalized.contains("NEEDS")
-			|| normalized.contains("NEED");
+				|| normalized.contains("REQUIRE")
+				|| normalized.contains("NEEDS")
+				|| normalized.contains("NEED");
 	}
 
 	private boolean lineIndicatesAlreadyOpened(String line) {
@@ -3083,17 +3083,17 @@ public final class DungeonRunTrackerFeature {
 	private boolean lineIndicatesKismetUsed(String normalized) {
 		if (normalized == null || !normalized.contains("KISMET")) return false;
 		return normalized.contains("USED")
-			|| normalized.contains("CONSUMED")
-			|| normalized.contains("REROLLED")
-			|| normalized.contains("RE-ROLLED")
-			|| normalized.contains("REROLL USED");
+				|| normalized.contains("CONSUMED")
+				|| normalized.contains("REROLLED")
+				|| normalized.contains("RE-ROLLED")
+				|| normalized.contains("REROLL USED");
 	}
 
 	private boolean lineIndicatesKismetRerollState(String normalized) {
 		if (normalized == null || normalized.isBlank()) return false;
 		return normalized.contains("YOU ALREADY REROLLED A CHEST")
-			|| normalized.contains("ALREADY REROLLED A CHEST")
-			|| (normalized.contains("REROLL USED") && normalized.contains("KISMET"));
+				|| normalized.contains("ALREADY REROLLED A CHEST")
+				|| (normalized.contains("REROLL USED") && normalized.contains("KISMET"));
 	}
 
 	private boolean screenHasKismetRerollMarker(AbstractContainerMenu menu) {
@@ -3137,11 +3137,11 @@ public final class DungeonRunTrackerFeature {
 	private boolean lineIndicatesWheelOfFateUsed(String normalized) {
 		if (normalized == null || !normalized.contains("WHEEL OF FATE")) return false;
 		return normalized.contains("USED")
-			|| normalized.contains("CONSUMED")
-			|| normalized.contains("APPLIED")
-			|| normalized.contains("ACTIVE")
-			|| normalized.contains("REROLLED")
-			|| normalized.contains("RE-ROLLED");
+				|| normalized.contains("CONSUMED")
+				|| normalized.contains("APPLIED")
+				|| normalized.contains("ACTIVE")
+				|| normalized.contains("REROLLED")
+				|| normalized.contains("RE-ROLLED");
 	}
 
 	private void markDungeonChestKeyUsed() {
@@ -3226,18 +3226,18 @@ public final class DungeonRunTrackerFeature {
 
 	private boolean isContentsSectionEnd(String line) {
 		return line.equalsIgnoreCase("Cost")
-			|| line.regionMatches(true, 0, "Cost:", 0, 5)
-			|| line.regionMatches(true, 0, "Open Reward Chest", 0, 17)
-			|| line.regionMatches(true, 0, "Click to open", 0, 13)
-			|| line.regionMatches(true, 0, "Available Modifiers", 0, 19)
-			|| line.regionMatches(true, 0, "Modifiers", 0, 9)
-			|| line.regionMatches(true, 0, "Requires", 0, 8);
+				|| line.regionMatches(true, 0, "Cost:", 0, 5)
+				|| line.regionMatches(true, 0, "Open Reward Chest", 0, 17)
+				|| line.regionMatches(true, 0, "Click to open", 0, 13)
+				|| line.regionMatches(true, 0, "Available Modifiers", 0, 19)
+				|| line.regionMatches(true, 0, "Modifiers", 0, 9)
+				|| line.regionMatches(true, 0, "Requires", 0, 8);
 	}
 
 	private boolean isContentsMetaLine(String line) {
 		return line.equalsIgnoreCase("FREE")
-			|| line.regionMatches(true, 0, "Value:", 0, 6)
-			|| line.regionMatches(true, 0, "Profit:", 0, 7);
+				|| line.regionMatches(true, 0, "Value:", 0, 6)
+				|| line.regionMatches(true, 0, "Profit:", 0, 7);
 	}
 
 	private void handleDragging(Minecraft client) {
@@ -3384,9 +3384,9 @@ public final class DungeonRunTrackerFeature {
 		for (String line : lines) {
 			if (line.startsWith("AREA:") && !isDungeonHubLine(line) && (line.contains("DUNGEON") || line.contains("CATACOMBS"))) return true;
 			if (line.contains("DUNGEON STATS") || line.contains("PUZZLES:")
-				|| line.contains("SECRETS FOUND") || line.contains("COMPLETED ROOMS:")
-				|| line.contains("OPENED ROOMS:") || line.contains("TEAM DEATHS:")
-				|| line.contains("YOUR MILESTONE:")) return true;
+					|| line.contains("SECRETS FOUND") || line.contains("COMPLETED ROOMS:")
+					|| line.contains("OPENED ROOMS:") || line.contains("TEAM DEATHS:")
+					|| line.contains("YOUR MILESTONE:")) return true;
 		}
 		return false;
 	}
@@ -3405,7 +3405,7 @@ public final class DungeonRunTrackerFeature {
 
 	private DungeonFloor detectKuudraTierFromLines(List<String> lines) {
 		boolean kuudraContext = lines.stream().anyMatch(line ->
-			line.contains("KUUDRA") || line.contains("HOLLOW"));
+				line.contains("KUUDRA") || line.contains("HOLLOW"));
 		DungeonFloor best = DungeonFloor.UNKNOWN;
 		int bestScore = -1;
 		for (String line : lines) {
@@ -3428,9 +3428,9 @@ public final class DungeonRunTrackerFeature {
 
 		// Named tiers first — "Infernal Tier!" must beat any later short-pattern noise.
 		boolean tierNameContext = strongContext
-			|| line.startsWith("TIER:")
-			|| line.startsWith("TIER ")
-			|| (kuudraContext && isLikelyStandaloneKuudraTierLine(line));
+				|| line.startsWith("TIER:")
+				|| line.startsWith("TIER ")
+				|| (kuudraContext && isLikelyStandaloneKuudraTierLine(line));
 		if (tierNameContext) {
 			DungeonFloor namedTier = kuudraTierNameFromLine(line);
 			if (namedTier != DungeonFloor.UNKNOWN) return namedTier;
@@ -3463,8 +3463,8 @@ public final class DungeonRunTrackerFeature {
 		String compact = line.replaceAll("[^A-Z0-9()]+", "");
 		if (compact.length() <= 8) return true;
 		return KUUDRA_PAREN_TIER_PATTERN.matcher(line).find()
-			|| KUUDRA_TIER_WORD_PATTERN.matcher(line).find()
-			|| kuudraTierNameFromLine(line) != DungeonFloor.UNKNOWN;
+				|| KUUDRA_TIER_WORD_PATTERN.matcher(line).find()
+				|| kuudraTierNameFromLine(line) != DungeonFloor.UNKNOWN;
 	}
 
 	private boolean hasStrongKuudraTierSignal(String line) {
@@ -3577,8 +3577,8 @@ public final class DungeonRunTrackerFeature {
 			String roman = pair[0];
 			String num = pair[1];
 			if (line.endsWith(" " + roman) || line.contains(" " + roman + " ")
-				|| line.contains("FLOOR " + num) || line.contains("FLOOR: " + num)
-				|| line.endsWith(" " + num)) {
+					|| line.contains("FLOOR " + num) || line.contains("FLOOR: " + num)
+					|| line.endsWith(" " + num)) {
 				return Integer.parseInt(num);
 			}
 		}
@@ -3598,10 +3598,10 @@ public final class DungeonRunTrackerFeature {
 
 	private boolean isDungeonEntryMessage(String cleaned) {
 		return (cleaned.startsWith("STARTING IN ") && (insideDungeon || inDungeonHub))
-			|| cleaned.contains(" THE CATACOMBS ")
-			|| cleaned.contains(" CATACOMBS (F")
-			|| cleaned.contains(" CATACOMBS (M")
-			|| cleaned.startsWith("MASTER MODE CATACOMBS - FLOOR ");
+				|| cleaned.contains(" THE CATACOMBS ")
+				|| cleaned.contains(" CATACOMBS (F")
+				|| cleaned.contains(" CATACOMBS (M")
+				|| cleaned.startsWith("MASTER MODE CATACOMBS - FLOOR ");
 	}
 
 	private boolean shouldBeginNewDungeonRunFromEntry(long now) {
@@ -3618,17 +3618,17 @@ public final class DungeonRunTrackerFeature {
 		// Word-boundary style checks — avoid matching HOT inside SHOT/PHOTO.
 		String padded = " " + cleaned.replaceAll("[^A-Z0-9]+", " ").trim() + " ";
 		return padded.contains(" BASIC ")
-			|| padded.contains(" HOT ")
-			|| padded.contains(" BURNING ")
-			|| padded.contains(" FIERY ")
-			|| padded.contains(" INFERNAL ");
+				|| padded.contains(" HOT ")
+				|| padded.contains(" BURNING ")
+				|| padded.contains(" FIERY ")
+				|| padded.contains(" INFERNAL ");
 	}
 
 	private boolean isKuudraCompletionMessage(String cleaned) {
 		return cleaned.contains("KUUDRA DOWN")
-			|| cleaned.contains("KUUDRA DEFEATED")
-			|| cleaned.contains("DEFEATED KUUDRA")
-			|| cleaned.contains("KUUDRA RUN ENDED: COMPLETED");
+				|| cleaned.contains("KUUDRA DEFEATED")
+				|| cleaned.contains("DEFEATED KUUDRA")
+				|| cleaned.contains("KUUDRA RUN ENDED: COMPLETED");
 	}
 
 	private boolean isCurrentFloorKuudra() {
@@ -3639,10 +3639,10 @@ public final class DungeonRunTrackerFeature {
 		if (tier == null || !tier.isKuudra()) return;
 		// Weak detections must not downgrade/overwrite a known tier mid-run (K5 -> K2).
 		if (!trusted
-			&& currentFloor != null
-			&& currentFloor.isKuudra()
-			&& currentFloor != tier
-			&& (currentRunActive || insideKuudra)) {
+				&& currentFloor != null
+				&& currentFloor.isKuudra()
+				&& currentFloor != tier
+				&& (currentRunActive || insideKuudra)) {
 			return;
 		}
 		boolean accepted = updateActiveRunFloorProjection(
@@ -4250,9 +4250,9 @@ public final class DungeonRunTrackerFeature {
 
 	private boolean isRewardsMenuTitle(String normalizedTitle) {
 		return normalizedTitle.startsWith("CATACOMBS - FLOOR ")
-			|| normalizedTitle.startsWith("MASTER CATACOMBS - FLOOR ")
-			|| normalizedTitle.contains("KUUDRA")
-			|| ((insideKuudra || isCurrentFloorKuudra()) && (normalizedTitle.contains("REWARD") || normalizedTitle.contains("CHEST")));
+				|| normalizedTitle.startsWith("MASTER CATACOMBS - FLOOR ")
+				|| normalizedTitle.contains("KUUDRA")
+				|| ((insideKuudra || isCurrentFloorKuudra()) && (normalizedTitle.contains("REWARD") || normalizedTitle.contains("CHEST")));
 	}
 
 	private Long parseChestCost(ItemStack stack) {
@@ -5515,9 +5515,9 @@ public final class DungeonRunTrackerFeature {
 
 	private String toItemIdPart(String name) {
 		return sanitizeLootName(name)
-			.toUpperCase(Locale.ROOT)
-			.replaceAll("[^A-Z0-9]+", "_")
-			.replaceAll("^_+|_+$", "");
+				.toUpperCase(Locale.ROOT)
+				.replaceAll("[^A-Z0-9]+", "_")
+				.replaceAll("^_+|_+$", "");
 	}
 
 	private String sanitizeLootName(String name) {
@@ -5551,10 +5551,10 @@ public final class DungeonRunTrackerFeature {
 	private String normalizeEnchantName(String enchantName) {
 		String normalized = sanitizeLootName(enchantName).replaceFirst("^(?i)Ultimate\\s+", "");
 		return normalized
-			.replaceAll("[^A-Za-z0-9 ]", " ")
-			.trim()
-			.replaceAll("\\s+", "_")
-			.toUpperCase(Locale.ROOT);
+				.replaceAll("[^A-Za-z0-9 ]", " ")
+				.trim()
+				.replaceAll("\\s+", "_")
+				.toUpperCase(Locale.ROOT);
 	}
 
 	private int romanToInt(String roman) {
@@ -5630,20 +5630,20 @@ public final class DungeonRunTrackerFeature {
 	private boolean looksReasonableLootName(String value) {
 		String normalized = value.toUpperCase(Locale.ROOT);
 		return normalized.contains("ESSENCE") || normalized.contains("CHESTPLATE")
-			|| normalized.contains("LEGGINGS") || normalized.contains("BOOTS")
-			|| normalized.contains("HELMET") || normalized.contains("DAGGER")
-			|| normalized.contains("FURY") || normalized.contains("BREATH")
-			|| normalized.contains("STONE") || normalized.contains("RECOMBOBULATOR")
-			|| normalized.contains("BOOK") || normalized.contains("DISC")
-			|| normalized.contains("KEY") || normalized.contains("SHARD")
-			|| normalized.contains("HANDLE") || normalized.contains("SCROLL")
-			|| normalized.contains("CATALYST") || normalized.contains("SHINY")
-			|| normalized.contains("CLOAK") || normalized.contains("SWORD")
-			|| normalized.contains("KUUDRA") || normalized.contains("TEETH")
-			|| normalized.contains("EMBERS") || normalized.contains("CORE")
-			|| normalized.contains("DISINTEGRATOR") || normalized.contains("CRIMSON")
-			|| normalized.contains("TERROR") || normalized.contains("AURORA")
-			|| normalized.contains("FERVOR") || normalized.contains("HOLLOW");
+				|| normalized.contains("LEGGINGS") || normalized.contains("BOOTS")
+				|| normalized.contains("HELMET") || normalized.contains("DAGGER")
+				|| normalized.contains("FURY") || normalized.contains("BREATH")
+				|| normalized.contains("STONE") || normalized.contains("RECOMBOBULATOR")
+				|| normalized.contains("BOOK") || normalized.contains("DISC")
+				|| normalized.contains("KEY") || normalized.contains("SHARD")
+				|| normalized.contains("HANDLE") || normalized.contains("SCROLL")
+				|| normalized.contains("CATALYST") || normalized.contains("SHINY")
+				|| normalized.contains("CLOAK") || normalized.contains("SWORD")
+				|| normalized.contains("KUUDRA") || normalized.contains("TEETH")
+				|| normalized.contains("EMBERS") || normalized.contains("CORE")
+				|| normalized.contains("DISINTEGRATOR") || normalized.contains("CRIMSON")
+				|| normalized.contains("TERROR") || normalized.contains("AURORA")
+				|| normalized.contains("FERVOR") || normalized.contains("HOLLOW");
 	}
 
 	private String lootKey(DungeonLootEntry entry) {

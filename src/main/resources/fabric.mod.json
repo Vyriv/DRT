@@ -15,6 +15,9 @@
 		],
 		"client": [
 			"dev.vy.drt.client.DrtClient"
+		],
+		"modmenu": [
+			"dev.vy.drt.client.DrtModMenuIntegration"
 		]
 	},
 	"mixins": [

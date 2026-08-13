@@ -25,8 +25,8 @@ public final class CosmeticsContentManager {
 	private static final String PEOPLE_RESOURCE_PATH = "drt/content/people.json";
 	private static final String REMOTE_PEOPLE_URL = "https://api.vyriv.dev/v1/cosmetics";
 	private static final HttpClient HTTP = HttpClient.newBuilder()
-		.connectTimeout(Duration.ofSeconds(5))
-		.build();
+			.connectTimeout(Duration.ofSeconds(5))
+			.build();
 	private static final AtomicBoolean INITIALIZED = new AtomicBoolean();
 
 	private static volatile PeopleContent bundledPeopleContent = new PeopleContent();
@@ -51,8 +51,8 @@ public final class CosmeticsContentManager {
 				CapeTextureManager.invalidateRemoteCapes();
 				int totalEntries = remotePeopleContent.players.size() + remotePeopleContent.awesomePeople.size();
 				DungeonRunTracker.LOGGER.info("[DRT] Loaded {} remote cosmetic player entr{} from startup refresh",
-					totalEntries,
-					totalEntries == 1 ? "y" : "ies");
+						totalEntries,
+						totalEntries == 1 ? "y" : "ies");
 			} catch (Exception e) {
 				DungeonRunTracker.LOGGER.warn("[DRT] Failed to fetch startup cosmetic player data: {}", e.getMessage());
 			}
@@ -61,9 +61,9 @@ public final class CosmeticsContentManager {
 
 	public static synchronized List<LoadedPlayerCustomization> playerCustomizations() {
 		return mergedCustomizationEntries().stream()
-			.map(CosmeticsContentManager::loadPlayerCustomization)
-			.filter(customization -> customization != null)
-			.toList();
+				.map(CosmeticsContentManager::loadPlayerCustomization)
+				.filter(customization -> customization != null)
+				.toList();
 	}
 
 	private static PeopleContent loadBundledPeople() {
@@ -81,13 +81,13 @@ public final class CosmeticsContentManager {
 
 	private static PeopleContent fetchRemotePeopleContent() throws Exception {
 		HttpRequest request = HttpRequest.newBuilder()
-			.uri(cacheBustedUri())
-			.timeout(Duration.ofSeconds(10))
-			.header("accept", "application/json,*/*")
-			.header("cache-control", "no-cache, no-store, max-age=0")
-			.header("pragma", "no-cache")
-			.GET()
-			.build();
+				.uri(cacheBustedUri())
+				.timeout(Duration.ofSeconds(10))
+				.header("accept", "application/json,*/*")
+				.header("cache-control", "no-cache, no-store, max-age=0")
+				.header("pragma", "no-cache")
+				.GET()
+				.build();
 		HttpResponse<String> response = HTTP.send(request, HttpResponse.BodyHandlers.ofString());
 		if (response.statusCode() != 200) {
 			throw new IllegalStateException("unexpected HTTP " + response.statusCode());
@@ -145,17 +145,17 @@ public final class CosmeticsContentManager {
 		Float animationSpeed = style.animationSpeed != null && style.animationSpeed > 0.0F ? style.animationSpeed : null;
 		Integer animationSteps = style.animationSteps == null ? null : Math.max(2, style.animationSteps);
 		float gradientSpacing = style.gradientFrequency != null ? style.gradientFrequency
-			: style.gradientSpacing != null ? style.gradientSpacing : 1.0F;
+				: style.gradientSpacing != null ? style.gradientSpacing : 1.0F;
 		gradientSpacing = Math.max(1.0F, Math.min(10.0F, gradientSpacing));
 		boolean animated = Boolean.TRUE.equals(style.animated);
 
 		return switch (normalizedMode) {
 			case "inherit_rank", "inherit-rank", "inherit" -> new LoadedNameStyle(LoadedNameStyle.Mode.INHERIT_RANK, 0xFFFFFF, 0xFFFFFF,
-				style.bold, List.of(), animationSpeed, animationSteps, gradientSpacing);
+					style.bold, List.of(), animationSpeed, animationSteps, gradientSpacing);
 			case "solid" -> {
 				Integer color = parseColor(firstNonBlank(style.color, style.leftColor, style.rightColor));
 				yield color == null ? null : new LoadedNameStyle(LoadedNameStyle.Mode.SOLID, color, color, style.bold, List.of(), animationSpeed,
-					animationSteps, gradientSpacing);
+						animationSteps, gradientSpacing);
 			}
 			case "gradient" -> {
 				Integer left = parseColor(firstNonBlank(style.leftColor, style.color));
@@ -169,15 +169,15 @@ public final class CosmeticsContentManager {
 				Integer right = parseColor(firstNonBlank(style.rightColor, style.color));
 				if (left == null || right == null) yield null;
 				yield new LoadedNameStyle(LoadedNameStyle.Mode.ANIMATED_GRADIENT, left, right, style.bold, List.of(), animationSpeed, animationSteps,
-					gradientSpacing);
+						gradientSpacing);
 			}
 			case "multicolor" -> {
 				List<Integer> colors = style.letterColors == null ? List.of() : style.letterColors.stream()
-					.map(CosmeticsContentManager::parseColor)
-					.filter(color -> color != null)
-					.toList();
+						.map(CosmeticsContentManager::parseColor)
+						.filter(color -> color != null)
+						.toList();
 				yield colors.isEmpty() ? null : new LoadedNameStyle(LoadedNameStyle.Mode.MULTICOLOR, colors.get(0), colors.get(colors.size() - 1),
-					style.bold, colors, animationSpeed, animationSteps, gradientSpacing);
+						style.bold, colors, animationSpeed, animationSteps, gradientSpacing);
 			}
 			default -> null;
 		};
@@ -231,10 +231,10 @@ public final class CosmeticsContentManager {
 		List<String> orderedKeys = new ArrayList<>();
 		Map<String, PlayerCustomizationFile> mergedEntries = new LinkedHashMap<>();
 		List<List<PlayerCustomizationFile>> sections = List.of(
-			bundledPeopleContent.players,
-			bundledPeopleContent.awesomePeople,
-			remotePeopleContent.players,
-			remotePeopleContent.awesomePeople);
+				bundledPeopleContent.players,
+				bundledPeopleContent.awesomePeople,
+				remotePeopleContent.players,
+				remotePeopleContent.awesomePeople);
 
 		for (List<PlayerCustomizationFile> section : sections) {
 			for (PlayerCustomizationFile entry : section) {
@@ -248,9 +248,9 @@ public final class CosmeticsContentManager {
 		}
 
 		return orderedKeys.stream()
-			.map(mergedEntries::get)
-			.filter(entry -> entry != null)
-			.toList();
+				.map(mergedEntries::get)
+				.filter(entry -> entry != null)
+				.toList();
 	}
 
 	private static String existingCustomizationKey(PlayerCustomizationFile entry, Map<String, PlayerCustomizationFile> mergedEntries) {
@@ -305,7 +305,7 @@ public final class CosmeticsContentManager {
 	}
 
 	public record LoadedNameStyle(Mode mode, int leftColor, int rightColor, boolean bold, List<Integer> letterColors,
-			Float animationSpeed, Integer animationSteps, float gradientSpacing) {
+	                              Float animationSpeed, Integer animationSteps, float gradientSpacing) {
 		public enum Mode {
 			INHERIT_RANK,
 			SOLID,
@@ -341,9 +341,9 @@ public final class CosmeticsContentManager {
 		private static List<PlayerCustomizationFile> normalizedEntries(List<PlayerCustomizationFile> entries) {
 			if (entries == null) return new ArrayList<>();
 			return entries.stream()
-				.map(PlayerCustomizationFile::normalized)
-				.filter(entry -> entry != null)
-				.toList();
+					.map(PlayerCustomizationFile::normalized)
+					.filter(entry -> entry != null)
+					.toList();
 		}
 	}
 
@@ -372,10 +372,10 @@ public final class CosmeticsContentManager {
 			uuid = blankToNull(uuid);
 			if (username.isEmpty() && uuid == null) return null;
 			aliases = aliases == null ? new ArrayList<>() : aliases.stream()
-				.map(String::trim)
-				.filter(alias -> !alias.isEmpty() && !alias.equalsIgnoreCase(username))
-				.distinct()
-				.toList();
+					.map(String::trim)
+					.filter(alias -> !alias.isEmpty() && !alias.equalsIgnoreCase(username))
+					.distinct()
+					.toList();
 			nickname = blankToNull(nickname);
 			creditLabel = blankToNull(creditLabel);
 			creditRole = blankToNull(creditRole);
@@ -396,10 +396,10 @@ public final class CosmeticsContentManager {
 			merged.aliases.addAll(aliases == null ? List.of() : aliases);
 			merged.aliases.addAll(overlay.aliases == null ? List.of() : overlay.aliases);
 			merged.aliases = merged.aliases.stream()
-				.map(String::trim)
-				.filter(alias -> !alias.isEmpty() && !alias.equalsIgnoreCase(merged.username))
-				.distinct()
-				.toList();
+					.map(String::trim)
+					.filter(alias -> !alias.isEmpty() && !alias.equalsIgnoreCase(merged.username))
+					.distinct()
+					.toList();
 			merged.creditLabel = overlay.creditLabel != null ? overlay.creditLabel : creditLabel;
 			merged.creditRole = overlay.creditRole != null ? overlay.creditRole : creditRole;
 			merged.style = overlay.style != null ? overlay.style : style;
@@ -438,9 +438,9 @@ public final class CosmeticsContentManager {
 			rightColor = blankToNull(rightColor);
 			if (letterColors != null) {
 				letterColors = letterColors.stream()
-					.map(String::trim)
-					.filter(value -> !value.isEmpty())
-					.toList();
+						.map(String::trim)
+						.filter(value -> !value.isEmpty())
+						.toList();
 			}
 		}
 	}
