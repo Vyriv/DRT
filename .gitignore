@@ -9,3 +9,8 @@ out/
 # Fabric / Loom caches
 .loom-cache/
 remappedSources/
+
+# Local probe / decompile junk
+.tmp_report_*/
+at/
+

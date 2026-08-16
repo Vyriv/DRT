@@ -78,11 +78,12 @@ public final class DrtConfigManager {
 				if (loaded.runCompletions == null) loaded.runCompletions = new ArrayList<>();
 				loaded.hudScale = clampHudScale(loaded.hudScale);
 				loaded.hudVisibilityMode = normalizeHudVisibilityMode(loaded.hudVisibilityMode);
+				boolean migrated = normalizeToggleFlags(loaded, root);
 				normalizeOnboardingSettings(loaded);
 				if (loaded.legacyRunsCompleted > 0 && !loaded.floorRunCounts.containsKey("M5")) {
 					loaded.floorRunCounts.put("M5", loaded.legacyRunsCompleted);
 				}
-				boolean migrated = normalizeRunHistory(loaded);
+				if (normalizeRunHistory(loaded)) migrated = true;
 				if (normalizeRunCompletions(loaded)) migrated = true;
 				if (migrateOverlayPreset(loaded, root)) migrated = true;
 				if (normalizeCustomOverlayLayout(loaded)) migrated = true;
@@ -457,6 +458,24 @@ public final class DrtConfigManager {
 			case "GLOBAL", "DEFAULT", "DHUB" -> normalized;
 			default -> "DEFAULT";
 		};
+	}
+
+	private static boolean normalizeToggleFlags(DrtConfig loaded, JsonObject root) {
+		// Gson may skip field initializers; missing keys on existing configs must stay ON.
+		boolean migrated = false;
+		if (root == null || !root.has("trackingEnabled")) {
+			loaded.trackingEnabled = true;
+			migrated = true;
+		}
+		if (root == null || !root.has("croesusOverlayEnabled")) {
+			loaded.croesusOverlayEnabled = true;
+			migrated = true;
+		}
+		if (root == null || !root.has("essenceCountsTowardProfit")) {
+			loaded.essenceCountsTowardProfit = true;
+			migrated = true;
+		}
+		return migrated;
 	}
 
 	private static void normalizeOnboardingSettings(DrtConfig loaded) {

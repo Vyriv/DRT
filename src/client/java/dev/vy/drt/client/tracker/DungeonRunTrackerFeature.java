@@ -313,6 +313,8 @@ public final class DungeonRunTrackerFeature {
 	private final String clientTrackingInstanceId = "live-" + UUID.randomUUID().toString().substring(0, 8);
 
 	private boolean enabled;
+	private boolean trackingEnabled = true;
+	private boolean croesusOverlayEnabled = true;
 	private HudVisibilityMode hudVisibilityMode = HudVisibilityMode.DEFAULT;
 	private OverlayPreset overlayPreset = OverlayPreset.LEGACY;
 	private String customOverlayLayout = OverlayLayouts.DEFAULT_CUSTOM_LAYOUT;
@@ -421,6 +423,8 @@ public final class DungeonRunTrackerFeature {
 
 	public void applyConfig(DrtConfig config) {
 		enabled = config.enabled;
+		trackingEnabled = config.trackingEnabled;
+		croesusOverlayEnabled = config.croesusOverlayEnabled;
 		hudVisibilityMode = HudVisibilityMode.fromConfig(config.hudVisibilityMode);
 		OverlayPreset loadedPreset = OverlayPreset.fromConfig(config.hudOverlayPreset);
 		overlayPreset = loadedPreset == null ? OverlayPreset.LEGACY : loadedPreset;
@@ -548,6 +552,11 @@ public final class DungeonRunTrackerFeature {
 
 		long now = System.currentTimeMillis();
 		flushPendingIncidentChatNotify();
+		handleDragging(client);
+		if (!trackingEnabled) {
+			pauseCurrentRunForUnavailable(now);
+			return;
+		}
 		resumeCurrentRunAfterUnavailable(now);
 		captureOpenedRewardChestLootIfViewing(client, now);
 		if (lootCollectionUntilMillis > 0L && now > lootCollectionUntilMillis) {
@@ -560,23 +569,22 @@ public final class DungeonRunTrackerFeature {
 		updateDungeonContext(client);
 		captureRewardChestCosts(client);
 		tryConsumeAutoOpenRewardChest(client);
-		handleDragging(client);
 	}
 
 	public void handleChatMessage(Component message) {
-		if (message == null) return;
+		if (!trackingEnabled || message == null) return;
 		if (!markMessageForProcessing(message)) return;
 		submitMessage(message, false);
 	}
 
 	public void handleRawSystemMessage(Component message) {
-		if (message == null) return;
+		if (!trackingEnabled || message == null) return;
 		if (!markMessageForProcessing(message)) return;
 		submitMessage(message, true);
 	}
 
 	public void handleGameMessage(Component message, boolean overlay) {
-		if (overlay) return;
+		if (!trackingEnabled || overlay) return;
 		if (message == null) return;
 		if (!markMessageForProcessing(message)) return;
 		submitMessage(message, true);
@@ -640,8 +648,10 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	public void extractChestOverlayRenderState(Minecraft client, GuiGraphicsExtractor guiGraphics, int mouseX, int mouseY) {
-		if (extractRenderStateCroesusChestOverlay(client, guiGraphics, mouseX, mouseY)) return;
-		extractRenderStateCroesusMainMenuHighlights(client, guiGraphics);
+		if (croesusOverlayEnabled) {
+			if (extractRenderStateCroesusChestOverlay(client, guiGraphics, mouseX, mouseY)) return;
+			extractRenderStateCroesusMainMenuHighlights(client, guiGraphics);
+		}
 		extractRenderStateChestBreakdownOverlay(client, guiGraphics, mouseX, mouseY);
 	}
 
@@ -723,6 +733,44 @@ public final class DungeonRunTrackerFeature {
 	public boolean toggleHud() {
 		setEnabled(!enabled);
 		return enabled;
+	}
+
+	public boolean isTrackingEnabled() {
+		return trackingEnabled;
+	}
+
+	public void setTrackingEnabled(boolean trackingEnabled) {
+		this.trackingEnabled = trackingEnabled;
+		if (!trackingEnabled) pauseCurrentRunForUnavailable(System.currentTimeMillis());
+		DrtConfigManager.getConfig().trackingEnabled = trackingEnabled;
+		DrtConfigManager.save();
+	}
+
+	public boolean toggleTracking() {
+		setTrackingEnabled(!trackingEnabled);
+		return trackingEnabled;
+	}
+
+	public boolean isCroesusOverlayEnabled() {
+		return croesusOverlayEnabled;
+	}
+
+	public void setCroesusOverlayEnabled(boolean croesusOverlayEnabled) {
+		this.croesusOverlayEnabled = croesusOverlayEnabled;
+		DrtConfigManager.getConfig().croesusOverlayEnabled = croesusOverlayEnabled;
+		DrtConfigManager.save();
+	}
+
+	public boolean toggleCroesusOverlay() {
+		setCroesusOverlayEnabled(!croesusOverlayEnabled);
+		return croesusOverlayEnabled;
+	}
+
+	public boolean toggleEssenceCountsTowardProfit() {
+		DrtConfig config = DrtConfigManager.getConfig();
+		config.essenceCountsTowardProfit = !config.essenceCountsTowardProfit;
+		DrtConfigManager.save();
+		return config.essenceCountsTowardProfit;
 	}
 
 	public OverlayPreset getOverlayPreset() {
@@ -1104,6 +1152,7 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private boolean handleCroesusOverlayClick(Minecraft client, int mouseX, int mouseY, int button) {
+		if (!croesusOverlayEnabled) return false;
 		if (client == null || client.player == null || client.gameMode == null) return false;
 		CroesusChestRow row = croesusOverlayRowAt(client, mouseX, mouseY);
 		if (row == null) return false;
@@ -2062,8 +2111,11 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private long offerValueCoins(String canonicalTitle, List<DungeonLootEntry> entries, long loreValueCoins) {
-		long calculated = DungeonProfitPricing.calculateLootValue(entries == null ? List.of() : entries, DrtConfigManager.getConfig());
+		DrtConfig config = DrtConfigManager.getConfig();
+		long calculated = DungeonProfitPricing.calculateLootValue(entries == null ? List.of() : entries, config);
 		if (isKuudraRewardChest(canonicalTitle) && calculated > 0L) return calculated;
+		// Lore Value includes essence; when essence is excluded, prefer our calculated total.
+		if (config != null && !config.essenceCountsTowardProfit && calculated > 0L) return calculated;
 		return loreValueCoins > 0L ? loreValueCoins : calculated;
 	}
 

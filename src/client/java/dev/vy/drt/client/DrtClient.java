@@ -2,14 +2,19 @@ package dev.vy.drt.client;
 
 import com.mojang.brigadier.Command;
 import com.mojang.brigadier.arguments.StringArgumentType;
+import com.mojang.brigadier.suggestion.Suggestions;
+import com.mojang.brigadier.suggestion.SuggestionsBuilder;
 import dev.vy.drt.DungeonRunTracker;
 import dev.vy.drt.client.cosmetics.DrtCosmetics;
 import dev.vy.drt.client.screen.DungeonLootScreen;
 import dev.vy.drt.client.screen.DrtOnboardingScreen;
 import dev.vy.drt.client.screen.DungeonTrackerPositionScreen;
 import dev.vy.drt.client.tracker.DungeonRunTrackerFeature;
+import dev.vy.drt.config.DrtConfig;
 import dev.vy.drt.config.DrtConfigManager;
 import dev.vy.drt.config.DungeonFloor;
+import java.util.Locale;
+import java.util.concurrent.CompletableFuture;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommands;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
@@ -163,11 +168,25 @@ public final class DrtClient implements ClientModInitializer {
 							context.getSource().sendError(Component.literal("§c[DRT] Not in game"));
 							return 0;
 						}
-						boolean hudShown = tracker.toggleHud();
-						String status = hudShown ? "shown" : "hidden";
-						client.player.sendSystemMessage(Component.literal("§a[DRT] HUD " + status + ". §7Loot tracking is still active."));
+						sendToggleUsage(client);
 						return Command.SINGLE_SUCCESS;
 					})
+					.then(ClientCommands.argument("param", StringArgumentType.word())
+						.suggests((ctx, builder) -> suggestToggleParams(builder))
+						.executes(context -> {
+							Minecraft client = context.getSource().getClient();
+							if (client.player == null) {
+								context.getSource().sendError(Component.literal("§c[DRT] Not in game"));
+								return 0;
+							}
+							String param = StringArgumentType.getString(context, "param");
+							if (!applyToggleParam(client, param)) {
+								context.getSource().sendError(Component.literal("§c[DRT] Unknown toggle '" + param + "'. Use /drt toggle <UI|tracking|CroOverlay|essence>"));
+								return 0;
+							}
+							return Command.SINGLE_SUCCESS;
+						})
+					)
 				)
 				.then(ClientCommands.literal("debug")
 					.then(ClientCommands.literal("triggerincident")
@@ -302,6 +321,62 @@ public final class DrtClient implements ClientModInitializer {
 		});
 
 		DungeonRunTracker.LOGGER.info("[DRT] Client initialized");
+	}
+
+	private static CompletableFuture<Suggestions> suggestToggleParams(SuggestionsBuilder builder) {
+		String remaining = builder.getRemaining().toLowerCase(Locale.ROOT);
+		for (String option : new String[] {"UI", "tracking", "CroOverlay", "essence"}) {
+			if (option.toLowerCase(Locale.ROOT).startsWith(remaining)) {
+				builder.suggest(option);
+			}
+		}
+		return builder.buildFuture();
+	}
+
+	private static void sendToggleUsage(Minecraft client) {
+		DrtConfig config = DrtConfigManager.getConfig();
+		client.player.sendSystemMessage(Component.literal("§a[DRT] Usage: /drt toggle <UI|tracking|CroOverlay|essence>"));
+		client.player.sendSystemMessage(Component.literal(
+			"§7 UI: " + onOff(tracker.isEnabled())
+				+ "  tracking: " + onOff(tracker.isTrackingEnabled())
+				+ "  CroOverlay: " + onOff(tracker.isCroesusOverlayEnabled())
+				+ "  essence: " + onOff(config.essenceCountsTowardProfit)
+		));
+	}
+
+	private static boolean applyToggleParam(Minecraft client, String param) {
+		String key = param == null ? "" : param.trim().toLowerCase(Locale.ROOT);
+		return switch (key) {
+			case "ui", "hud" -> {
+				boolean on = tracker.toggleHud();
+				sendToggleState(client, "UI", on);
+				yield true;
+			}
+			case "tracking", "track", "tracker" -> {
+				boolean on = tracker.toggleTracking();
+				sendToggleState(client, "tracking", on);
+				yield true;
+			}
+			case "crooverlay", "croesus", "cro", "croesusoverlay" -> {
+				boolean on = tracker.toggleCroesusOverlay();
+				sendToggleState(client, "CroOverlay", on);
+				yield true;
+			}
+			case "essence", "ess" -> {
+				boolean on = tracker.toggleEssenceCountsTowardProfit();
+				sendToggleState(client, "essence", on);
+				yield true;
+			}
+			default -> false;
+		};
+	}
+
+	private static void sendToggleState(Minecraft client, String name, boolean on) {
+		client.player.sendSystemMessage(Component.literal("§a[DRT] " + name + ": " + onOff(on)));
+	}
+
+	private static String onOff(boolean on) {
+		return on ? "ON" : "OFF";
 	}
 
 	public static DungeonRunTrackerFeature getTracker() {
