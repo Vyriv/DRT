@@ -43,6 +43,9 @@ public final class DungeonProfitPricing {
 
 		String rawUpper = entry.rawName == null ? "" : entry.rawName.trim().toUpperCase(Locale.ROOT);
 		String itemIdUpper = entry.itemId == null ? "" : entry.itemId.trim().toUpperCase(Locale.ROOT);
+		if (config != null && !config.essenceCountsTowardProfit && isEssenceItem(rawUpper, itemIdUpper)) {
+			return 0L;
+		}
 		if (rawUpper.contains("WITHER ESSENCE") || itemIdUpper.equals("ESSENCE_WITHER")) {
 			return Math.max(0, config.witherEssenceValuePer);
 		}
@@ -188,10 +191,16 @@ public final class DungeonProfitPricing {
 			case EQUIPMENT -> config.forceSalvageEquipment;
 		};
 		if (!enabled) return null;
+		if (!config.essenceCountsTowardProfit) return 0L;
 		long crimsonEssencePrice = resolveSellValue(ITEM_CRIMSON_ESSENCE, config);
 		if (crimsonEssencePrice <= 0L) return 0L;
 		int essence = adjustedSalvageEssence(baseForcedSalvageEssence(category, rawName), config);
 		return crimsonEssencePrice * Math.max(0, essence);
+	}
+
+	private static boolean isEssenceItem(String rawUpper, String itemIdUpper) {
+		if (itemIdUpper != null && itemIdUpper.startsWith("ESSENCE_")) return true;
+		return rawUpper != null && rawUpper.contains("ESSENCE");
 	}
 
 	private static boolean isCrimsonEssenceEntry(DungeonLootEntry entry) {
