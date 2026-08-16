@@ -6,7 +6,14 @@ import java.util.List;
 import java.util.Map;
 
 public final class DrtConfig {
+	/** HUD overlay visibility. Does not disable tracking or onboarding. */
 	public boolean enabled = true;
+	/** When false, skip run detection, loot capture, and loot windows. */
+	public boolean trackingEnabled = true;
+	/** Croesus chest overlay and slot highlights. */
+	public boolean croesusOverlayEnabled = true;
+	/** When false, essence items contribute 0 to profit calculations. */
+	public boolean essenceCountsTowardProfit = true;
 	public int legacyRunsCompleted;
 	public Map<String, Integer> floorRunCounts = new LinkedHashMap<>();
 	/** Lifetime accumulated run duration per floor, in milliseconds. */
