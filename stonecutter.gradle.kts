@@ -15,10 +15,6 @@ stonecutter parameters {
 			replace(".centeredText(", ".drawCenteredString(")
 			replace(".text(", ".drawString(")
 			replace(".item(", ".renderItem(")
-			replace(
-				"client.player.sendSystemMessage(Component.literal(\"§a[DRT] HUD \" + status + \". §7Loot tracking is still active.\"));",
-				"client.player.displayClientMessage(Component.literal(\"§a[DRT] HUD \" + status + \". §7Loot tracking is still active.\"), false);"
-			)
 		}
 
 		// Word-bounded regex, not plain string(): "render" as a bare string()
