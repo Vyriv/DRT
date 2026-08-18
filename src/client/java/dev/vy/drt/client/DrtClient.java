@@ -335,8 +335,8 @@ public final class DrtClient implements ClientModInitializer {
 
 	private static void sendToggleUsage(Minecraft client) {
 		DrtConfig config = DrtConfigManager.getConfig();
-		client.player.sendSystemMessage(Component.literal("§a[DRT] Usage: /drt toggle <UI|tracking|CroOverlay|essence>"));
-		client.player.sendSystemMessage(Component.literal(
+		sendSystemChat(client, Component.literal("§a[DRT] Usage: /drt toggle <UI|tracking|CroOverlay|essence>"));
+		sendSystemChat(client, Component.literal(
 			"§7 UI: " + onOff(tracker.isEnabled())
 				+ "  tracking: " + onOff(tracker.isTrackingEnabled())
 				+ "  CroOverlay: " + onOff(tracker.isCroesusOverlayEnabled())
@@ -372,7 +372,16 @@ public final class DrtClient implements ClientModInitializer {
 	}
 
 	private static void sendToggleState(Minecraft client, String name, boolean on) {
-		client.player.sendSystemMessage(Component.literal("§a[DRT] " + name + ": " + onOff(on)));
+		sendSystemChat(client, Component.literal("§a[DRT] " + name + ": " + onOff(on)));
+	}
+
+	private static void sendSystemChat(Minecraft client, Component message) {
+		if (client == null || client.player == null || message == null) return;
+		//? if >= 26.1 {
+		client.player.sendSystemMessage(message);
+		//? } else {
+		/*client.player.displayClientMessage(message, false);
+		*///?}
 	}
 
 	private static String onOff(boolean on) {
