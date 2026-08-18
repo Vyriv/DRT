@@ -85,6 +85,7 @@ public final class DrtConfigManager {
 				}
 				if (normalizeRunHistory(loaded)) migrated = true;
 				if (normalizeRunCompletions(loaded)) migrated = true;
+				if (restoreFloorRunCountsFromCompletions(loaded)) migrated = true;
 				if (migrateOverlayPreset(loaded, root)) migrated = true;
 				if (normalizeCustomOverlayLayout(loaded)) migrated = true;
 				return new LoadedConfig(loaded, migrated);
@@ -391,10 +392,7 @@ public final class DrtConfigManager {
 	public static synchronized boolean removeRunRecord(DungeonRunRecord target) {
 		if (target == null || config.runHistory == null) return false;
 		boolean removed = config.runHistory.removeIf(r -> matchesRunRecord(r, target));
-		if (removed) {
-			decrementFloorRunCount(target.floor);
-			save();
-		}
+		if (removed) save();
 		return removed;
 	}
 
@@ -414,12 +412,6 @@ public final class DrtConfigManager {
 			stored.runNumber = existing.runNumber;
 			stored.normalizeCostBreakdown();
 			config.runHistory.set(i, stored);
-			String oldFloor = existing.floor == null ? "UNKNOWN" : existing.floor;
-			String newFloor = stored.floor == null ? "UNKNOWN" : stored.floor;
-			if (!oldFloor.equals(newFloor)) {
-				decrementFloorRunCount(oldFloor);
-				incrementFloorRunCount(newFloor);
-			}
 			save();
 			return true;
 		}
@@ -575,6 +567,26 @@ public final class DrtConfigManager {
 
 	private static int clamp(int value, int min, int max) {
 		return Math.max(min, Math.min(max, value));
+	}
+
+	private static boolean restoreFloorRunCountsFromCompletions(DrtConfig loaded) {
+		if (loaded.runCompletions == null || loaded.runCompletions.isEmpty()) return false;
+		if (loaded.floorRunCounts == null) loaded.floorRunCounts = new LinkedHashMap<>();
+		boolean changed = false;
+		LinkedHashMap<String, Integer> fromCompletions = new LinkedHashMap<>();
+		for (DungeonRunCompletionRecord record : loaded.runCompletions) {
+			if (record == null) continue;
+			String floor = record.floor == null || record.floor.isBlank() ? "UNKNOWN" : record.floor;
+			fromCompletions.merge(floor, 1, Integer::sum);
+		}
+		for (var entry : fromCompletions.entrySet()) {
+			int persisted = loaded.floorRunCounts.getOrDefault(entry.getKey(), 0);
+			if (persisted < entry.getValue()) {
+				loaded.floorRunCounts.put(entry.getKey(), entry.getValue());
+				changed = true;
+			}
+		}
+		return changed;
 	}
 
 	private static boolean normalizeRunHistory(DrtConfig loaded) {

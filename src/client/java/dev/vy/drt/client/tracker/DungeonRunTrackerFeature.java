@@ -299,6 +299,8 @@ public final class DungeonRunTrackerFeature {
 	private final Map<String, Long> floorRunTimeMs = new LinkedHashMap<>();
 	private final Map<String, Long> floorProfitTotals = new LinkedHashMap<>();
 	private DungeonFloor selectedFloor = null;
+	private long hudResetConfirmUntilMillis;
+	private String hudResetConfirmFloorKey;
 	private final DiagnosticRecorder diagnostics = new DiagnosticRecorder(
 		new dev.vy.drt.tracking.SystemTrackerClock(),
 		DIAGNOSTIC_EVENT_LIMIT,
@@ -493,6 +495,17 @@ public final class DungeonRunTrackerFeature {
 				if (k != null && v != null) floorRunCounts.put(k, Math.max(0, v));
 			});
 		}
+		if (config.runCompletions != null) {
+			LinkedHashMap<String, Integer> fromCompletions = new LinkedHashMap<>();
+			for (DungeonRunCompletionRecord record : config.runCompletions) {
+				if (record == null) continue;
+				String key = record.floor == null || record.floor.isBlank() ? "UNKNOWN" : record.floor;
+				fromCompletions.merge(key, 1, Integer::sum);
+			}
+			fromCompletions.forEach((key, count) -> {
+				if (floorRunCounts.getOrDefault(key, 0) < count) floorRunCounts.put(key, count);
+			});
+		}
 		if (config.legacyRunsCompleted > 0 && !floorRunCounts.containsKey("M5")) {
 			floorRunCounts.put("M5", config.legacyRunsCompleted);
 		}
@@ -629,7 +642,7 @@ public final class DungeonRunTrackerFeature {
 		}
 
 		if (client.screen != null && !moveMode) {
-			OverlayLayout.HitResult hit = hitTestHud(client, mouseX, mouseY, false);
+			OverlayLayout.HitResult hit = hitTestHud(client, mouseX, mouseY, shouldShowResetLine(client, false));
 			if (hit.hit()) {
 				switch (hit.hover()) {
 					case MODE -> drawTooltip(client, guiGraphics, "Mode: " + hudVisibilityMode.displayName, mouseX, mouseY);
@@ -639,7 +652,10 @@ public final class DungeonRunTrackerFeature {
 					case PROFIT -> drawTooltip(client, guiGraphics, buildProfitHoverTooltip(), mouseX, mouseY);
 					case RESET -> {
 						String floorTag = selectedFloor == null ? "All" : selectedFloor.name();
-						drawTooltip(client, guiGraphics, "Click to reset " + floorTag + " tracker", mouseX, mouseY);
+						String tip = hudResetConfirmArmed(System.currentTimeMillis())
+							? "Click again to permanently wipe " + floorTag
+							: "Click to reset " + floorTag + " tracker";
+						drawTooltip(client, guiGraphics, tip, mouseX, mouseY);
 					}
 					case NONE -> { }
 				}
@@ -836,7 +852,7 @@ public final class DungeonRunTrackerFeature {
 				avgProfitPerRun,
 				profitPerHr,
 				runsPerHrPaused,
-				"Reset " + floorTag
+				hudResetLabel(floorTag)
 		);
 	}
 
@@ -903,7 +919,33 @@ public final class DungeonRunTrackerFeature {
 		DrtConfigManager.updateFloorRunTimeMs(floorKey, next);
 	}
 
+	private String hudResetLabel(String floorTag) {
+		if (hudResetConfirmArmed(System.currentTimeMillis())) {
+			return "Confirm reset " + floorTag + "?";
+		}
+		return "Reset " + floorTag;
+	}
+
+	private boolean hudResetConfirmArmed(long now) {
+		if (now > hudResetConfirmUntilMillis) return false;
+		String currentKey = selectedFloor == null ? null : selectedFloor.name();
+		if (hudResetConfirmFloorKey == null) return currentKey == null;
+		return hudResetConfirmFloorKey.equals(currentKey);
+	}
+
+	private void clearHudResetConfirm() {
+		hudResetConfirmUntilMillis = 0L;
+		hudResetConfirmFloorKey = null;
+	}
+
 	private void resetSelectedFloor() {
+		long now = System.currentTimeMillis();
+		if (!hudResetConfirmArmed(now)) {
+			hudResetConfirmUntilMillis = now + 3_000L;
+			hudResetConfirmFloorKey = selectedFloor == null ? null : selectedFloor.name();
+			return;
+		}
+		clearHudResetConfirm();
 		if (selectedFloor == null) {
 			floorRunCounts.clear();
 			floorRunTimeMs.clear();
@@ -942,6 +984,7 @@ public final class DungeonRunTrackerFeature {
 		if (idx < 0) idx = 0;
 		int next = Math.floorMod(idx + direction, available.size());
 		selectedFloor = available.get(next);
+		clearHudResetConfirm();
 		DrtConfigManager.updateSelectedFloor(selectedFloor == null ? null : selectedFloor.name());
 	}
 
@@ -3306,15 +3349,6 @@ public final class DungeonRunTrackerFeature {
 			positionDirty = false;
 			leftMouseDownLastTick = leftMouseDown;
 			return;
-		}
-
-		if (leftMouseDown && !leftMouseDownLastTick && client.screen != null) {
-			boolean showResetLine = shouldShowResetLine(client, false);
-			OverlayLayout.HitResult hit = hitTestHud(client, mouseX, mouseY, showResetLine);
-			if (hit.hit() && handleOverlayClick(hit)) {
-				leftMouseDownLastTick = true;
-				return;
-			}
 		}
 
 		if (!(client.screen instanceof AbstractContainerScreen<?>)) {
