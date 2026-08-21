@@ -1,0 +1,58 @@
+name: Nightly
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  nightly:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Nightly stamp (UTC)
+        id: stamp
+        run: echo "value=$(date -u +%Y%m%d-%H%M)" >> "$GITHUB_OUTPUT"
+
+      - name: Set nightly mod_version
+        run: |
+          STAMP="${{ steps.stamp.outputs.value }}"
+          sed -i "s/^mod_version=.*/mod_version=nightly-${STAMP}+26.1.2/" versions/26.1.2/gradle.properties
+          sed -i "s/^mod_version=.*/mod_version=nightly-${STAMP}+26.2/" versions/26.2/gradle.properties
+          echo "mod_version -> nightly-${STAMP}+26.1.2 / nightly-${STAMP}+26.2"
+
+      - name: Build active targets
+        run: |
+          chmod +x gradlew
+          ./gradlew :26.1.2:build :26.2:build --no-daemon
+
+      - name: Resolve jar paths
+        id: jars
+        run: |
+          STAMP="${{ steps.stamp.outputs.value }}"
+          J261="versions/26.1.2/build/libs/DungeonRunTracker-nightly-${STAMP}+26.1.2.jar"
+          J262="versions/26.2/build/libs/DungeonRunTracker-nightly-${STAMP}+26.2.jar"
+          test -f "$J261"
+          test -f "$J262"
+          echo "j261=$J261" >> "$GITHUB_OUTPUT"
+          echo "j262=$J262" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Actions artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: drt-nightly
+          path: |
+            ${{ steps.jars.outputs.j261 }}
+            ${{ steps.jars.outputs.j262 }}
+          if-no-files-found: error
