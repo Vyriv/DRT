@@ -222,7 +222,10 @@ public final class ManualLootSuggestions {
 		List<String> out = new ArrayList<>();
 		out.addAll(catacombsFloorDrops(DungeonFloor.valueOf("F" + tier)));
 		out.addAll(COMMON_DUNGEON_CHEST_REWARDS);
-		out.add("Master Skull - Tier " + tier);
+		// Lower-tier Master Skulls can drop on higher MM floors (e.g. M5 can drop Tier 1..5).
+		for (int skullTier = 1; skullTier <= tier; skullTier++) {
+			out.add("Master Skull - Tier " + skullTier);
+		}
 		switch (tier) {
 			case 3 -> out.add("First Master Star");
 			case 4 -> out.add("Second Master Star");

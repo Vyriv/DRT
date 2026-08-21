@@ -12,6 +12,8 @@ public final class DrtConfig {
 	public boolean trackingEnabled = true;
 	/** Croesus chest overlay and slot highlights. */
 	public boolean croesusOverlayEnabled = true;
+	/** Replaces Wood–Bedrock reward chest inventories with DRT's fancy reward panel. Default off. */
+	public boolean fancyMenuEnabled = false;
 	/** When false, essence items contribute 0 to profit calculations. */
 	public boolean essenceCountsTowardProfit = true;
 	public int legacyRunsCompleted;

@@ -118,6 +118,8 @@ public final class DungeonRunTrackerFeature {
 	private static final Pattern KUUDRA_TIER_WORD_PATTERN = Pattern.compile("\\bTIER\\s*(?:-|:)?\\s*(I{1,3}|IV|V|[1-5])\\b", Pattern.CASE_INSENSITIVE);
 	private static final Pattern KUUDRA_PAREN_TIER_PATTERN = Pattern.compile("\\(\\s*[KT]\\s*([1-5])\\s*\\)", Pattern.CASE_INSENSITIVE);
 	private static final Pattern SCORE_GRADE_PATTERN = Pattern.compile("\\bSCORE\\b.*(?:\\((S\\+|S|A|B|C|D)\\)|(?:^|\\s)(S\\+|S|A|B|C|D)\\s*$)", Pattern.CASE_INSENSITIVE);
+	/** Hypixel paginated Croesus title, e.g. "(1/3) CROESUS". */
+	private static final Pattern CROESUS_PAGED_TITLE_PATTERN = Pattern.compile("^\\(\\d+/\\d+\\)\\s+CROESUS$");
 	private static final Set<String> REWARD_CHEST_TITLES = Set.of(
 			"WOOD CHEST", "GOLD CHEST", "DIAMOND CHEST", "EMERALD CHEST", "OBSIDIAN CHEST", "BEDROCK CHEST",
 			"FREE CHEST", "PAID CHEST"
@@ -196,7 +198,7 @@ public final class DungeonRunTrackerFeature {
 	private record PacketCapturedMessage(String text, long atMillis) {}
 	private record OverlayChestData(String chestTitle, List<DungeonLootEntry> entries, ChestCostBreakdown breakdown, long valueCoins, long profitCoins) {}
 	private record CroesusChestRow(String canonicalTitle, String displayName, ItemStack icon, int menuSlotIndex, int slotX, int slotY, long normalProfitCoins, long keyProfitCoins, boolean alreadyOpened, boolean kismetRerolled) {}
-	private record CroesusRunSlot(int slotX, int slotY) {}
+	private record CroesusRunSlot(int menuSlotIndex, int slotX, int slotY) {}
 	private record ScreenBounds(int left, int top, int width, int height) {
 		int right() { return left + width; }
 	}
@@ -317,6 +319,30 @@ public final class DungeonRunTrackerFeature {
 	private boolean enabled;
 	private boolean trackingEnabled = true;
 	private boolean croesusOverlayEnabled = true;
+	private boolean fancyMenuEnabled;
+	/** Hit targets for fancy reward menu action buttons (cleared each frame). */
+	private int fancyOpenSlotIndex = -1;
+	private int fancyBackSlotIndex = -1;
+	private int fancyRerollSlotIndex = -1;
+	private int fancyOpenBtnX;
+	private int fancyOpenBtnY;
+	private int fancyOpenBtnW;
+	private int fancyOpenBtnH;
+	private int fancyBackBtnX;
+	private int fancyBackBtnY;
+	private int fancyBackBtnW;
+	private int fancyBackBtnH;
+	private int fancyRerollBtnX;
+	private int fancyRerollBtnY;
+	private int fancyRerollBtnW;
+	private int fancyRerollBtnH;
+	private int fancyPanelX;
+	private int fancyPanelY;
+	private int fancyPanelW;
+	private int fancyPanelH;
+	private final List<FancyRewardHover> fancyRewardHovers = new ArrayList<>();
+
+	private record FancyRewardHover(int x, int y, int w, int h, DungeonLootEntry entry) {}
 	private HudVisibilityMode hudVisibilityMode = HudVisibilityMode.DEFAULT;
 	private OverlayPreset overlayPreset = OverlayPreset.LEGACY;
 	private String customOverlayLayout = OverlayLayouts.DEFAULT_CUSTOM_LAYOUT;
@@ -430,6 +456,7 @@ public final class DungeonRunTrackerFeature {
 		enabled = config.enabled;
 		trackingEnabled = config.trackingEnabled;
 		croesusOverlayEnabled = config.croesusOverlayEnabled;
+		fancyMenuEnabled = config.fancyMenuEnabled;
 		hudVisibilityMode = HudVisibilityMode.fromConfig(config.hudVisibilityMode);
 		OverlayPreset loadedPreset = OverlayPreset.fromConfig(config.hudOverlayPreset);
 		overlayPreset = loadedPreset == null ? OverlayPreset.LEGACY : loadedPreset;
@@ -574,6 +601,10 @@ public final class DungeonRunTrackerFeature {
 			return;
 		}
 		resumeCurrentRunAfterUnavailable(now);
+		updateDungeonContext(client);
+		// Assign / switch pending chest title before GUI loot merge so a new chest
+		// cannot bleed into the previous pending session.
+		captureRewardChestCosts(client);
 		captureOpenedRewardChestLootIfViewing(client, now);
 		if (lootCollectionUntilMillis > 0L && now > lootCollectionUntilMillis) {
 			flushPendingLootRecord(lootWindowUntilMillis > 0L && now <= lootWindowUntilMillis);
@@ -582,8 +613,6 @@ public final class DungeonRunTrackerFeature {
 			clearLootWindow();
 		}
 
-		updateDungeonContext(client);
-		captureRewardChestCosts(client);
 		tryConsumeAutoOpenRewardChest(client);
 	}
 
@@ -667,6 +696,7 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	public void extractChestOverlayRenderState(Minecraft client, GuiGraphicsExtractor guiGraphics, int mouseX, int mouseY) {
+		if (extractFancyRewardMenu(client, guiGraphics, mouseX, mouseY)) return;
 		if (croesusOverlayEnabled) {
 			if (extractRenderStateCroesusChestOverlay(client, guiGraphics, mouseX, mouseY)) return;
 			extractRenderStateCroesusMainMenuHighlights(client, guiGraphics);
@@ -783,6 +813,45 @@ public final class DungeonRunTrackerFeature {
 	public boolean toggleCroesusOverlay() {
 		setCroesusOverlayEnabled(!croesusOverlayEnabled);
 		return croesusOverlayEnabled;
+	}
+
+	public boolean isFancyMenuEnabled() {
+		return fancyMenuEnabled;
+	}
+
+	public void setFancyMenuEnabled(boolean fancyMenuEnabled) {
+		this.fancyMenuEnabled = fancyMenuEnabled;
+		DrtConfigManager.getConfig().fancyMenuEnabled = fancyMenuEnabled;
+		DrtConfigManager.save();
+	}
+
+	public boolean toggleFancyMenu() {
+		setFancyMenuEnabled(!fancyMenuEnabled);
+		return fancyMenuEnabled;
+	}
+
+	/** True when Fancy Menu owns presentation for the current container screen. */
+	public boolean shouldSuppressVanillaContainerPresentation(Minecraft client) {
+		return isFancyMenuPresentationActive(client);
+	}
+
+	/** Block direct vanilla slot click/drag/scroll while Fancy Menu is showing. */
+	public boolean shouldBlockContainerMouseInput(Minecraft client) {
+		return isFancyMenuPresentationActive(client);
+	}
+
+	private boolean isFancyMenuPresentationActive(Minecraft client) {
+		return isFancyRewardMenuActive(client);
+	}
+
+	private boolean isFancyRewardMenuActive(Minecraft client) {
+		if (!fancyMenuEnabled || client == null || client.player == null) return false;
+		if (!(client.screen instanceof AbstractContainerScreen<?> screen)) return false;
+		String normalizedTitle = normalize(screen.getTitle().getString());
+		String canonicalTitle = canonicalRewardChestTitle(normalizedTitle);
+		if (canonicalTitle == null || !isCatacombsRewardChest(canonicalTitle)) return false;
+		OverlayChestData data = currentOverlayChestData(client);
+		return data != null && data.entries() != null && !data.entries().isEmpty();
 	}
 
 	public boolean toggleEssenceCountsTowardProfit() {
@@ -1085,6 +1154,7 @@ public final class DungeonRunTrackerFeature {
 	public boolean handleScreenMouseClick(Minecraft client, double mouseX, double mouseY, int button, boolean moveMode) {
 		int mx = (int) mouseX;
 		int my = (int) mouseY;
+		if (!moveMode && (button == 0 || button == 1) && handleFancyMenuClick(client, mx, my, button)) return true;
 		if (button == 0 && !moveMode && handleChestTitleClick(client, mx, my)) return true;
 		if (button == 0 && !moveMode && handleChestKeyModifierClick(client, mx, my)) return true;
 		if (!moveMode && (button == 0 || button == 1) && handleCroesusOverlayClick(client, mx, my, button)) return true;
@@ -1625,6 +1695,427 @@ public final class DungeonRunTrackerFeature {
 
 	}
 
+	private static final int FANCY_PAD = 10;
+	private static final int FANCY_ICON = 16;
+	private static final int FANCY_ICON_GAP = 4;
+	private static final int FANCY_PRICE_GAP = 8;
+	private static final int FANCY_ROW_H = 18;
+	private static final int FANCY_BTN_H = 20;
+	private static final int FANCY_BTN_GAP = 6;
+	private static final int FANCY_SECTION_GAP = 10;
+	private static final int FANCY_HEADER_GAP = 8;
+	private static final int FANCY_PANEL_W = 236;
+	private static final int FANCY_MIN_H = 112;
+	private static final int FANCY_MAX_H = 210;
+
+	private record FancyMenuLayout(
+		int panelX,
+		int panelY,
+		int panelW,
+		int panelH,
+		int contentLeft,
+		int contentRight,
+		int headerY,
+		int rewardTop,
+		int shownRows,
+		int overflowCount,
+		int summaryTop,
+		int btnY,
+		int openBtnX,
+		int openBtnW,
+		int backBtnX,
+		int backBtnW,
+		int rerollBtnX,
+		int rerollBtnW,
+		boolean hasOpen,
+		boolean hasBack,
+		boolean hasReroll
+	) {}
+
+	private boolean extractFancyRewardMenu(Minecraft client, GuiGraphicsExtractor g, int mouseX, int mouseY) {
+		clearFancyMenuHitTargets();
+		if (!isFancyRewardMenuActive(client)) return false;
+
+		AbstractContainerScreen<?> screen = (AbstractContainerScreen<?>) client.screen;
+		String normalizedTitle = normalize(screen.getTitle().getString());
+		String canonicalTitle = canonicalRewardChestTitle(normalizedTitle);
+		OverlayChestData data = currentOverlayChestData(client);
+		if (data == null || data.entries() == null || data.entries().isEmpty()) return false;
+
+		AbstractContainerMenu menu = client.player.containerMenu;
+		fancyOpenSlotIndex = findOpenRewardChestSlotIndex(menu);
+		fancyBackSlotIndex = findBackChestSlotIndex(menu);
+		fancyRerollSlotIndex = findRerollChestSlotIndex(menu);
+
+		List<DungeonLootEntry> ordered = orderFancyRewardEntries(data.entries());
+		boolean hasOpen = fancyOpenSlotIndex >= 0;
+		boolean hasBack = fancyBackSlotIndex >= 0;
+		boolean hasReroll = fancyRerollSlotIndex >= 0;
+		FancyMenuLayout layout = computeFancyMenuLayout(client, ordered.size(), hasOpen, hasBack, hasReroll);
+		fancyPanelX = layout.panelX();
+		fancyPanelY = layout.panelY();
+		fancyPanelW = layout.panelW();
+		fancyPanelH = layout.panelH();
+
+		drawFancyMenuChrome(g, layout);
+
+		String header = data.chestTitle() == null ? toDisplayChestTitle(canonicalTitle) : data.chestTitle();
+		drawOverlayText(client, g, header.toUpperCase(Locale.ROOT), layout.contentLeft(), layout.headerY(), chestTitleColor(header), true);
+
+		int rowY = layout.rewardTop();
+		for (int i = 0; i < layout.shownRows(); i++) {
+			DungeonLootEntry entry = ordered.get(i);
+			drawFancyRewardRow(client, g, layout.contentLeft(), rowY, layout.contentRight(), entry);
+			fancyRewardHovers.add(new FancyRewardHover(layout.contentLeft(), rowY, layout.contentRight() - layout.contentLeft(), FANCY_ROW_H, entry));
+			rowY += FANCY_ROW_H;
+		}
+		if (layout.overflowCount() > 0) {
+			int moreY = rowY + Math.max(0, (FANCY_ROW_H - client.font.lineHeight) / 2);
+			drawOverlayText(client, g, "+" + layout.overflowCount() + " more", layout.contentLeft() + FANCY_ICON + FANCY_ICON_GAP, moreY, OVERLAY_MUTED, false);
+		}
+
+		drawFancySummary(client, g, layout, data);
+
+		int openBorder = data.profitCoins() > 0L ? OVERLAY_PROFIT : (data.profitCoins() < 0L ? OVERLAY_LOSS : OVERLAY_TEXT);
+		if (layout.hasOpen()) {
+			fancyOpenBtnX = layout.openBtnX();
+			fancyOpenBtnY = layout.btnY();
+			fancyOpenBtnW = layout.openBtnW();
+			fancyOpenBtnH = FANCY_BTN_H;
+			boolean hover = pointInRect(mouseX, mouseY, fancyOpenBtnX, fancyOpenBtnY, fancyOpenBtnW, fancyOpenBtnH);
+			drawFancyActionButton(client, g, fancyOpenBtnX, fancyOpenBtnY, fancyOpenBtnW, fancyOpenBtnH, "OPEN", hover, openBorder);
+		}
+		if (layout.hasBack()) {
+			fancyBackBtnX = layout.backBtnX();
+			fancyBackBtnY = layout.btnY();
+			fancyBackBtnW = layout.backBtnW();
+			fancyBackBtnH = FANCY_BTN_H;
+			boolean hover = pointInRect(mouseX, mouseY, fancyBackBtnX, fancyBackBtnY, fancyBackBtnW, fancyBackBtnH);
+			drawFancyActionButton(client, g, fancyBackBtnX, fancyBackBtnY, fancyBackBtnW, fancyBackBtnH, "BACK", hover, 0xFF6268A8);
+		}
+		if (layout.hasReroll()) {
+			fancyRerollBtnX = layout.rerollBtnX();
+			fancyRerollBtnY = layout.btnY();
+			fancyRerollBtnW = layout.rerollBtnW();
+			fancyRerollBtnH = FANCY_BTN_H;
+			boolean hover = pointInRect(mouseX, mouseY, fancyRerollBtnX, fancyRerollBtnY, fancyRerollBtnW, fancyRerollBtnH);
+			drawFancyActionButton(client, g, fancyRerollBtnX, fancyRerollBtnY, fancyRerollBtnW, fancyRerollBtnH, "REROLL", hover, OVERLAY_BOOK);
+		}
+
+		for (FancyRewardHover hover : fancyRewardHovers) {
+			if (!pointInRect(mouseX, mouseY, hover.x(), hover.y(), hover.w(), hover.h())) continue;
+			DungeonLootEntry entry = hover.entry();
+			long unit = DungeonProfitPricing.resolveUnitPrice(entry, DrtConfigManager.getConfig());
+			List<String> tip = new ArrayList<>();
+			tip.add(fancyRewardDisplayLabel(entry));
+			tip.add("Each: " + formatCoins(unit));
+			tip.add("Total: " + formatCoins(DungeonProfitPricing.resolveTotalPrice(entry, DrtConfigManager.getConfig())));
+			drawTooltip(client, g, tip, mouseX, mouseY);
+			break;
+		}
+		return true;
+	}
+
+	private FancyMenuLayout computeFancyMenuLayout(Minecraft client, int rewardCount, boolean hasOpen, boolean hasBack, boolean hasReroll) {
+		ScreenBounds bounds = currentContainerBounds(client);
+		int lineH = client.font.lineHeight + 2;
+		int headerH = lineH;
+		int summaryExtraGap = 5;
+		int summaryH = lineH * 2 + summaryExtraGap;
+		boolean hasButtons = hasOpen || hasBack || hasReroll;
+		int buttonBlockH = hasButtons ? FANCY_BTN_H : 0;
+		int buttonGap = hasButtons ? FANCY_SECTION_GAP : 0;
+		int summaryBlock = FANCY_SECTION_GAP + summaryH;
+
+		int fixedChrome =
+			FANCY_PAD
+				+ headerH
+				+ FANCY_HEADER_GAP
+				+ summaryBlock
+				+ buttonGap
+				+ buttonBlockH
+				+ FANCY_PAD;
+
+		int maxRewardArea = Math.max(FANCY_ROW_H, FANCY_MAX_H - fixedChrome);
+		int maxRowsBudget = Math.max(1, maxRewardArea / FANCY_ROW_H);
+
+		int shownRows;
+		int overflowCount;
+		if (rewardCount > maxRowsBudget) {
+			shownRows = Math.max(0, maxRowsBudget - 1);
+			overflowCount = rewardCount - shownRows;
+		} else {
+			shownRows = rewardCount;
+			overflowCount = 0;
+		}
+		int rewardRowsDrawn = shownRows + (overflowCount > 0 ? 1 : 0);
+		int rewardAreaH = Math.max(FANCY_ROW_H, rewardRowsDrawn * FANCY_ROW_H);
+
+		int panelH = fixedChrome + rewardAreaH;
+		panelH = Math.max(FANCY_MIN_H, Math.min(FANCY_MAX_H, panelH));
+
+		// If clamp shrank height, re-fit reward rows into remaining space.
+		int availableRewardH = panelH - fixedChrome;
+		maxRowsBudget = Math.max(1, availableRewardH / FANCY_ROW_H);
+		if (rewardCount > maxRowsBudget) {
+			shownRows = Math.max(0, maxRowsBudget - 1);
+			overflowCount = rewardCount - shownRows;
+		} else {
+			shownRows = rewardCount;
+			overflowCount = 0;
+		}
+		rewardRowsDrawn = shownRows + (overflowCount > 0 ? 1 : 0);
+		rewardAreaH = rewardRowsDrawn * FANCY_ROW_H;
+
+		// Content-sized height (may be below MAX after overflow fit).
+		panelH = Math.max(FANCY_MIN_H, Math.min(FANCY_MAX_H, fixedChrome + rewardAreaH));
+
+		int panelW = FANCY_PANEL_W;
+		int panelX = bounds.left() + (bounds.width() - panelW) / 2;
+		int panelY = bounds.top() + Math.max(0, (bounds.height() - panelH) / 2);
+
+		int contentLeft = panelX + FANCY_PAD;
+		int contentRight = panelX + panelW - FANCY_PAD;
+		int headerY = panelY + FANCY_PAD;
+		int rewardTop = headerY + headerH + FANCY_HEADER_GAP;
+		int summaryTop = rewardTop + rewardAreaH + FANCY_SECTION_GAP;
+		int btnY = panelY + panelH - FANCY_PAD - FANCY_BTN_H;
+
+		int openBtnX = 0;
+		int openBtnW = 0;
+		int backBtnX = 0;
+		int backBtnW = 0;
+		int rerollBtnX = 0;
+		int rerollBtnW = 0;
+		int availableBtnW = contentRight - contentLeft;
+		int presentCount = (hasOpen ? 1 : 0) + (hasBack ? 1 : 0) + (hasReroll ? 1 : 0);
+		if (presentCount > 0) {
+			int gaps = (presentCount - 1) * FANCY_BTN_GAP;
+			int baseW = (availableBtnW - gaps) / presentCount;
+			int cursorX = contentLeft;
+			int remaining = presentCount;
+			int remainingW = availableBtnW - gaps;
+			if (hasOpen) {
+				openBtnW = remaining == 1 ? remainingW : baseW;
+				openBtnX = cursorX;
+				cursorX += openBtnW + FANCY_BTN_GAP;
+				remainingW -= openBtnW;
+				remaining--;
+			}
+			if (hasBack) {
+				backBtnW = remaining == 1 ? remainingW : baseW;
+				backBtnX = cursorX;
+				cursorX += backBtnW + FANCY_BTN_GAP;
+				remainingW -= backBtnW;
+				remaining--;
+			}
+			if (hasReroll) {
+				rerollBtnW = remaining == 1 ? remainingW : baseW;
+				rerollBtnX = cursorX;
+			}
+		}
+
+		return new FancyMenuLayout(
+			panelX, panelY, panelW, panelH,
+			contentLeft, contentRight,
+			headerY,
+			rewardTop, shownRows, overflowCount,
+			summaryTop,
+			btnY, openBtnX, openBtnW, backBtnX, backBtnW, rerollBtnX, rerollBtnW,
+			hasOpen, hasBack, hasReroll
+		);
+	}
+
+	private List<DungeonLootEntry> orderFancyRewardEntries(List<DungeonLootEntry> entries) {
+		List<DungeonLootEntry> itemEntries = new ArrayList<>();
+		List<DungeonLootEntry> essenceEntries = new ArrayList<>();
+		for (DungeonLootEntry entry : entries) {
+			if (entry == null) continue;
+			if (isEssenceEntry(entry)) essenceEntries.add(entry);
+			else itemEntries.add(entry);
+		}
+		List<DungeonLootEntry> ordered = new ArrayList<>(itemEntries.size() + essenceEntries.size());
+		ordered.addAll(itemEntries);
+		ordered.addAll(essenceEntries);
+		return ordered;
+	}
+
+	private void drawFancyMenuChrome(GuiGraphicsExtractor g, FancyMenuLayout layout) {
+		int x = layout.panelX();
+		int y = layout.panelY();
+		int w = layout.panelW();
+		int h = layout.panelH();
+		g.fill(x, y, x + w, y + h, 0xFF0D0D18);
+		g.fill(x, y, x + w, y + 1, 0xFF6268A8);
+		g.fill(x, y + h - 1, x + w, y + h, 0xFF35385D);
+		g.fill(x, y, x + 1, y + h, 0xFF35385D);
+		g.fill(x + w - 1, y, x + w, y + h, 0xFF35385D);
+	}
+
+	private void drawFancySummary(Minecraft client, GuiGraphicsExtractor g, FancyMenuLayout layout, OverlayChestData data) {
+		int lineH = client.font.lineHeight + 2;
+		int y = layout.summaryTop();
+		int contentLeft = layout.contentLeft();
+		int contentRight = layout.contentRight();
+		int contentMid = (contentLeft + contentRight) / 2;
+		int leftCenterX = (contentLeft + contentMid) / 2;
+		int rightCenterX = (contentMid + contentRight) / 2;
+
+		String valueText = formatCoins(data.valueCoins());
+		drawFancyCenteredPair(client, g, leftCenterX, y, "Chest Value ", OVERLAY_MUTED, valueText, OVERLAY_VALUE, false);
+
+		String dash = "-";
+		drawOverlayText(client, g, dash, contentMid - client.font.width(dash) / 2, y, OVERLAY_MUTED, false);
+
+		String costText = "-" + formatCoins(Math.max(0L, data.breakdown().totalCostCoins()));
+		drawFancyCenteredPair(client, g, rightCenterX, y, "Open Cost ", OVERLAY_MUTED, costText, OVERLAY_COST, false);
+		int summaryExtraGap = 5;
+		y += lineH + summaryExtraGap;
+
+		String profitText = (data.profitCoins() >= 0L ? "+" : "") + formatCoins(data.profitCoins());
+		int profitColor = data.profitCoins() > 0L ? OVERLAY_PROFIT : (data.profitCoins() < 0L ? OVERLAY_LOSS : OVERLAY_TEXT);
+		drawFancyCenteredPair(client, g, contentMid, y, "Profit ", OVERLAY_MUTED, profitText, profitColor, true);
+	}
+
+	private void drawFancyCenteredPair(
+		Minecraft client,
+		GuiGraphicsExtractor g,
+		int centerX,
+		int y,
+		String label,
+		int labelColor,
+		String value,
+		int valueColor,
+		boolean valueBold
+	) {
+		int totalW = client.font.width(label) + client.font.width(value);
+		int x = centerX - totalW / 2;
+		drawOverlayText(client, g, label, x, y, labelColor, false);
+		drawOverlayText(client, g, value, x + client.font.width(label), y, valueColor, valueBold);
+	}
+
+	private String fancyRewardDisplayLabel(DungeonLootEntry entry) {
+		OverlayItemDisplay display = overlayItemDisplay(entry);
+		if (entry.quantity > 1) return display.name + " x" + entry.quantity;
+		return display.name;
+	}
+
+	private void clearFancyMenuHitTargets() {
+		fancyOpenSlotIndex = -1;
+		fancyBackSlotIndex = -1;
+		fancyRerollSlotIndex = -1;
+		fancyOpenBtnW = 0;
+		fancyOpenBtnH = 0;
+		fancyBackBtnW = 0;
+		fancyBackBtnH = 0;
+		fancyRerollBtnW = 0;
+		fancyRerollBtnH = 0;
+		fancyPanelW = 0;
+		fancyPanelH = 0;
+		fancyRewardHovers.clear();
+	}
+
+	/**
+	 * Measured two-column reward row: [icon] [combined label including qty] [price].
+	 * Label width = priceX - priceGap - labelX using real font pixel widths.
+	 */
+	private void drawFancyRewardRow(
+		Minecraft client,
+		GuiGraphicsExtractor g,
+		int contentLeft,
+		int rowY,
+		int contentRight,
+		DungeonLootEntry entry
+	) {
+		DrtConfig config = DrtConfigManager.getConfig();
+		long totalPrice = DungeonProfitPricing.resolveTotalPrice(entry, config);
+		ItemStack icon = overlayItemIcon(entry.itemId);
+		if (icon.isEmpty()) icon = new ItemStack(Items.PAPER);
+
+		int textY = rowY + Math.max(0, (FANCY_ROW_H - client.font.lineHeight) / 2);
+		int iconY = rowY + Math.max(0, (FANCY_ROW_H - FANCY_ICON) / 2);
+		g.item(icon, contentLeft, iconY);
+
+		OverlayItemDisplay display = overlayItemDisplay(entry);
+		String label = fancyRewardDisplayLabel(entry);
+		String priceText = formatCoins(totalPrice);
+		int priceW = client.font.width(priceText);
+		int priceX = contentRight - priceW;
+		int labelX = contentLeft + FANCY_ICON + FANCY_ICON_GAP;
+		int labelWidth = Math.max(0, priceX - FANCY_PRICE_GAP - labelX);
+		String visibleLabel = ellipsize(client, label, labelWidth);
+
+		drawOverlayText(client, g, visibleLabel, labelX, textY, display.color, display.bold);
+		drawOverlayText(client, g, priceText, priceX, textY, OVERLAY_VALUE, false);
+	}
+
+	private void drawFancyActionButton(
+		Minecraft client,
+		GuiGraphicsExtractor g,
+		int x,
+		int y,
+		int w,
+		int h,
+		String label,
+		boolean hover,
+		int borderColor
+	) {
+		g.fill(x, y, x + w, y + h, hover ? 0xFF1D2139 : 0xFF151729);
+		g.fill(x, y, x + w, y + 1, borderColor);
+		g.fill(x, y + h - 1, x + w, y + h, borderColor);
+		g.fill(x, y, x + 1, y + h, borderColor);
+		g.fill(x + w - 1, y, x + w, y + h, borderColor);
+		int labelW = client.font.width(label);
+		drawOverlayText(client, g, label, x + (w - labelW) / 2, y + (h - client.font.lineHeight) / 2, OVERLAY_TEXT, true);
+	}
+
+	/**
+	 * When Fancy Menu is active, consume all mouse clicks so hidden vanilla slots are unreachable.
+	 * Reward Open / Back / Reroll buttons forward to real server slots.
+	 */
+	private boolean handleFancyMenuClick(Minecraft client, int mouseX, int mouseY, int button) {
+		if (!isFancyMenuPresentationActive(client)) return false;
+		if (button == 0) {
+			if (fancyOpenBtnW > 0 && fancyOpenSlotIndex >= 0
+				&& pointInRect(mouseX, mouseY, fancyOpenBtnX, fancyOpenBtnY, fancyOpenBtnW, fancyOpenBtnH)) {
+				return invokeInventoryPickupClick(client, fancyOpenSlotIndex);
+			}
+			if (fancyBackBtnW > 0 && fancyBackSlotIndex >= 0
+				&& pointInRect(mouseX, mouseY, fancyBackBtnX, fancyBackBtnY, fancyBackBtnW, fancyBackBtnH)) {
+				return invokeInventoryPickupClick(client, fancyBackSlotIndex);
+			}
+			if (fancyRerollBtnW > 0 && fancyRerollSlotIndex >= 0
+				&& pointInRect(mouseX, mouseY, fancyRerollBtnX, fancyRerollBtnY, fancyRerollBtnW, fancyRerollBtnH)) {
+				return invokeInventoryPickupClick(client, fancyRerollSlotIndex);
+			}
+		}
+		return true;
+	}
+
+	private int findBackChestSlotIndex(AbstractContainerMenu menu) {
+		if (menu == null) return -1;
+		for (int slotIndex = 0; slotIndex < menu.slots.size(); slotIndex++) {
+			if (!isServerOwnedSlot(menu.getSlot(slotIndex))) continue;
+			ItemStack stack = menu.getSlot(slotIndex).getItem();
+			if (stack == null || stack.isEmpty()) continue;
+			String name = normalize(cleanText(stack.getHoverName().getString()));
+			if (name.equals("GO BACK")) return slotIndex;
+		}
+		return -1;
+	}
+
+	private int findRerollChestSlotIndex(AbstractContainerMenu menu) {
+		if (menu == null) return -1;
+		for (int slotIndex = 0; slotIndex < menu.slots.size(); slotIndex++) {
+			if (!isServerOwnedSlot(menu.getSlot(slotIndex))) continue;
+			ItemStack stack = menu.getSlot(slotIndex).getItem();
+			if (stack == null || stack.isEmpty()) continue;
+			String name = normalize(cleanText(stack.getHoverName().getString()));
+			if (name.equals("REROLL CHEST") || name.startsWith("REROLL ")) return slotIndex;
+		}
+		return -1;
+	}
+
 	private boolean extractRenderStateCroesusChestOverlay(Minecraft client, GuiGraphicsExtractor g, int mouseX, int mouseY) {
 		if (!(client.screen instanceof AbstractContainerScreen<?> screen)) return false;
 		String normalizedTitle = normalize(screen.getTitle().getString());
@@ -2059,22 +2550,26 @@ public final class DungeonRunTrackerFeature {
 		List<CroesusRunSlot> slots = new ArrayList<>();
 		for (int slotIndex = 0; slotIndex < menu.slots.size(); slotIndex++) {
 			Slot slot = menu.slots.get(slotIndex);
+			// Upper Croesus grid only: never treat player inventory / backpack as runs.
 			if (!isServerOwnedSlot(slot)) continue;
 			ItemStack stack = slot.getItem();
-			if (stack.isEmpty()) continue;
+			if (stack.isEmpty() || isCroesusMainMenuChromeStack(stack)) continue;
 			if (!croesusRunHasUnopenedChest(stack)) continue;
-			slots.add(new CroesusRunSlot(bounds.left + slot.x, bounds.top + slot.y));
+			slots.add(new CroesusRunSlot(slotIndex, bounds.left + slot.x, bounds.top + slot.y));
 		}
 		return slots;
 	}
 
 	private boolean isCroesusMainMenuTitle(String normalizedTitle) {
 		if (normalizedTitle == null || normalizedTitle.isBlank()) return false;
-		return normalizedTitle.equals("CROESUS")
+		if (normalizedTitle.equals("VESUVIUS") || normalizedTitle.contains("VESUVIUS")) return true;
+		if (normalizedTitle.equals("CROESUS")
 				|| normalizedTitle.equals("CROESUS CHEST")
-				|| normalizedTitle.equals("CROESUS MENU")
-				|| normalizedTitle.equals("VESUVIUS")
-				|| normalizedTitle.contains("VESUVIUS");
+				|| normalizedTitle.equals("CROESUS MENU")) {
+			return true;
+		}
+		// Paginated Hypixel title: "(1/3) Croesus"
+		return CROESUS_PAGED_TITLE_PATTERN.matcher(normalizedTitle).matches();
 	}
 
 	private boolean isCroesusChestListTitle(String normalizedTitle) {
@@ -2085,24 +2580,116 @@ public final class DungeonRunTrackerFeature {
 				|| normalizedTitle.contains("VESUVIUS");
 	}
 
+	/**
+	 * True when a Croesus main-menu run still has claimable chests.
+	 * Matches Hypixel states used by other mods:
+	 * never opened ("No chests opened yet!"), partially opened ("Opened Chest: Wood"),
+	 * and clickable run rows ("Click to view chests!"). Fully claimed rows
+	 * ("No more chests to open!") are excluded.
+	 */
 	private boolean croesusRunHasUnopenedChest(ItemStack stack) {
-		for (String line : cleanLoreLines(stack)) {
+		if (stack == null || stack.isEmpty()) return false;
+		List<String> lore = cleanLoreLines(stack);
+		if (lore.isEmpty()) return false;
+
+		boolean fullyClaimed = false;
+		boolean neverOpened = false;
+		boolean partiallyOpened = false;
+		boolean claimHint = false;
+		boolean dungeonRunSignal = false;
+
+		for (String line : lore) {
 			String normalized = normalize(line);
-			if (lineClearlyIndicatesUnopenedChest(normalized)) return true;
+			if (normalized.isEmpty()) continue;
+
+			if (normalized.contains("NO MORE CHESTS TO OPEN")
+					|| normalized.contains("NO CHESTS LEFT TO OPEN")
+					|| normalized.contains("ALL CHESTS OPENED")) {
+				fullyClaimed = true;
+				continue;
+			}
+			if (normalized.contains("NO CHESTS OPENED YET")) {
+				neverOpened = true;
+				continue;
+			}
+			// Partially claimed runs still list opened tiers; remaining chests are claimable
+			// until Hypixel shows "No more chests to open!".
+			if (normalized.contains("OPENED CHEST:") || normalized.startsWith("OPENED CHEST ")) {
+				partiallyOpened = true;
+				continue;
+			}
+			if (lineClearlyIndicatesUnopenedChest(normalized)) {
+				claimHint = true;
+				continue;
+			}
+			if (normalized.contains("CLICK TO VIEW CHEST")
+					|| normalized.contains("CLICK TO VIEW")
+					|| normalized.regionMatches(true, 0, "CLICK TO OPEN", 0, 13)) {
+				claimHint = true;
+				continue;
+			}
+			if (normalized.contains("CHESTS EXPIRE")
+					|| normalized.contains("THE CATACOMBS")
+					|| normalized.contains("MASTER MODE")
+					|| normalized.startsWith("FLOOR ")
+					|| normalized.startsWith("TIER:")
+					|| normalized.contains("TIER:")
+					|| normalized.contains(" KUUDRA")
+					|| normalized.endsWith(" TIER")
+					|| normalized.endsWith(" TIER!")) {
+				dungeonRunSignal = true;
+			}
 		}
-		return false;
+
+		if (fullyClaimed) return false;
+		if (neverOpened || partiallyOpened || claimHint) return true;
+		// Kuudra (and sparse Catacombs lore) often omit an explicit unopened line.
+		return dungeonRunSignal && (stack.is(Items.PLAYER_HEAD) || stack.is(Items.CHEST));
 	}
 
 	private boolean lineClearlyIndicatesUnopenedChest(String normalized) {
-		if (normalized == null || !normalized.contains("CHEST")) return false;
-		if (normalized.contains("OPENED CHEST:")) return false;
+		if (normalized == null || normalized.isEmpty()) return false;
+		if (normalized.contains("NO MORE CHESTS")
+				|| normalized.contains("NO UNOPENED")
+				|| normalized.contains("NO UNCLAIMED")
+				|| normalized.contains("0 UNOPENED")
+				|| normalized.contains("0 UNCLAIMED")) {
+			return false;
+		}
 		if (normalized.contains("NO CHESTS OPENED YET")) return true;
-		if (normalized.contains("NO UNOPENED") || normalized.contains("NO UNCLAIMED") || normalized.contains("0 UNOPENED") || normalized.contains("0 UNCLAIMED")) return false;
+		boolean chestWord = normalized.contains("CHEST");
 		return normalized.contains("UNOPENED")
 				|| normalized.contains("UNCLAIMED")
-				|| normalized.contains("AVAILABLE")
 				|| normalized.contains("OPENABLE")
-				|| normalized.contains("NOT OPENED");
+				|| normalized.contains("NOT OPENED")
+				|| (chestWord && normalized.contains("AVAILABLE"));
+	}
+
+	/** Glass panes, terracotta fillers, Close / Go Back, Eyes of Ender / arrows for paging. */
+	private boolean isCroesusMainMenuChromeStack(ItemStack stack) {
+		if (stack == null || stack.isEmpty()) return true;
+		if (stack.is(Items.LIGHT_GRAY_STAINED_GLASS_PANE)
+				|| stack.is(Items.GRAY_STAINED_GLASS_PANE)
+				|| stack.is(Items.BLACK_STAINED_GLASS_PANE)
+				|| stack.is(Items.BARRIER)
+				|| stack.is(Items.ARROW)
+				|| stack.is(Items.ENDER_EYE)
+				|| stack.is(Items.RED_TERRACOTTA)
+				|| stack.is(Items.TERRACOTTA)
+				|| stack.is(Items.AIR)) {
+			return true;
+		}
+		String name = normalize(cleanText(stack.getHoverName().getString()));
+		return name.contains("STAINED GLASS")
+				|| name.contains("GLASS PANE")
+				|| name.contains("TERRACOTTA")
+				|| name.equals("GO BACK")
+				|| name.equals("CLOSE")
+				|| name.equals("NEXT PAGE")
+				|| name.equals("PREVIOUS PAGE")
+				|| name.equals("PREV PAGE")
+				|| name.contains("EYE OF ENDER")
+				|| name.equals("ENDER EYE");
 	}
 
 	private OverlayChestData currentOverlayChestData(Minecraft client) {
@@ -2949,6 +3536,8 @@ public final class DungeonRunTrackerFeature {
 		String canonical = canonicalRewardChestTitle(normalize(client.screen.getTitle().getString()));
 		if (canonical == null || !pendingLootChestAssigned) return;
 		if (isRewardChestPreviewScreen(client.player.containerMenu)) return;
+		// Same chest session only: do not merge a different title into pending.
+		if (!toDisplayChestTitle(canonical).equalsIgnoreCase(pendingLootChestTitle)) return;
 		captureOpenedRewardChestLoot(client, client.player.containerMenu, now);
 		lastViewedOpenedRewardChestTitle = canonical;
 		lastOpenedRewardChestTitleForChat = canonical;
@@ -2956,6 +3545,11 @@ public final class DungeonRunTrackerFeature {
 
 	private void captureOpenedRewardChestLoot(Minecraft client, AbstractContainerMenu menu, long now) {
 		if (client == null || client.player == null || menu == null || !pendingLootChestAssigned) return;
+		if (client.screen instanceof AbstractContainerScreen<?>) {
+			String canonical = canonicalRewardChestTitle(normalize(client.screen.getTitle().getString()));
+			if (canonical == null) return;
+			if (!toDisplayChestTitle(canonical).equalsIgnoreCase(pendingLootChestTitle)) return;
+		}
 		// Chat CHEST REWARDS is authoritative once it starts; keep GUI scan from fighting it.
 		if (!pendingLootSeededFromGui && !pendingLootEntries.isEmpty() && lootCollectionUntilMillis > now) {
 			return;

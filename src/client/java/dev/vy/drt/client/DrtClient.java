@@ -181,7 +181,7 @@ public final class DrtClient implements ClientModInitializer {
 							}
 							String param = StringArgumentType.getString(context, "param");
 							if (!applyToggleParam(client, param)) {
-								context.getSource().sendError(Component.literal("§c[DRT] Unknown toggle '" + param + "'. Use /drt toggle <UI|tracking|CroOverlay|essence>"));
+								context.getSource().sendError(Component.literal("§c[DRT] Unknown toggle '" + param + "'. Use /drt toggle <UI|tracking|CroOverlay|FancyMenu|essence>"));
 								return 0;
 							}
 							return Command.SINGLE_SUCCESS;
@@ -318,14 +318,37 @@ public final class DrtClient implements ClientModInitializer {
 					return true;
 				}
 			});
+			ScreenMouseEvents.allowMouseDrag(screen).register((s, event, horizontalAmount, verticalAmount) -> {
+				if (tracker != null && tracker.shouldBlockContainerMouseInput(client)) {
+					return false;
+				}
+				return true;
+			});
+			ScreenMouseEvents.allowMouseScroll(screen).register((s, mouseX, mouseY, horizontalAmount, verticalAmount) -> {
+				if (tracker != null && tracker.shouldBlockContainerMouseInput(client)) {
+					return false;
+				}
+				return true;
+			});
+			ScreenMouseEvents.allowMouseRelease(screen).register((s, event) -> {
+				if (tracker != null && tracker.shouldBlockContainerMouseInput(client)) {
+					return false;
+				}
+				return true;
+			});
 		});
 
 		DungeonRunTracker.LOGGER.info("[DRT] Client initialized");
 	}
 
+	/** Used by mixin to skip vanilla AbstractContainerScreen extract when Fancy Menu owns the UI. */
+	public static boolean shouldSuppressVanillaContainerPresentation(Minecraft client) {
+		return tracker != null && tracker.shouldSuppressVanillaContainerPresentation(client);
+	}
+
 	private static CompletableFuture<Suggestions> suggestToggleParams(SuggestionsBuilder builder) {
 		String remaining = builder.getRemaining().toLowerCase(Locale.ROOT);
-		for (String option : new String[] {"UI", "tracking", "CroOverlay", "essence"}) {
+		for (String option : new String[] {"UI", "tracking", "CroOverlay", "FancyMenu", "essence"}) {
 			if (option.toLowerCase(Locale.ROOT).startsWith(remaining)) {
 				builder.suggest(option);
 			}
@@ -335,11 +358,12 @@ public final class DrtClient implements ClientModInitializer {
 
 	private static void sendToggleUsage(Minecraft client) {
 		DrtConfig config = DrtConfigManager.getConfig();
-		sendSystemChat(client, Component.literal("§a[DRT] Usage: /drt toggle <UI|tracking|CroOverlay|essence>"));
+		sendSystemChat(client, Component.literal("§a[DRT] Usage: /drt toggle <UI|tracking|CroOverlay|FancyMenu|essence>"));
 		sendSystemChat(client, Component.literal(
 			"§7 UI: " + onOff(tracker.isEnabled())
 				+ "  tracking: " + onOff(tracker.isTrackingEnabled())
 				+ "  CroOverlay: " + onOff(tracker.isCroesusOverlayEnabled())
+				+ "  FancyMenu: " + onOff(tracker.isFancyMenuEnabled())
 				+ "  essence: " + onOff(config.essenceCountsTowardProfit)
 		));
 	}
@@ -360,6 +384,11 @@ public final class DrtClient implements ClientModInitializer {
 			case "crooverlay", "croesus", "cro", "croesusoverlay" -> {
 				boolean on = tracker.toggleCroesusOverlay();
 				sendToggleState(client, "CroOverlay", on);
+				yield true;
+			}
+			case "fancymenu", "fancy", "fancymenuenabled" -> {
+				boolean on = tracker.toggleFancyMenu();
+				sendToggleState(client, "FancyMenu", on);
 				yield true;
 			}
 			case "essence", "ess" -> {
