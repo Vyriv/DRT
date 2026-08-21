@@ -2704,12 +2704,40 @@ public final class DungeonRunTrackerFeature {
 		if (offer == null && pendingLootChestAssigned && toDisplayChestTitle(canonicalTitle).equalsIgnoreCase(pendingLootChestTitle)) {
 			offer = new DungeonChestOffer(pendingLootChestTitle, pendingLootCostBreakdown, 0L, pendingLootEntries);
 		}
-		if (offer == null || offer.lootEntries == null || offer.lootEntries.isEmpty()) return null;
+
+		// Live in-dungeon / direct Wood-Bedrock screens put loot in slots, not Croesus Contents lore.
+		// Without this fallback Fancy (and the side overlay) only work after visiting Croesus.
+		AbstractContainerMenu liveMenu = client.player == null ? null : client.player.containerMenu;
+		List<DungeonLootEntry> liveEntries = List.of();
+		if ((offer == null || offer.lootEntries == null || offer.lootEntries.isEmpty())
+				&& liveMenu != null
+				&& isCatacombsRewardChest(canonicalTitle)) {
+			liveEntries = collectLiveRewardChestLootEntries(liveMenu);
+		}
+		if ((offer == null || offer.lootEntries == null || offer.lootEntries.isEmpty()) && liveEntries.isEmpty()) {
+			return null;
+		}
 
 		// Paid-chest Cost lines name the key; use that over sticky Hot/K2 floor for open cost.
-		rememberKuudraKeyTierFromMenu(client.player == null ? null : client.player.containerMenu);
+		rememberKuudraKeyTierFromMenu(liveMenu);
 
-		ChestCostBreakdown breakdown = offer.costBreakdown == null ? new ChestCostBreakdown() : offer.costBreakdown.copy();
+		ChestCostBreakdown breakdown = offer != null && offer.costBreakdown != null
+				? offer.costBreakdown.copy()
+				: new ChestCostBreakdown();
+		if (breakdown.baseChestCostCoins <= 0L && liveMenu != null && isCatacombsRewardChest(canonicalTitle)) {
+			ChestCostBreakdown liveCost = parseLiveRewardChestCostBreakdown(liveMenu);
+			if (liveCost.baseChestCostCoins > 0L) breakdown.baseChestCostCoins = liveCost.baseChestCostCoins;
+			if (!breakdown.usedDungeonChestKey && liveCost.usedDungeonChestKey) {
+				breakdown.usedDungeonChestKey = true;
+			}
+			if (!breakdown.usedKismetFeather && liveCost.usedKismetFeather) {
+				breakdown.usedKismetFeather = true;
+				breakdown.kismetRerolledChestOpened = liveCost.kismetRerolledChestOpened;
+			}
+			if (!breakdown.usedWheelOfFate && liveCost.usedWheelOfFate) {
+				breakdown.usedWheelOfFate = true;
+			}
+		}
 		if (pendingLootChestAssigned && toDisplayChestTitle(canonicalTitle).equalsIgnoreCase(pendingLootChestTitle)) {
 			ChestCostBreakdown pending = pendingLootCostBreakdown == null ? new ChestCostBreakdown() : pendingLootCostBreakdown.copy();
 			if (breakdown.baseChestCostCoins <= 0L) breakdown.baseChestCostCoins = pending.baseChestCostCoins;
@@ -2738,11 +2766,85 @@ public final class DungeonRunTrackerFeature {
 		populateKnownModifierCosts(breakdown);
 		suppressDungeonChestKeyForKuudra(canonicalTitle, breakdown);
 		List<DungeonLootEntry> entries = new ArrayList<>();
-		for (DungeonLootEntry entry : offer.lootEntries) {
-			if (entry != null) entries.add(entry.copy());
+		if (offer != null && offer.lootEntries != null && !offer.lootEntries.isEmpty()) {
+			for (DungeonLootEntry entry : offer.lootEntries) {
+				if (entry != null) entries.add(entry.copy());
+			}
+		} else {
+			for (DungeonLootEntry entry : liveEntries) {
+				if (entry != null) entries.add(entry.copy());
+			}
 		}
-		long value = offerValueCoins(canonicalTitle, entries, offer.valueCoins);
+		long loreValue = offer == null ? 0L : offer.valueCoins;
+		long value = offerValueCoins(canonicalTitle, entries, loreValue);
 		return new OverlayChestData(toDisplayChestTitle(canonicalTitle), entries, breakdown, value, value - breakdown.totalCostCoins());
+	}
+
+	/** Loot stacks sitting in an open Wood-Bedrock reward chest GUI (live run or Croesus preview). */
+	private List<DungeonLootEntry> collectLiveRewardChestLootEntries(AbstractContainerMenu menu) {
+		if (menu == null) return List.of();
+		List<DungeonLootEntry> entries = new ArrayList<>();
+		for (int slotIndex = 0; slotIndex < menu.slots.size(); slotIndex++) {
+			Slot slot = menu.getSlot(slotIndex);
+			if (slot == null || !isServerOwnedSlot(slot)) continue;
+			ItemStack stack = slot.getItem();
+			if (stack.isEmpty() || stackIndicatesOpenRewardChest(stack) || isRewardChestUiStack(stack)) continue;
+			if (canonicalChestTitleFromStack(stack) != null) continue;
+
+			String rawName = cleanText(stack.getHoverName().getString());
+			String cleaned = normalize(rawName);
+			if (rawName.isBlank() || shouldIgnoreLootName(rawName) || looksLikeNonLootLine(cleaned)) continue;
+
+			ParsedLootName parsed = parseLootDisplayName(rawName);
+			if (parsed.name().isBlank() || shouldIgnoreLootName(parsed.name()) || looksLikeNonLootLine(normalize(parsed.name()))) {
+				continue;
+			}
+
+			int quantity = Math.max(Math.max(1, stack.getCount()), parsed.quantity());
+			String itemId = resolveItemId(parsed.name());
+			if (itemId.isEmpty() && isMasterStarLootName(parsed.name())) {
+				String resolved = resolveMasterStarItemId(
+					stripTrailingLootQuantity(sanitizeLootName(parsed.name())).toUpperCase(Locale.ROOT)
+				);
+				if (resolved != null) itemId = resolved;
+			}
+			if (itemId.isEmpty() && !looksReasonableLootName(parsed.name()) && !isMasterStarLootName(parsed.name())) {
+				continue;
+			}
+			entries.add(new DungeonLootEntry(parsed.name(), itemId, quantity));
+		}
+		return entries;
+	}
+
+	private ChestCostBreakdown parseLiveRewardChestCostBreakdown(AbstractContainerMenu menu) {
+		ChestCostBreakdown breakdown = new ChestCostBreakdown();
+		if (menu == null) return breakdown;
+
+		int openSlot = findOpenRewardChestSlotIndex(menu);
+		if (openSlot >= 0) {
+			ItemStack openStack = menu.getSlot(openSlot).getItem();
+			Long cost = parseChestCost(openStack);
+			if (cost != null) breakdown.baseChestCostCoins = cost;
+			applyModifierLoreHints(cleanLoreLines(openStack), breakdown);
+		}
+
+		if (breakdown.baseChestCostCoins <= 0L) {
+			for (int slotIndex = 0; slotIndex < menu.slots.size(); slotIndex++) {
+				Slot slot = menu.getSlot(slotIndex);
+				if (slot == null || !isServerOwnedSlot(slot)) continue;
+				ItemStack stack = slot.getItem();
+				if (stack.isEmpty()) continue;
+				Long cost = parseChestCost(stack);
+				if (cost != null) {
+					breakdown.baseChestCostCoins = cost;
+					applyModifierLoreHints(cleanLoreLines(stack), breakdown);
+					break;
+				}
+			}
+		}
+
+		populateKnownModifierCosts(breakdown);
+		return breakdown;
 	}
 
 	private long offerValueCoins(String canonicalTitle, List<DungeonLootEntry> entries, long loreValueCoins) {
