@@ -453,7 +453,8 @@ public final class DrtConfigManager {
 	}
 
 	private static boolean normalizeToggleFlags(DrtConfig loaded, JsonObject root) {
-		// Gson may skip field initializers; missing keys on existing configs must stay ON.
+		// Gson may skip field initializers; missing keys on existing configs must stay ON
+		// for tracking/croesus/essence. Fancy menu stays OFF unless explicitly enabled.
 		boolean migrated = false;
 		if (root == null || !root.has("trackingEnabled")) {
 			loaded.trackingEnabled = true;
@@ -461,6 +462,10 @@ public final class DrtConfigManager {
 		}
 		if (root == null || !root.has("croesusOverlayEnabled")) {
 			loaded.croesusOverlayEnabled = true;
+			migrated = true;
+		}
+		if (root == null || !root.has("fancyMenuEnabled")) {
+			loaded.fancyMenuEnabled = false;
 			migrated = true;
 		}
 		if (root == null || !root.has("essenceCountsTowardProfit")) {

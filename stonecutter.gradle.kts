@@ -59,7 +59,7 @@ stonecutter parameters {
 			// constants into one Items.STAINED_GLASS_PANE : ColorCollection<Item>.
 			// Lookbehind on "Items." (not word-boundary) because
 			// GRAY_STAINED_GLASS_PANE is itself a suffix of
-			// LIGHT_GRAY_STAINED_GLASS_PANE — a plain/word-bounded match would
+			// LIGHT_GRAY_STAINED_GLASS_PANE - a plain/word-bounded match would
 			// still fire inside the LIGHT_ constant.
 			replace(
 				"(?<=Items\\.)LIGHT_GRAY_STAINED_GLASS_PANE\\b" to "STAINED_GLASS_PANE.lightGray()",
@@ -72,6 +72,12 @@ stonecutter parameters {
 			replace(
 				"(?<=Items\\.)BLACK_STAINED_GLASS_PANE\\b" to "STAINED_GLASS_PANE.black()",
 				"STAINED_GLASS_PANE\\.black\\(\\)" to "BLACK_STAINED_GLASS_PANE"
+			)
+			// Colored terracotta became Items.DYED_TERRACOTTA : ColorCollection<Item>.
+			// Plain Items.TERRACOTTA (undyed) is unchanged.
+			replace(
+				"(?<=Items\\.)RED_TERRACOTTA\\b" to "DYED_TERRACOTTA.red()",
+				"DYED_TERRACOTTA\\.red\\(\\)" to "RED_TERRACOTTA"
 			)
 		}
 

@@ -71,10 +71,23 @@ tasks {
 
 	register<Copy>("buildAndCollect") {
 		group = "build"
-		description = "Builds this version and copies jars to dist."
+		description = "Builds this version and copies jars to dist (release) or dist/beta (beta, no sources)."
 		dependsOn("build")
-		from(named("jar"), named("sourcesJar"))
-		into(rootProject.layout.projectDirectory.dir("dist"))
+		val versionString = project.version.toString()
+		val betaBuild = versionString.contains("-beta", ignoreCase = true)
+		if (betaBuild) {
+			from(named("jar"))
+			into(rootProject.layout.projectDirectory.dir("dist/beta"))
+		} else {
+			from(named("jar"), named("sourcesJar"))
+			into(rootProject.layout.projectDirectory.dir("dist"))
+		}
+		exclude { details ->
+			val name = details.file.name
+			if (betaBuild && name.contains("-sources", ignoreCase = true)) return@exclude true
+			if (!betaBuild && name.contains("-beta", ignoreCase = true)) return@exclude true
+			false
+		}
 	}
 }
 

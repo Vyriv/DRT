@@ -4,6 +4,8 @@
 	"compatibilityLevel": "JAVA_21",
 	"client": [
 		"AbstractContainerScreenAccessor",
+		"AbstractContainerScreenFancyMenuMixin",
+		"ContainerScreenFancyMenuMixin",
 		"ClientPacketListenerRunDetectionMixin",
 		"EntityCosmeticsMixin",
 		"EntityRendererCosmeticsMixin",

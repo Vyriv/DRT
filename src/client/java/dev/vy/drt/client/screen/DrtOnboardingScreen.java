@@ -57,6 +57,7 @@ public final class DrtOnboardingScreen extends Screen {
 	private boolean forceSalvageEquipment;
 	private boolean coolForgedEnabled;
 	private int coolForgedLevel;
+	private boolean fancyMenuEnabled;
 	private Dropdown openDropdown = Dropdown.NONE;
 
 	private int ox;
@@ -94,6 +95,7 @@ public final class DrtOnboardingScreen extends Screen {
 		forceSalvageEquipment = config.forceSalvageEquipment;
 		coolForgedEnabled = config.coolForgedEnabled;
 		coolForgedLevel = clamp(config.coolForgedLevel, 1, 5);
+		fancyMenuEnabled = config.fancyMenuEnabled;
 	}
 
 	@Override
@@ -124,6 +126,8 @@ public final class DrtOnboardingScreen extends Screen {
 		drawPositionRow(g, mouseX, mouseY, y);
 		y += ROW_H + GAP;
 		drawPriceModeRow(g, mouseX, mouseY, y);
+		y += ROW_H + GAP;
+		drawFancyMenuRow(g, mouseX, mouseY, y);
 		y += ROW_H + GAP;
 
 		drawSection(g, "Kuudra", y + 2);
@@ -224,7 +228,7 @@ public final class DrtOnboardingScreen extends Screen {
 		winW = Math.max(PANEL_MIN_W, Math.min(PANEL_MAX_W, width - 24));
 		int kuudraRows = 4 + (kuudraPetEnabled ? 1 : 0);
 		int desiredH = 34
-			+ 13 + (ROW_H + GAP) * 2
+			+ 13 + (ROW_H + GAP) * 3
 			+ 16 + kuudraRows * (ROW_H + GAP) - GAP
 			+ 44;
 		winH = Math.max(252, Math.min(Math.max(1, height - 24), desiredH));
@@ -272,6 +276,13 @@ public final class DrtOnboardingScreen extends Screen {
 		priceDropdownY = y + 3;
 		drawDropdownButton(g, mouseX, mouseY, priceDropdownX, priceDropdownY, priceDropdownW, 16,
 			priceModeLabel(), openDropdown == Dropdown.PRICE, () -> toggleDropdown(Dropdown.PRICE), "Select Bazaar instant or order pricing");
+	}
+
+	private void drawFancyMenuRow(GuiGraphicsExtractor g, int mouseX, int mouseY, int y) {
+		drawRowBase(g, mouseX, mouseY, y);
+		g.text(font, "Fancy menu", ox + 18, y + 7, TEXT);
+		drawToggle(g, controlX(46), y + 3, fancyMenuEnabled, () -> fancyMenuEnabled = !fancyMenuEnabled,
+			"Replace dungeon reward chests with DRT's reward interface");
 	}
 
 	private void drawFactionRow(GuiGraphicsExtractor g, int mouseX, int mouseY, int y) {
@@ -528,6 +539,12 @@ public final class DrtOnboardingScreen extends Screen {
 	private void saveSettings(boolean complete) {
 		commitPetLevelInput();
 		boolean completed = complete || DrtConfigManager.getConfig().onboardingComplete;
+		DrtConfigManager.getConfig().fancyMenuEnabled = fancyMenuEnabled;
+		if (trackerFeature != null) {
+			trackerFeature.setFancyMenuEnabled(fancyMenuEnabled);
+		} else {
+			DrtConfigManager.save();
+		}
 		DrtConfigManager.updateOnboardingSettings(
 			completed,
 			kuudraFaction,
