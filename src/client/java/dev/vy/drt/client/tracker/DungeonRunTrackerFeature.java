@@ -1857,18 +1857,18 @@ public final class DungeonRunTrackerFeature {
 			int cursorX = contentLeft;
 			int remaining = presentCount;
 			int remainingW = availableBtnW - gaps;
-			if (hasOpen) {
-				openBtnW = remaining == 1 ? remainingW : baseW;
-				openBtnX = cursorX;
-				cursorX += openBtnW + FANCY_BTN_GAP;
-				remainingW -= openBtnW;
-				remaining--;
-			}
 			if (hasBack) {
 				backBtnW = remaining == 1 ? remainingW : baseW;
 				backBtnX = cursorX;
 				cursorX += backBtnW + FANCY_BTN_GAP;
 				remainingW -= backBtnW;
+				remaining--;
+			}
+			if (hasOpen) {
+				openBtnW = remaining == 1 ? remainingW : baseW;
+				openBtnX = cursorX;
+				cursorX += openBtnW + FANCY_BTN_GAP;
+				remainingW -= openBtnW;
 				remaining--;
 			}
 			if (hasReroll) {
