@@ -1198,8 +1198,6 @@ public final class DungeonRunTrackerFeature {
 			if (isEssenceEntry(entry)) essenceRows++;
 			else itemRows++;
 		}
-		int shownItemRows = Math.min(4, itemRows);
-		int hiddenRows = Math.max(0, itemRows - shownItemRows);
 		int screenW = client.getWindow().getGuiScaledWidth();
 		int screenH = client.getWindow().getGuiScaledHeight();
 		ScreenBounds bounds = currentContainerBounds(client);
@@ -1209,9 +1207,8 @@ public final class DungeonRunTrackerFeature {
 
 		int keyY = y
 				+ lineH + 8
-				+ shownItemRows * rowH
+				+ itemRows * rowH
 				+ essenceRows * rowH
-				+ (hiddenRows > 0 ? rowH : 0)
 				+ 8
 				+ lineH + 8
 				+ lineH;
@@ -1706,7 +1703,6 @@ public final class DungeonRunTrackerFeature {
 	private static final int FANCY_HEADER_GAP = 8;
 	private static final int FANCY_PANEL_W = 236;
 	private static final int FANCY_MIN_H = 112;
-	private static final int FANCY_MAX_H = 210;
 
 	private record FancyMenuLayout(
 		int panelX,
@@ -1718,7 +1714,6 @@ public final class DungeonRunTrackerFeature {
 		int headerY,
 		int rewardTop,
 		int shownRows,
-		int overflowCount,
 		int summaryTop,
 		int btnY,
 		int openBtnX,
@@ -1768,10 +1763,6 @@ public final class DungeonRunTrackerFeature {
 			drawFancyRewardRow(client, g, layout.contentLeft(), rowY, layout.contentRight(), entry);
 			fancyRewardHovers.add(new FancyRewardHover(layout.contentLeft(), rowY, layout.contentRight() - layout.contentLeft(), FANCY_ROW_H, entry));
 			rowY += FANCY_ROW_H;
-		}
-		if (layout.overflowCount() > 0) {
-			int moreY = rowY + Math.max(0, (FANCY_ROW_H - client.font.lineHeight) / 2);
-			drawOverlayText(client, g, "+" + layout.overflowCount() + " more", layout.contentLeft() + FANCY_ICON + FANCY_ICON_GAP, moreY, OVERLAY_MUTED, false);
 		}
 
 		drawFancySummary(client, g, layout, data);
@@ -1836,43 +1827,14 @@ public final class DungeonRunTrackerFeature {
 				+ buttonBlockH
 				+ FANCY_PAD;
 
-		int maxRewardArea = Math.max(FANCY_ROW_H, FANCY_MAX_H - fixedChrome);
-		int maxRowsBudget = Math.max(1, maxRewardArea / FANCY_ROW_H);
-
-		int shownRows;
-		int overflowCount;
-		if (rewardCount > maxRowsBudget) {
-			shownRows = Math.max(0, maxRowsBudget - 1);
-			overflowCount = rewardCount - shownRows;
-		} else {
-			shownRows = rewardCount;
-			overflowCount = 0;
-		}
-		int rewardRowsDrawn = shownRows + (overflowCount > 0 ? 1 : 0);
-		int rewardAreaH = Math.max(FANCY_ROW_H, rewardRowsDrawn * FANCY_ROW_H);
-
-		int panelH = fixedChrome + rewardAreaH;
-		panelH = Math.max(FANCY_MIN_H, Math.min(FANCY_MAX_H, panelH));
-
-		// If clamp shrank height, re-fit reward rows into remaining space.
-		int availableRewardH = panelH - fixedChrome;
-		maxRowsBudget = Math.max(1, availableRewardH / FANCY_ROW_H);
-		if (rewardCount > maxRowsBudget) {
-			shownRows = Math.max(0, maxRowsBudget - 1);
-			overflowCount = rewardCount - shownRows;
-		} else {
-			shownRows = rewardCount;
-			overflowCount = 0;
-		}
-		rewardRowsDrawn = shownRows + (overflowCount > 0 ? 1 : 0);
-		rewardAreaH = rewardRowsDrawn * FANCY_ROW_H;
-
-		// Content-sized height (may be below MAX after overflow fit).
-		panelH = Math.max(FANCY_MIN_H, Math.min(FANCY_MAX_H, fixedChrome + rewardAreaH));
+		int shownRows = Math.max(0, rewardCount);
+		int rewardAreaH = Math.max(FANCY_ROW_H, shownRows * FANCY_ROW_H);
+		int panelH = Math.max(FANCY_MIN_H, fixedChrome + rewardAreaH);
 
 		int panelW = FANCY_PANEL_W;
 		int panelX = bounds.left() + (bounds.width() - panelW) / 2;
-		int panelY = bounds.top() + Math.max(0, (bounds.height() - panelH) / 2);
+		int screenH = client.getWindow().getGuiScaledHeight();
+		int panelY = Math.max(4, Math.min(screenH - panelH - 4, bounds.top() + Math.max(0, (bounds.height() - panelH) / 2)));
 
 		int contentLeft = panelX + FANCY_PAD;
 		int contentRight = panelX + panelW - FANCY_PAD;
@@ -1919,7 +1881,7 @@ public final class DungeonRunTrackerFeature {
 			panelX, panelY, panelW, panelH,
 			contentLeft, contentRight,
 			headerY,
-			rewardTop, shownRows, overflowCount,
+			rewardTop, shownRows,
 			summaryTop,
 			btnY, openBtnX, openBtnW, backBtnX, backBtnW, rerollBtnX, rerollBtnW,
 			hasOpen, hasBack, hasReroll
@@ -2392,8 +2354,6 @@ public final class DungeonRunTrackerFeature {
 			if (isEssenceEntry(entry)) essenceEntries.add(entry);
 			else itemEntries.add(entry);
 		}
-		int itemRows = Math.min(4, itemEntries.size());
-		int hiddenRows = Math.max(0, itemEntries.size() - itemRows);
 		int screenW = client.getWindow().getGuiScaledWidth();
 		int screenH = client.getWindow().getGuiScaledHeight();
 		ScreenBounds bounds = currentContainerBounds(client);
@@ -2412,16 +2372,11 @@ public final class DungeonRunTrackerFeature {
 		drawOverlayText(client, g, data.chestTitle, x + 18, cursorY, chestTitleColor(data.chestTitle), true);
 
 		cursorY += lineH + 8;
-		for (int i = 0; i < itemRows; i++) {
-			cursorY = drawOverlayEntry(client, g, x, cursorY, itemEntries.get(i), rowH);
+		for (DungeonLootEntry entry : itemEntries) {
+			cursorY = drawOverlayEntry(client, g, x, cursorY, entry, rowH);
 		}
 		for (DungeonLootEntry essenceEntry : essenceEntries) {
 			cursorY = drawOverlayEntry(client, g, x, cursorY, essenceEntry, rowH);
-		}
-		if (hiddenRows > 0) {
-			String more = "+" + hiddenRows + " more";
-			drawOverlayText(client, g, more, x + 18, cursorY, OVERLAY_MUTED, false);
-			cursorY += rowH;
 		}
 
 		cursorY += 8;
