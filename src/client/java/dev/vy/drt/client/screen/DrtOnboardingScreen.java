@@ -15,6 +15,8 @@ import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.Util;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import org.lwjgl.glfw.GLFW;
 
 public final class DrtOnboardingScreen extends Screen {
@@ -58,6 +60,8 @@ public final class DrtOnboardingScreen extends Screen {
 	private boolean coolForgedEnabled;
 	private int coolForgedLevel;
 	private boolean fancyMenuEnabled;
+	private boolean croesusOverlayEnabled;
+	private boolean includeEssence;
 	private Dropdown openDropdown = Dropdown.NONE;
 
 	private int ox;
@@ -96,6 +100,8 @@ public final class DrtOnboardingScreen extends Screen {
 		coolForgedEnabled = config.coolForgedEnabled;
 		coolForgedLevel = clamp(config.coolForgedLevel, 1, 5);
 		fancyMenuEnabled = config.fancyMenuEnabled;
+		croesusOverlayEnabled = config.croesusOverlayEnabled;
+		includeEssence = config.essenceCountsTowardProfit;
 	}
 
 	@Override
@@ -128,6 +134,10 @@ public final class DrtOnboardingScreen extends Screen {
 		drawPriceModeRow(g, mouseX, mouseY, y);
 		y += ROW_H + GAP;
 		drawFancyMenuRow(g, mouseX, mouseY, y);
+		y += ROW_H + GAP;
+		drawCroesusOverlayRow(g, mouseX, mouseY, y);
+		y += ROW_H + GAP;
+		drawIncludeEssenceRow(g, mouseX, mouseY, y);
 		y += ROW_H + GAP;
 
 		drawSection(g, "Kuudra", y + 2);
@@ -228,7 +238,7 @@ public final class DrtOnboardingScreen extends Screen {
 		winW = Math.max(PANEL_MIN_W, Math.min(PANEL_MAX_W, width - 24));
 		int kuudraRows = 4 + (kuudraPetEnabled ? 1 : 0);
 		int desiredH = 34
-			+ 13 + (ROW_H + GAP) * 3
+			+ 13 + (ROW_H + GAP) * 5
 			+ 16 + kuudraRows * (ROW_H + GAP) - GAP
 			+ 44;
 		winH = Math.max(252, Math.min(Math.max(1, height - 24), desiredH));
@@ -283,6 +293,23 @@ public final class DrtOnboardingScreen extends Screen {
 		g.text(font, "Fancy menu", ox + 18, y + 7, TEXT);
 		drawToggle(g, controlX(46), y + 3, fancyMenuEnabled, () -> fancyMenuEnabled = !fancyMenuEnabled,
 			"Replace dungeon reward chests with DRT's reward interface");
+	}
+
+	private void drawCroesusOverlayRow(GuiGraphicsExtractor g, int mouseX, int mouseY, int y) {
+		drawRowBase(g, mouseX, mouseY, y);
+		g.text(font, "Croesus overlay", ox + 18, y + 7, TEXT);
+		// Tooltip-only hitbox for the row (button -2 is ignored by mouseClicked).
+		clickTargets.add(new ClickTarget(ox + 12, y, winW - 24, ROW_H, -2, () -> {}, null, this::drawCroesusOverlayTooltip));
+		drawToggle(g, controlX(46), y + 3, croesusOverlayEnabled, () -> croesusOverlayEnabled = !croesusOverlayEnabled,
+			null, this::drawCroesusOverlayTooltip);
+	}
+
+	private void drawIncludeEssenceRow(GuiGraphicsExtractor g, int mouseX, int mouseY, int y) {
+		drawRowBase(g, mouseX, mouseY, y);
+		g.text(font, "Inc essence", ox + 18, y + 7, TEXT);
+		String essenceTip = "Toggling this on/off will enable/disable including essence in the profit tracker";
+		clickTargets.add(new ClickTarget(ox + 12, y, winW - 24, ROW_H, -2, () -> {}, essenceTip, null));
+		drawToggle(g, controlX(46), y + 3, includeEssence, () -> includeEssence = !includeEssence, essenceTip);
 	}
 
 	private void drawFactionRow(GuiGraphicsExtractor g, int mouseX, int mouseY, int y) {
@@ -422,7 +449,11 @@ public final class DrtOnboardingScreen extends Screen {
 	}
 
 	private void drawToggle(GuiGraphicsExtractor g, int x, int y, boolean enabled, Runnable onClick, String tooltip) {
-		drawSmallButton(g, x, y, 46, 16, enabled ? "ON" : "OFF", false, onClick, tooltip, enabled ? GREEN : RED);
+		drawToggle(g, x, y, enabled, onClick, tooltip, null);
+	}
+
+	private void drawToggle(GuiGraphicsExtractor g, int x, int y, boolean enabled, Runnable onClick, String tooltip, TooltipDrawer customTooltip) {
+		drawSmallButton(g, x, y, 46, 16, enabled ? "ON" : "OFF", false, onClick, tooltip, enabled ? GREEN : RED, customTooltip);
 	}
 
 	private void drawDropdownButton(GuiGraphicsExtractor g, int mouseX, int mouseY, int x, int y, int w, int h, String label, boolean open, Runnable onClick, String tooltip) {
@@ -435,7 +466,7 @@ public final class DrtOnboardingScreen extends Screen {
 		int arrowBoxW = 18;
 		int arrowX = x + w - arrowBoxW + (arrowBoxW - font.width(arrow)) / 2;
 		g.text(font, arrow, arrowX, y + (h - font.lineHeight) / 2, MUTED);
-		clickTargets.add(new ClickTarget(x, y, w, h, 0, onClick, tooltip));
+		clickTargets.add(new ClickTarget(x, y, w, h, 0, onClick, tooltip, null));
 	}
 
 	private void drawDropdownOption(GuiGraphicsExtractor g, int mouseX, int mouseY, int x, int y, int w, String label, boolean active, Runnable onClick, String tooltip) {
@@ -443,7 +474,7 @@ public final class DrtOnboardingScreen extends Screen {
 		g.fill(x, y, x + w, y + DROPDOWN_ROW_H, active ? 0xFF23375B : hovered ? 0xFF222641 : 0xFF101322);
 		border(g, x, y, w, DROPDOWN_ROW_H, active ? BORDER_ACTIVE : BORDER);
 		g.text(font, label, x + 6, y + 5, active ? TEXT : MUTED);
-		clickTargets.add(new ClickTarget(x, y, w, DROPDOWN_ROW_H, 0, onClick, tooltip));
+		clickTargets.add(new ClickTarget(x, y, w, DROPDOWN_ROW_H, 0, onClick, tooltip, null));
 	}
 
 	private void toggleDropdown(Dropdown dropdown) {
@@ -461,18 +492,22 @@ public final class DrtOnboardingScreen extends Screen {
 		g.fill(x, y, x + w, y + h, bg);
 		border(g, x, y, w, h, border);
 		g.text(font, label, x + (w - font.width(label)) / 2, y + 4, active ? TEXT : MUTED);
-		clickTargets.add(new ClickTarget(x, y, w, h, 0, onClick, tooltip));
+		clickTargets.add(new ClickTarget(x, y, w, h, 0, onClick, tooltip, null));
 	}
 
 	private void drawSmallButton(GuiGraphicsExtractor g, int x, int y, int w, int h, String label, boolean disabled, Runnable onClick, String tooltip) {
-		drawSmallButton(g, x, y, w, h, label, disabled, onClick, tooltip, disabled ? DIM : TEXT);
+		drawSmallButton(g, x, y, w, h, label, disabled, onClick, tooltip, disabled ? DIM : TEXT, null);
 	}
 
 	private void drawSmallButton(GuiGraphicsExtractor g, int x, int y, int w, int h, String label, boolean disabled, Runnable onClick, String tooltip, int textColor) {
+		drawSmallButton(g, x, y, w, h, label, disabled, onClick, tooltip, textColor, null);
+	}
+
+	private void drawSmallButton(GuiGraphicsExtractor g, int x, int y, int w, int h, String label, boolean disabled, Runnable onClick, String tooltip, int textColor, TooltipDrawer customTooltip) {
 		g.fill(x, y, x + w, y + h, disabled ? 0xFF10121E : 0xFF171B30);
 		border(g, x, y, w, h, disabled ? 0xFF252842 : BORDER);
 		g.text(font, label, x + (w - font.width(label)) / 2, y + (h - font.lineHeight) / 2, textColor);
-		if (!disabled) clickTargets.add(new ClickTarget(x, y, w, h, 0, onClick, tooltip));
+		if (!disabled) clickTargets.add(new ClickTarget(x, y, w, h, 0, onClick, tooltip, customTooltip));
 	}
 
 	private void drawTextInput(GuiGraphicsExtractor g, int mouseX, int mouseY, int x, int y, int w, int h, String value, boolean focused, Runnable onClick, String tooltip) {
@@ -486,7 +521,7 @@ public final class DrtOnboardingScreen extends Screen {
 			int caretX = Math.min(x + w - 4, textX + font.width(safeValue) + 1);
 			g.fill(caretX, y + 3, caretX + 1, y + h - 3, TEXT);
 		}
-		clickTargets.add(new ClickTarget(x, y, w, h, 0, onClick, tooltip));
+		clickTargets.add(new ClickTarget(x, y, w, h, 0, onClick, tooltip, null));
 	}
 
 	private void drawStepper(GuiGraphicsExtractor g, int x, int y, int w, int h, String value, boolean disabled, Runnable dec, Runnable inc, String tooltip) {
@@ -502,8 +537,12 @@ public final class DrtOnboardingScreen extends Screen {
 	private void drawHoveredTooltip(GuiGraphicsExtractor g, int mouseX, int mouseY) {
 		for (int i = clickTargets.size() - 1; i >= 0; i--) {
 			ClickTarget target = clickTargets.get(i);
-			if (target.tooltip == null || target.tooltip.isBlank()) continue;
 			if (!contains(target.x, target.y, target.w, target.h, mouseX, mouseY)) continue;
+			if (target.customTooltip != null) {
+				target.customTooltip.draw(g, mouseX, mouseY);
+				return;
+			}
+			if (target.tooltip == null || target.tooltip.isBlank()) continue;
 			drawTooltip(g, target.tooltip, mouseX, mouseY);
 			return;
 		}
@@ -519,6 +558,74 @@ public final class DrtOnboardingScreen extends Screen {
 		g.fill(tx - pad, ty - pad, tx + tw + pad, ty + font.lineHeight + pad, 0xDD000000);
 		border(g, tx - pad, ty - pad, tw + pad * 2, font.lineHeight + pad * 2, BORDER_ACTIVE);
 		g.text(font, text, tx, ty, 0xFFCCCCFF, true);
+	}
+
+	private void drawCroesusOverlayTooltip(GuiGraphicsExtractor g, int mouseX, int mouseY) {
+		String line1 = "Shows chest profits beside Croesus";
+		String line2 = "and highlights the best chests to open.";
+		int pad = 5;
+		int previewW = 148;
+		int previewH = 118;
+		int gap = 4;
+		int textW = Math.max(font.width(line1), font.width(line2));
+		int boxW = Math.max(textW, previewW) + pad * 2;
+		int boxH = pad + font.lineHeight * 2 + 2 + gap + previewH + pad;
+		int tx = mouseX + 10;
+		int ty = mouseY - boxH - 6;
+		if (tx + boxW > width - 4) tx = Math.max(4, width - boxW - 4);
+		if (ty < 4) ty = mouseY + 14;
+		if (ty + boxH > height - 4) ty = Math.max(4, height - boxH - 4);
+
+		g.fill(tx, ty, tx + boxW, ty + boxH, 0xEE000000);
+		border(g, tx, ty, boxW, boxH, BORDER_ACTIVE);
+		g.text(font, line1, tx + pad, ty + pad, 0xFFCCCCFF, true);
+		g.text(font, line2, tx + pad, ty + pad + font.lineHeight + 1, 0xFFCCCCFF, true);
+
+		int previewX = tx + (boxW - previewW) / 2;
+		int previewY = ty + pad + font.lineHeight * 2 + 2 + gap;
+		drawCroesusOverlayPreview(g, previewX, previewY, previewW, previewH);
+	}
+
+	private void drawCroesusOverlayPreview(GuiGraphicsExtractor g, int x, int y, int w, int h) {
+		g.fill(x, y, x + w, y + h, 0xFF0B0C14);
+		border(g, x, y, w, h, 0xFF3A3F66);
+
+		int contentX = x + 6;
+		int valueRight = x + w - 6;
+		int rowY = y + 5;
+		g.text(font, "Chests", contentX, rowY, TEXT, true);
+		rowY += font.lineHeight + 3;
+
+		drawPreviewChestRow(g, contentX, rowY, valueRight, new ItemStack(Items.BEDROCK), "Bedrock", 0xFFFF74D4, "+12.4M", GREEN);
+		rowY += 13;
+		drawPreviewChestRow(g, contentX, rowY, valueRight, new ItemStack(Items.OBSIDIAN), "Obsidian", 0xFFAA74FF, "+8.1M", GREEN);
+		rowY += 13;
+		drawPreviewChestRow(g, contentX, rowY, valueRight, new ItemStack(Items.EMERALD_BLOCK), "Emerald", 0xFF55FF88, "+3.2M", GREEN);
+		rowY += 14;
+
+		g.text(font, "Open", contentX, rowY, TEXT, true);
+		rowY += font.lineHeight + 2;
+		drawPreviewOpenRow(g, contentX, rowY, valueRight, 1, ItemStack.EMPTY, new ItemStack(Items.BEDROCK), "Bedrock", 0xFFFF74D4, "+12.4M");
+		rowY += 13;
+		drawPreviewOpenRow(g, contentX, rowY, valueRight, 2, new ItemStack(Items.TRIPWIRE_HOOK), new ItemStack(Items.OBSIDIAN), "Obsidian", 0xFFAA74FF, "+7.0M");
+	}
+
+	private void drawPreviewChestRow(GuiGraphicsExtractor g, int x, int y, int valueRight, ItemStack icon, String name, int nameColor, String value, int valueColor) {
+		g.item(icon, x, y - 4);
+		g.text(font, name, x + 18, y, nameColor, true);
+		g.text(font, value, valueRight - font.width(value), y, valueColor, true);
+	}
+
+	private void drawPreviewOpenRow(GuiGraphicsExtractor g, int x, int y, int valueRight, int rank, ItemStack modifier, ItemStack icon, String name, int nameColor, String value) {
+		g.text(font, rank + ".", x, y, MUTED, true);
+		int iconX = x + 14;
+		if (!modifier.isEmpty()) {
+			g.item(modifier, iconX, y - 4);
+			iconX += 16;
+		}
+		g.item(icon, iconX, y - 4);
+		g.text(font, name, iconX + 18, y, nameColor, true);
+		g.text(font, value, valueRight - font.width(value), y, GREEN, true);
 	}
 
 	private String salvageSummary() {
@@ -540,8 +647,11 @@ public final class DrtOnboardingScreen extends Screen {
 		commitPetLevelInput();
 		boolean completed = complete || DrtConfigManager.getConfig().onboardingComplete;
 		DrtConfigManager.getConfig().fancyMenuEnabled = fancyMenuEnabled;
+		DrtConfigManager.getConfig().croesusOverlayEnabled = croesusOverlayEnabled;
+		DrtConfigManager.getConfig().essenceCountsTowardProfit = includeEssence;
 		if (trackerFeature != null) {
 			trackerFeature.setFancyMenuEnabled(fancyMenuEnabled);
+			trackerFeature.setCroesusOverlayEnabled(croesusOverlayEnabled);
 		} else {
 			DrtConfigManager.save();
 		}
@@ -639,6 +749,11 @@ public final class DrtOnboardingScreen extends Screen {
 
 	private enum Dropdown { NONE, FACTION, PRICE, PET_RARITY, SALVAGE }
 
-	private record ClickTarget(int x, int y, int w, int h, int button, Runnable action, String tooltip) {
+	@FunctionalInterface
+	private interface TooltipDrawer {
+		void draw(GuiGraphicsExtractor g, int mouseX, int mouseY);
+	}
+
+	private record ClickTarget(int x, int y, int w, int h, int button, Runnable action, String tooltip, TooltipDrawer customTooltip) {
 	}
 }
