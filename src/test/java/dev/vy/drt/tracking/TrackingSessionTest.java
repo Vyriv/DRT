@@ -276,4 +276,17 @@ class TrackingSessionTest {
 		assertEquals(DungeonFloor.M7, snapshot.chestFloors().get(chest.id()));
 		assertTrue(snapshot.invariants().contains(TrackerInvariant.COMMITTED_CHEST_IS_IMMUTABLE.name()));
 	}
+
+	@Test
+	void kuudraPaidChestDoesNotInheritDungeonOwnerFloor() {
+		FakeTrackerClock clock = new FakeTrackerClock(Instant.EPOCH);
+		DiagnosticRecorder diagnostics = new DiagnosticRecorder(clock);
+		TrackingSession session = new TrackingSession("test", "server", clock, diagnostics);
+		RunSession run = session.startRun(RunMode.DUNGEON, DungeonFloor.M7, DetectionSource.CONFIRMED_SCOREBOARD, EvidenceStrength.CONFIRMED_SCOREBOARD);
+		ChestSession chest = session.openChest(run.id(), "Paid Chest", 42, DetectionSource.CONFIRMED_GUI_COMPONENT);
+
+		assertFalse(chest.contextFloor().isKnown());
+		assertTrue(session.updateChestContextFloor(chest.id(), DungeonFloor.K3, EvidenceStrength.CONFIRMED_GUI_COMPONENT, DetectionSource.CONFIRMED_GUI_COMPONENT));
+		assertEquals(DungeonFloor.K3, chest.contextFloor().value());
+	}
 }

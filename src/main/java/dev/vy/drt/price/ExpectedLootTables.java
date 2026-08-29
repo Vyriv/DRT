@@ -78,6 +78,12 @@ public final class ExpectedLootTables {
 		return ChestTier.UNKNOWN;
 	}
 
+	/** True for Kuudra post-boss Free/Paid reward chest titles (not Catacombs tiers). */
+	public static boolean isKuudraRewardChestTitle(String chestTitle) {
+		ChestTier tier = parseChestTier(chestTitle);
+		return tier == ChestTier.FREE || tier == ChestTier.PAID;
+	}
+
 	private static int dungeonFloorIndex(DungeonFloor floor) {
 		if (floor == null || floor == DungeonFloor.UNKNOWN) return -1;
 		if (!floor.isCatacombs()) return -1;

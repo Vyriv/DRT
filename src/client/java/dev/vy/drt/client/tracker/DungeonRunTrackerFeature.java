@@ -6092,12 +6092,23 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private DungeonFloor authoritativePendingChestFloor() {
+		DungeonFloor pending = pendingLootFloor == null ? DungeonFloor.UNKNOWN : pendingLootFloor;
 		ChestSession chest = trackingSession.chest(pendingChestSessionId);
-		if (chest != null && chest.contextFloor().isKnown()) {
-			DungeonFloor floor = chest.contextFloor().value();
-			return floor == null ? DungeonFloor.UNKNOWN : floor;
+		if (chest == null || !chest.contextFloor().isKnown()) {
+			return pending;
 		}
-		return pendingLootFloor == null ? DungeonFloor.UNKNOWN : pendingLootFloor;
+		DungeonFloor chestFloor = chest.contextFloor().value();
+		if (chestFloor == null || chestFloor == DungeonFloor.UNKNOWN) {
+			return pending;
+		}
+		// Live Kuudra chest context beats a sticky Catacombs run floor copied onto the session.
+		if (pending.isKuudra() && !chestFloor.isKuudra()) {
+			return pending;
+		}
+		if (pending.isCatacombs() && chestFloor.isKuudra()) {
+			return pending;
+		}
+		return chestFloor;
 	}
 
 	private void updatePendingChestContextProjection(EvidenceStrength strength, DetectionSource source) {

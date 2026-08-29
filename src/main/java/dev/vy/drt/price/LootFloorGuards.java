@@ -83,12 +83,13 @@ public final class LootFloorGuards {
 		for (DungeonLootEntry entry : entries) {
 			if (entry != null) dropLines++;
 		}
-		// Reward chests normally yield several lines; fewer than 4 usually means a truncated capture.
-		if (dropLines > 0 && dropLines < 4) {
-			reasons.add("chest_drop_count_below_4 got=" + dropLines);
-		}
 
 		if (floor == null || floor == DungeonFloor.UNKNOWN) return reasons;
+		// Single-line captures are almost always truncated; 2-3 lines can be a complete chest.
+		if (dropLines == 1) {
+			reasons.add("chest_drop_count_suspicious got=1");
+		}
+
 		ExpectedLootTables.ChestTier chest = ExpectedLootTables.parseChestTier(chestTitle);
 		if (chest == ExpectedLootTables.ChestTier.UNKNOWN) return reasons;
 

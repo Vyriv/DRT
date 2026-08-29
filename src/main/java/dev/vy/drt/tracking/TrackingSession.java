@@ -1,6 +1,7 @@
 package dev.vy.drt.tracking;
 
 import dev.vy.drt.config.DungeonFloor;
+import dev.vy.drt.price.ExpectedLootTables;
 import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.LinkedHashMap;
@@ -260,10 +261,11 @@ public final class TrackingSession {
 		RunSession owner = runs.get(ownerRunId);
 		if (owner != null) {
 			owner.addChest(chest.id());
-			if (owner.mode().isKnown()) {
+			boolean kuudraRewardChest = ExpectedLootTables.isKuudraRewardChestTitle(chestTitle);
+			if (owner.mode().isKnown() && !kuudraRewardChest) {
 				chest.updateContextMode(owner.mode().value(), EvidenceStrength.AUTHORITATIVE_INTERNAL_IDENTITY, DetectionSource.AUTHORITATIVE_INTERNAL_IDENTITY, event, diagnostics);
 			}
-			if (owner.floor().isKnown()) {
+			if (owner.floor().isKnown() && !kuudraRewardChest) {
 				chest.updateContextFloor(owner.floor().value(), EvidenceStrength.AUTHORITATIVE_INTERNAL_IDENTITY, DetectionSource.AUTHORITATIVE_INTERNAL_IDENTITY, event, diagnostics);
 			}
 		}
