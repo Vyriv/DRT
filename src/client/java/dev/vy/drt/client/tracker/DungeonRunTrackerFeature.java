@@ -19,6 +19,8 @@ import dev.vy.drt.config.DungeonFloor;
 import dev.vy.drt.config.DungeonLootEntry;
 import dev.vy.drt.config.DungeonRunCompletionRecord;
 import dev.vy.drt.config.DungeonRunRecord;
+import dev.vy.drt.config.RunRecordCommitDecision;
+import dev.vy.drt.config.RunRecordDeduplicator;
 import dev.vy.drt.mixin.AbstractContainerScreenAccessor;
 import dev.vy.drt.price.DungeonProfitPricing;
 import dev.vy.drt.price.LootFloorGuards;
@@ -377,6 +379,7 @@ public final class DungeonRunTrackerFeature {
 
 	private long lootWindowUntilMillis;
 	private long lootCollectionUntilMillis;
+	private boolean pendingLootFlushInProgress;
 	private int pendingLootRunNumber;
 	private long pendingLootRunTimestamp;
 	private long chestSessionSequence;
@@ -697,10 +700,9 @@ public final class DungeonRunTrackerFeature {
 
 	public void extractChestOverlayRenderState(Minecraft client, GuiGraphicsExtractor guiGraphics, int mouseX, int mouseY) {
 		if (extractFancyRewardMenu(client, guiGraphics, mouseX, mouseY)) return;
-		if (croesusOverlayEnabled) {
-			if (extractRenderStateCroesusChestOverlay(client, guiGraphics, mouseX, mouseY)) return;
-			extractRenderStateCroesusMainMenuHighlights(client, guiGraphics);
-		}
+		if (!croesusOverlayEnabled) return;
+		if (extractRenderStateCroesusChestOverlay(client, guiGraphics, mouseX, mouseY)) return;
+		extractRenderStateCroesusMainMenuHighlights(client, guiGraphics);
 		extractRenderStateChestBreakdownOverlay(client, guiGraphics, mouseX, mouseY);
 	}
 
@@ -1186,6 +1188,7 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private boolean isHoveringChestKeyModifier(Minecraft client, int mouseX, int mouseY) {
+		if (!croesusOverlayEnabled) return false;
 		OverlayChestData data = currentOverlayChestData(client);
 		if (data == null || data.breakdown == null) return false;
 		if (!data.breakdown.usedDungeonChestKey && data.breakdown.dungeonChestKeyCostCoins <= 0L) return false;
@@ -1223,6 +1226,7 @@ public final class DungeonRunTrackerFeature {
 	private static final long AUTO_OPEN_REWARD_CHEST_RETRY_MS = 2000L;
 
 	private boolean handleChestTitleClick(Minecraft client, int mouseX, int mouseY) {
+		if (!croesusOverlayEnabled) return false;
 		OverlayChestData data = currentOverlayChestData(client);
 		if (data == null) return false;
 
@@ -5929,7 +5933,15 @@ public final class DungeonRunTrackerFeature {
 		}
 	}
 
-	private void recordDuplicateCommitDiagnostic(dev.vy.drt.config.RunRecordCommitDecision decision, DungeonRunRecord record) {
+	private void recordDuplicateCommitDiagnostic(RunRecordCommitDecision decision, DungeonRunRecord record) {
+		if (decision == RunRecordCommitDecision.KEEP_EXISTING) {
+			DungeonRunTracker.LOGGER.debug(
+				"[DRT] Suppressed duplicate chest commit; history already contains equivalent loot: chest={} fingerprint={}",
+				record == null ? "" : record.chestSessionId,
+				record == null ? "" : record.commitFingerprint
+			);
+			return;
+		}
 		DetectionEvent event = diagnostics.recordEvent(
 			DetectionEventType.PERSISTENCE,
 			DetectionSource.PERSISTENCE,
@@ -5941,7 +5953,7 @@ public final class DungeonRunTrackerFeature {
 		);
 		DiagnosticIncident incident = diagnostics.recordInvariantViolation(
 			TrackerInvariant.DUPLICATE_SIGNAL_CANNOT_CREATE_DUPLICATE_RECORD,
-			decision == dev.vy.drt.config.RunRecordCommitDecision.CONFLICT ? DiagnosticSeverity.ERROR : DiagnosticSeverity.WARN,
+			decision == RunRecordCommitDecision.CONFLICT ? DiagnosticSeverity.ERROR : DiagnosticSeverity.WARN,
 			event,
 			"duplicate-commit|" + (record == null ? "" : record.commitFingerprint),
 			"A duplicate or conflicting chest commit reached persistence. The persistence layer did not append a duplicate record.",
@@ -6130,12 +6142,23 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private void flushPendingLootRecord(boolean keepWindow) {
+		if (pendingLootFlushInProgress) return;
+
 		List<DungeonLootEntry> committedLootEntries = authoritativePendingLootEntries();
 		if (committedLootEntries.isEmpty()) {
 			if (keepWindow) resetPendingChestState();
 			else clearLootWindow();
 			return;
 		}
+		if (pendingChestSessionId != null && !pendingChestSessionId.isBlank()) {
+			ChestSession committedChest = trackingSession.chest(pendingChestSessionId);
+			if (committedChest != null && committedChest.state() == ChestState.COMMITTED) {
+				if (keepWindow) resetPendingChestState();
+				else clearLootWindow();
+				return;
+			}
+		}
+
 		boolean orphanCommit = canCommitUnassignedChestLoot();
 		if ((pendingLootRunNumber <= 0 || pendingLootOrphaned) && !orphanCommit) {
 			long now = System.currentTimeMillis();
@@ -6144,72 +6167,93 @@ public final class DungeonRunTrackerFeature {
 			else clearLootWindow();
 			return;
 		}
-		DrtConfig config = DrtConfigManager.getConfig();
-		for (DungeonLootEntry entry : committedLootEntries) {
-			warnLootGuardsForEntry(entry);
-		}
-		warnLootGuardsForChest(committedLootEntries);
-		long chestValueCoins = DungeonProfitPricing.calculateLootValue(committedLootEntries, config);
-		ChestCostBreakdown costBreakdown = authoritativePendingChestCost();
-		if (costBreakdown.usedKismetFeather) costBreakdown.kismetRerolledChestOpened = true;
-		DungeonFloor kuudraFloor = currentKuudraFloorForPricing();
-		if (!pendingLootOrphaned && pendingLootFloor == DungeonFloor.UNKNOWN && kuudraFloor != null && kuudraFloor.isKuudra()) {
-			pendingLootFloor = kuudraFloor;
-			updatePendingChestContextProjection(EvidenceStrength.RECENT_CONTEXT, DetectionSource.RECENT_CONTEXT);
-		}
-		String pendingChestTitle = pendingLootChestTitle == null ? "" : pendingLootChestTitle.toUpperCase(Locale.ROOT);
-		applyKuudraChestCostHint(pendingChestTitle, costBreakdown);
-		populateKnownModifierCosts(costBreakdown);
-		suppressDungeonChestKeyForKuudra(pendingChestTitle, costBreakdown);
-		long chestCostCoins = costBreakdown.totalCostCoins();
-		long chestProfitCoins = chestValueCoins - chestCostCoins;
-		DungeonRunTracker.LOGGER.info(
-			"[DRT][FLUSH] entries={} value={} cost={} base={} key={} kismet={} wheel={} kuudraKey={} profit={} floor={} chest='{}'",
-			committedLootEntries.size(),
-			chestValueCoins,
-			chestCostCoins,
-			costBreakdown.baseChestCostCoins,
-			costBreakdown.dungeonChestKeyCostCoins,
-			costBreakdown.kismetFeatherCostCoins,
-			costBreakdown.wheelOfFateCostCoins,
-			costBreakdown.kuudraKeyCostCoins,
-			chestProfitCoins,
-			authoritativePendingChestFloor(),
-			pendingLootChestTitle
-		);
-		DungeonFloor recordFloor = authoritativePendingChestFloor();
-		String floorName = recordFloor != DungeonFloor.UNKNOWN ? recordFloor.name() : "UNKNOWN";
-		String runGrade = orphanCommit ? "?" : pendingScoreGrade != null ? pendingScoreGrade : lastRecordedGrade;
-		DungeonRunRecord record = new DungeonRunRecord(
-			pendingLootRunTimestamp,
-			orphanCommit ? 0 : pendingLootRunNumber,
-			floorName,
-			runGrade,
-			pendingLootChestTitle,
-			chestCostCoins,
-			chestValueCoins,
-			chestProfitCoins,
-			committedLootEntries
-		);
-		record.runSessionId = orphanCommit ? "" : activeRunSessionId == null ? "" : activeRunSessionId;
-		record.chestSessionId = pendingChestSessionId == null ? "" : pendingChestSessionId;
-		record.commitFingerprint = buildLootCommitFingerprint(record);
-		record.applyCostBreakdown(costBreakdown);
-		var commitDecision = DrtConfigManager.addRunRecord(record);
-		if (commitDecision == dev.vy.drt.config.RunRecordCommitDecision.ADD_INCOMING
-			|| commitDecision == dev.vy.drt.config.RunRecordCommitDecision.REPLACE_EXISTING) {
-			trackingSession.updateChestCost(record.chestSessionId, costBreakdown);
-			trackingSession.commitChest(record.chestSessionId, record.commitFingerprint);
-			if (!orphanCommit) {
-				sessionTotalProfit += chestProfitCoins;
-				sessionFloorProfitTotals.merge(floorName, chestProfitCoins, Long::sum);
+
+		pendingLootFlushInProgress = true;
+		lootCollectionUntilMillis = 0L;
+		try {
+			DrtConfig config = DrtConfigManager.getConfig();
+			long chestValueCoins = DungeonProfitPricing.calculateLootValue(committedLootEntries, config);
+			ChestCostBreakdown costBreakdown = authoritativePendingChestCost();
+			if (costBreakdown.usedKismetFeather) costBreakdown.kismetRerolledChestOpened = true;
+			DungeonFloor kuudraFloor = currentKuudraFloorForPricing();
+			if (!pendingLootOrphaned && pendingLootFloor == DungeonFloor.UNKNOWN && kuudraFloor != null && kuudraFloor.isKuudra()) {
+				pendingLootFloor = kuudraFloor;
+				updatePendingChestContextProjection(EvidenceStrength.RECENT_CONTEXT, DetectionSource.RECENT_CONTEXT);
 			}
-		} else {
-			recordDuplicateCommitDiagnostic(commitDecision, record);
+			String pendingChestTitle = pendingLootChestTitle == null ? "" : pendingLootChestTitle.toUpperCase(Locale.ROOT);
+			applyKuudraChestCostHint(pendingChestTitle, costBreakdown);
+			populateKnownModifierCosts(costBreakdown);
+			suppressDungeonChestKeyForKuudra(pendingChestTitle, costBreakdown);
+			long chestCostCoins = costBreakdown.totalCostCoins();
+			long chestProfitCoins = chestValueCoins - chestCostCoins;
+			DungeonFloor recordFloor = authoritativePendingChestFloor();
+			String floorName = recordFloor != DungeonFloor.UNKNOWN ? recordFloor.name() : "UNKNOWN";
+			String runGrade = orphanCommit ? "?" : pendingScoreGrade != null ? pendingScoreGrade : lastRecordedGrade;
+			DungeonRunRecord record = new DungeonRunRecord(
+				pendingLootRunTimestamp,
+				orphanCommit ? 0 : pendingLootRunNumber,
+				floorName,
+				runGrade,
+				pendingLootChestTitle,
+				chestCostCoins,
+				chestValueCoins,
+				chestProfitCoins,
+				committedLootEntries
+			);
+			record.runSessionId = orphanCommit ? "" : activeRunSessionId == null ? "" : activeRunSessionId;
+			record.chestSessionId = pendingChestSessionId == null ? "" : pendingChestSessionId;
+			record.commitFingerprint = buildLootCommitFingerprint(record);
+			record.applyCostBreakdown(costBreakdown);
+
+			RunRecordDeduplicator.DuplicateDecision duplicatePreview = RunRecordDeduplicator.decide(config.runHistory, record);
+			if (duplicatePreview.action() == RunRecordCommitDecision.KEEP_EXISTING) {
+				trackingSession.commitChest(record.chestSessionId, record.commitFingerprint);
+				recordDuplicateCommitDiagnostic(RunRecordCommitDecision.KEEP_EXISTING, record);
+				if (keepWindow) resetPendingChestState();
+				else clearLootWindow();
+				return;
+			}
+
+			for (DungeonLootEntry entry : committedLootEntries) {
+				warnLootGuardsForEntry(entry);
+			}
+			warnLootGuardsForChest(committedLootEntries);
+			DungeonRunTracker.LOGGER.info(
+				"[DRT][FLUSH] entries={} value={} cost={} base={} key={} kismet={} wheel={} kuudraKey={} profit={} floor={} chest='{}'",
+				committedLootEntries.size(),
+				chestValueCoins,
+				chestCostCoins,
+				costBreakdown.baseChestCostCoins,
+				costBreakdown.dungeonChestKeyCostCoins,
+				costBreakdown.kismetFeatherCostCoins,
+				costBreakdown.wheelOfFateCostCoins,
+				costBreakdown.kuudraKeyCostCoins,
+				chestProfitCoins,
+				recordFloor,
+				pendingLootChestTitle
+			);
+
+			RunRecordCommitDecision commitDecision = DrtConfigManager.addRunRecord(record);
+			if (commitDecision == RunRecordCommitDecision.ADD_INCOMING
+				|| commitDecision == RunRecordCommitDecision.REPLACE_EXISTING) {
+				trackingSession.updateChestCost(record.chestSessionId, costBreakdown);
+				trackingSession.commitChest(record.chestSessionId, record.commitFingerprint);
+				if (!orphanCommit) {
+					sessionTotalProfit += chestProfitCoins;
+					sessionFloorProfitTotals.merge(floorName, chestProfitCoins, Long::sum);
+				}
+			} else if (commitDecision == RunRecordCommitDecision.KEEP_EXISTING) {
+				trackingSession.commitChest(record.chestSessionId, record.commitFingerprint);
+				recordDuplicateCommitDiagnostic(commitDecision, record);
+			} else {
+				recordDuplicateCommitDiagnostic(commitDecision, record);
+			}
+			resyncLifetimeFromConfig();
+			if (keepWindow) resetPendingChestState();
+			else clearLootWindow();
+		} finally {
+			pendingLootFlushInProgress = false;
 		}
-		resyncLifetimeFromConfig();
-		if (keepWindow) resetPendingChestState();
-		else clearLootWindow();
 	}
 
 	private boolean canCommitUnassignedChestLoot() {

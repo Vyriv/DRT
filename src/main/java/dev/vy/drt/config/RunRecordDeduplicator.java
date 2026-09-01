@@ -43,12 +43,22 @@ public final class RunRecordDeduplicator {
 		if (left == null || right == null) return DuplicateKind.NONE;
 		if (!sameStableId(left.commitFingerprint, right.commitFingerprint)
 			&& !sameStableId(left.chestSessionId, right.chestSessionId)
+			&& !sameRunChestLootDuplicate(left, right)
 			&& !sameLegacyShape(left, right)) {
 			return DuplicateKind.NONE;
 		}
 		if (sameStableId(left.commitFingerprint, right.commitFingerprint)) return DuplicateKind.COMMIT_FINGERPRINT;
 		if (sameStableId(left.chestSessionId, right.chestSessionId)) return DuplicateKind.CHEST_SESSION_ID;
+		if (sameRunChestLootDuplicate(left, right)) return DuplicateKind.SAME_RUN_CHEST_LOOT;
 		return DuplicateKind.LEGACY_SHAPE;
+	}
+
+	private static boolean sameRunChestLootDuplicate(DungeonRunRecord left, DungeonRunRecord right) {
+		if (!sameText(left.floor, right.floor)) return false;
+		if (!sameText(left.chestTitle, right.chestTitle)) return false;
+		if (!sameLootCounts(left, right)) return false;
+		if (sameStableId(left.runSessionId, right.runSessionId)) return true;
+		return left.runNumber > 0 && left.runNumber == right.runNumber;
 	}
 
 	private static boolean sameLegacyShape(DungeonRunRecord left, DungeonRunRecord right) {
@@ -61,6 +71,7 @@ public final class RunRecordDeduplicator {
 
 	private static Preference prefer(DungeonRunRecord existing, DungeonRunRecord incoming, DuplicateKind duplicateKind) {
 		if (recordsEquivalent(existing, incoming)) return Preference.EXISTING;
+		if (duplicateKind == DuplicateKind.SAME_RUN_CHEST_LOOT) return Preference.EXISTING;
 		int existingScore = completenessScore(existing);
 		int incomingScore = completenessScore(incoming);
 		if (duplicateKind == DuplicateKind.CHEST_SESSION_ID
@@ -190,6 +201,7 @@ public final class RunRecordDeduplicator {
 		NONE("none"),
 		COMMIT_FINGERPRINT("commit_fingerprint"),
 		CHEST_SESSION_ID("chest_session_id"),
+		SAME_RUN_CHEST_LOOT("same_run_chest_loot"),
 		LEGACY_SHAPE("legacy_shape");
 
 		private final String reason;
