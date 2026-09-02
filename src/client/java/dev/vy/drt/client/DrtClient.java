@@ -29,6 +29,7 @@ import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
 import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;
 import net.fabricmc.fabric.api.client.screen.v1.ScreenMouseEvents;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.client.input.MouseButtonEvent;
@@ -344,6 +345,16 @@ public final class DrtClient implements ClientModInitializer {
 	/** Used by mixin to skip vanilla AbstractContainerScreen extract when Fancy Menu owns the UI. */
 	public static boolean shouldSuppressVanillaContainerPresentation(Minecraft client) {
 		return tracker != null && tracker.shouldSuppressVanillaContainerPresentation(client);
+	}
+
+	/** Slot borders drawn during container extract, under vanilla item tooltips. */
+	public static void extractCroesusSlotHighlights(
+		Minecraft client,
+		GuiGraphicsExtractor graphics,
+		int mouseX,
+		int mouseY
+	) {
+		if (tracker != null) tracker.extractCroesusSlotHighlights(client, graphics, mouseX, mouseY);
 	}
 
 	private static CompletableFuture<Suggestions> suggestToggleParams(SuggestionsBuilder builder) {

@@ -48,4 +48,16 @@ class LootFloorGuardsTest {
 		List<DungeonLootEntry> entries = List.of(new DungeonLootEntry("UNDEAD ESSENCE", "ESSENCE_UNDEAD", 50));
 		assertTrue(LootFloorGuards.evaluateChest(DungeonFloor.M7, "Bedrock Chest", entries).contains("chest_drop_count_suspicious got=1"));
 	}
+
+	@Test
+	void kuudraFloorWithCatacombsChestSkipsGuards() {
+		DungeonLootEntry skull = new DungeonLootEntry("Master Skull - Tier 3", "MASTER_SKULL_TIER_3", 1);
+		assertTrue(LootFloorGuards.evaluate(DungeonFloor.K3, "Obsidian Chest", skull).isEmpty());
+
+		DungeonLootEntry star = new DungeonLootEntry("Third Master Star", "THIRD_MASTER_STAR", 1);
+		assertTrue(LootFloorGuards.evaluate(DungeonFloor.K3, "Bedrock Chest", star).isEmpty());
+
+		DungeonLootEntry essence = new DungeonLootEntry("UNDEAD ESSENCE", "ESSENCE_UNDEAD", 22);
+		assertTrue(LootFloorGuards.evaluate(DungeonFloor.K3, "Wood Chest", essence).isEmpty());
+	}
 }

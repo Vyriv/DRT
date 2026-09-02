@@ -561,8 +561,8 @@ public final class DrtOnboardingScreen extends Screen {
 	}
 
 	private void drawCroesusOverlayTooltip(GuiGraphicsExtractor g, int mouseX, int mouseY) {
-		String line1 = "Shows chest profits beside Croesus";
-		String line2 = "and highlights the best chests to open.";
+		String line1 = "Highlights Croesus runs by opened chest count.";
+		String line2 = "Green = none, yellow = one, grey = two+.";
 		int pad = 5;
 		int previewW = 148;
 		int previewH = 118;

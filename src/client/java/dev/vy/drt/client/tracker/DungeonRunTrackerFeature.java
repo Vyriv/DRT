@@ -122,6 +122,9 @@ public final class DungeonRunTrackerFeature {
 	private static final Pattern SCORE_GRADE_PATTERN = Pattern.compile("\\bSCORE\\b.*(?:\\((S\\+|S|A|B|C|D)\\)|(?:^|\\s)(S\\+|S|A|B|C|D)\\s*$)", Pattern.CASE_INSENSITIVE);
 	/** Hypixel paginated Croesus title, e.g. "(1/3) CROESUS". */
 	private static final Pattern CROESUS_PAGED_TITLE_PATTERN = Pattern.compile("^\\(\\d+/\\d+\\)\\s+CROESUS$");
+	/** Croesus run lore: "Opened Chest: Wood" or "Opened Chests: 1". */
+	private static final Pattern OPENED_CHEST_LINE_PATTERN = Pattern.compile("^OPENED CHESTS?\\s*:\\s*(.*)$");
+	private static final Pattern OPENED_CHEST_COUNT_PATTERN = Pattern.compile("^(\\d+)(?:\\s*/\\s*\\d+)?$");
 	private static final Set<String> REWARD_CHEST_TITLES = Set.of(
 			"WOOD CHEST", "GOLD CHEST", "DIAMOND CHEST", "EMERALD CHEST", "OBSIDIAN CHEST", "BEDROCK CHEST",
 			"FREE CHEST", "PAID CHEST"
@@ -200,7 +203,21 @@ public final class DungeonRunTrackerFeature {
 	private record PacketCapturedMessage(String text, long atMillis) {}
 	private record OverlayChestData(String chestTitle, List<DungeonLootEntry> entries, ChestCostBreakdown breakdown, long valueCoins, long profitCoins) {}
 	private record CroesusChestRow(String canonicalTitle, String displayName, ItemStack icon, int menuSlotIndex, int slotX, int slotY, long normalProfitCoins, long keyProfitCoins, boolean alreadyOpened, boolean kismetRerolled) {}
-	private record CroesusRunSlot(int menuSlotIndex, int slotX, int slotY) {}
+	private enum CroesusMainMenuHighlightState {
+		UNOPENED,
+		ONE_OPENED,
+		TWO_OR_MORE
+	}
+
+	private record CroesusMainMenuRunSlot(
+		int menuSlotIndex,
+		int slotX,
+		int slotY,
+		CroesusMainMenuHighlightState highlightState,
+		boolean kismetUsed
+	) {}
+
+	private record CroesusMainMenuRunState(int openedChestCount, boolean hasUnopenedChests, boolean kismetUsed) {}
 	private record ScreenBounds(int left, int top, int width, int height) {
 		int right() { return left + width; }
 	}
@@ -421,6 +438,8 @@ public final class DungeonRunTrackerFeature {
 	private String lastOpenedRewardChestTitleForChat = "";
 	/** Set while viewing a Croesus preview with an Open button; consumed on the subsequent open. */
 	private String armedPreviewRewardChestTitle = "";
+	/** Chest tiers the player actually opened a preview/GUI for this Croesus visit. */
+	private final Set<String> viewedCroesusChestTitles = new HashSet<>();
 
 	private boolean sessionActive;
 	private long sessionStartMillis;
@@ -702,8 +721,18 @@ public final class DungeonRunTrackerFeature {
 		if (extractFancyRewardMenu(client, guiGraphics, mouseX, mouseY)) return;
 		if (!croesusOverlayEnabled) return;
 		if (extractRenderStateCroesusChestOverlay(client, guiGraphics, mouseX, mouseY)) return;
-		extractRenderStateCroesusMainMenuHighlights(client, guiGraphics);
 		extractRenderStateChestBreakdownOverlay(client, guiGraphics, mouseX, mouseY);
+	}
+
+	/**
+	 * Croesus slot borders. Called from ACS extractContents so Hypixel tooltips stay on top.
+	 * afterExtract is too late and covers lore, which is why hover-skip used to flash.
+	 */
+	public void extractCroesusSlotHighlights(Minecraft client, GuiGraphicsExtractor guiGraphics, int mouseX, int mouseY) {
+		if (!croesusOverlayEnabled || client == null) return;
+		if (isFancyRewardMenuActive(client)) return;
+		extractRenderStateCroesusChestSlotHighlights(client, guiGraphics);
+		extractRenderStateCroesusMainMenuHighlights(client, guiGraphics);
 	}
 
 	private int seg(Minecraft client, GuiGraphicsExtractor g, String text, int x, int y, int color) {
@@ -2104,7 +2133,6 @@ public final class DungeonRunTrackerFeature {
 		CroesusChestRow hoverRow = hoveredChestSlot(rows, mouseX, mouseY);
 		CroesusChestRow tooltipRow = null;
 		boolean itemTooltipActive = hoverRow != null;
-		int hoverColor = hoverRow == null ? 0 : chestTitleColor(hoverRow.displayName);
 
 		if (!itemTooltipActive) {
 			drawOverlayText(client, g, "Chests", x, cursorY, OVERLAY_TEXT, true);
@@ -2113,7 +2141,6 @@ public final class DungeonRunTrackerFeature {
 				if (pointInRect(mouseX, mouseY, x, cursorY - 4, CHEST_OVERLAY_W, rowH)) {
 					hoverRow = row;
 					tooltipRow = row;
-					hoverColor = chestTitleColor(row.displayName);
 				}
 				drawCroesusChestRow(client, g, row, x, cursorY, row.normalProfitCoins, false);
 				cursorY += rowH;
@@ -2126,7 +2153,6 @@ public final class DungeonRunTrackerFeature {
 				if (pointInRect(mouseX, mouseY, x, cursorY - 4, CHEST_OVERLAY_W, rowH)) {
 					hoverRow = bestNormal;
 					tooltipRow = bestNormal;
-					hoverColor = OVERLAY_PROFIT;
 				}
 				drawCroesusOpenRow(client, g, bestNormal, x, cursorY, 1, bestNormal.normalProfitCoins, new ItemStack(Items.AIR));
 				cursorY += rowH;
@@ -2135,15 +2161,11 @@ public final class DungeonRunTrackerFeature {
 				if (pointInRect(mouseX, mouseY, x, cursorY - 4, CHEST_OVERLAY_W, rowH)) {
 					hoverRow = bestKey;
 					tooltipRow = bestKey;
-					hoverColor = 0xFFFFDD55;
 				}
 				drawCroesusOpenRow(client, g, bestKey, x, cursorY, 2, bestKey.keyProfitCoins, new ItemStack(Items.TRIPWIRE_HOOK));
 			}
 		}
 
-		if (bestNormal != null) drawSlotHighlight(g, bestNormal, OVERLAY_PROFIT, false);
-		if (bestKey != null) drawSlotHighlight(g, bestKey, 0xFFFFDD55, false);
-		if (hoverRow != null) drawSlotHighlight(g, hoverRow, hoverColor, true);
 		if (tooltipRow != null) {
 			drawTooltip(client, g, List.of(
 					"Click to open " + tooltipRow.displayName + " chest",
@@ -2153,9 +2175,23 @@ public final class DungeonRunTrackerFeature {
 		return true;
 	}
 
+	private void extractRenderStateCroesusChestSlotHighlights(Minecraft client, GuiGraphicsExtractor g) {
+		if (!(client.screen instanceof AbstractContainerScreen<?> screen)) return;
+		if (!isCroesusChestListTitle(normalize(screen.getTitle().getString()))) return;
+		List<CroesusChestRow> rows = currentCroesusChestRows(client);
+		if (rows.isEmpty()) return;
+		CroesusChestRow bestNormal = bestNormalChest(rows);
+		CroesusChestRow bestKey = bestKeyChest(rows, bestNormal);
+		if (bestNormal != null) drawSlotHighlight(g, bestNormal, OVERLAY_PROFIT, false);
+		if (bestKey != null) drawSlotHighlight(g, bestKey, 0xFFFFDD55, false);
+	}
+
 	private void extractRenderStateCroesusMainMenuHighlights(Minecraft client, GuiGraphicsExtractor g) {
-		for (CroesusRunSlot slot : currentCroesusMainMenuUnopenedSlots(client)) {
-			drawSlotHighlight(g, slot.slotX, slot.slotY, OVERLAY_PROFIT, false);
+		for (CroesusMainMenuRunSlot slot : currentCroesusMainMenuRunSlots(client)) {
+			drawCroesusMainMenuSlotHighlight(g, slot.slotX, slot.slotY, slot.highlightState);
+			if (slot.kismetUsed) {
+				drawCroesusKismetBadge(g, slot.slotX, slot.slotY);
+			}
 		}
 	}
 
@@ -2297,6 +2333,7 @@ public final class DungeonRunTrackerFeature {
 		CroesusChestRow best = null;
 		for (CroesusChestRow row : rows) {
 			if (row.alreadyOpened) continue;
+			if (!viewedCroesusChestTitles.contains(row.canonicalTitle)) continue;
 			if (bestNormal != null && row.canonicalTitle.equals(bestNormal.canonicalTitle)) continue;
 			if (row.keyProfitCoins <= 0L || row.keyProfitCoins == Long.MIN_VALUE) continue;
 			if (best == null || row.keyProfitCoins > best.keyProfitCoins) best = row;
@@ -2498,7 +2535,7 @@ public final class DungeonRunTrackerFeature {
 		return fallback;
 	}
 
-	private List<CroesusRunSlot> currentCroesusMainMenuUnopenedSlots(Minecraft client) {
+	private List<CroesusMainMenuRunSlot> currentCroesusMainMenuRunSlots(Minecraft client) {
 		if (!(client.screen instanceof AbstractContainerScreen<?> screen) || client.player == null) return List.of();
 		String normalizedTitle = normalize(screen.getTitle().getString());
 		if (!isCroesusMainMenuTitle(normalizedTitle)) return List.of();
@@ -2506,17 +2543,201 @@ public final class DungeonRunTrackerFeature {
 		AbstractContainerMenu menu = client.player.containerMenu;
 		if (menu == null) return List.of();
 		ScreenBounds bounds = currentContainerBounds(client);
-		List<CroesusRunSlot> slots = new ArrayList<>();
+		List<CroesusMainMenuRunSlot> slots = new ArrayList<>();
 		for (int slotIndex = 0; slotIndex < menu.slots.size(); slotIndex++) {
 			Slot slot = menu.slots.get(slotIndex);
 			// Upper Croesus grid only: never treat player inventory / backpack as runs.
 			if (!isServerOwnedSlot(slot)) continue;
 			ItemStack stack = slot.getItem();
 			if (stack.isEmpty() || isCroesusMainMenuChromeStack(stack)) continue;
-			if (!croesusRunHasUnopenedChest(stack)) continue;
-			slots.add(new CroesusRunSlot(slotIndex, bounds.left + slot.x, bounds.top + slot.y));
+			CroesusMainMenuRunState runState = parseCroesusMainMenuRunState(stack);
+			if (!runState.hasUnopenedChests()) continue;
+			slots.add(new CroesusMainMenuRunSlot(
+				slotIndex,
+				bounds.left + slot.x,
+				bounds.top + slot.y,
+				mainMenuHighlightStateForOpenedCount(runState.openedChestCount()),
+				runState.kismetUsed()
+			));
 		}
 		return slots;
+	}
+
+	private CroesusMainMenuRunState parseCroesusMainMenuRunState(ItemStack stack) {
+		if (stack == null || stack.isEmpty()) {
+			return new CroesusMainMenuRunState(0, false, false);
+		}
+		List<String> lore = cleanLoreLines(stack);
+		if (lore.isEmpty()) {
+			return new CroesusMainMenuRunState(0, false, false);
+		}
+
+		boolean fullyClaimed = false;
+		boolean neverOpened = false;
+		boolean partiallyOpened = false;
+		boolean claimHint = false;
+		boolean dungeonRunSignal = false;
+		int openedChestCount = 0;
+		boolean kismetUsed = false;
+
+		for (String line : lore) {
+			String normalized = normalize(line);
+			if (normalized.isEmpty()) continue;
+
+			if (normalized.contains("NO MORE CHESTS TO OPEN")
+					|| normalized.contains("NO CHESTS LEFT TO OPEN")
+					|| normalized.contains("ALL CHESTS OPENED")) {
+				fullyClaimed = true;
+				continue;
+			}
+			if (normalized.contains("NO CHESTS OPENED YET")) {
+				neverOpened = true;
+				continue;
+			}
+			int openedOnLine = openedChestCountFromLoreLine(normalized);
+			if (openedOnLine > 0) {
+				partiallyOpened = true;
+				openedChestCount += openedOnLine;
+				continue;
+			}
+			if (lineClearlyIndicatesUnopenedChest(normalized)) {
+				claimHint = true;
+				continue;
+			}
+			if (normalized.contains("CLICK TO VIEW CHEST")
+					|| normalized.contains("CLICK TO VIEW")
+					|| normalized.regionMatches(true, 0, "CLICK TO OPEN", 0, 13)) {
+				claimHint = true;
+				continue;
+			}
+			if (lineIndicatesKismetUsed(normalized) || lineIndicatesKismetRerollState(normalized)) {
+				kismetUsed = true;
+				continue;
+			}
+			if (normalized.contains("CHESTS EXPIRE")
+					|| normalized.contains("THE CATACOMBS")
+					|| normalized.contains("MASTER MODE")
+					|| normalized.startsWith("FLOOR ")
+					|| normalized.startsWith("TIER:")
+					|| normalized.contains("TIER:")
+					|| normalized.contains(" KUUDRA")
+					|| normalized.endsWith(" TIER")
+					|| normalized.endsWith(" TIER!")) {
+				dungeonRunSignal = true;
+			}
+		}
+
+		String name = normalize(cleanText(stack.getHoverName().getString()));
+		if (lineIndicatesKismetUsed(name) || lineIndicatesKismetRerollState(name)) {
+			kismetUsed = true;
+		}
+
+		if (neverOpened) {
+			openedChestCount = 0;
+			partiallyOpened = false;
+		}
+
+		boolean hasUnopenedChests = false;
+		if (!fullyClaimed) {
+			hasUnopenedChests = neverOpened || partiallyOpened || claimHint
+				|| (dungeonRunSignal && (stack.is(Items.PLAYER_HEAD) || stack.is(Items.CHEST)));
+		}
+		return new CroesusMainMenuRunState(openedChestCount, hasUnopenedChests, kismetUsed);
+	}
+
+	private int openedChestCountFromLoreLine(String normalized) {
+		if (normalized == null || normalized.isEmpty()) return 0;
+		Matcher line = OPENED_CHEST_LINE_PATTERN.matcher(normalized);
+		if (!line.matches()) return 0;
+		String rest = line.group(1) == null ? "" : line.group(1).trim();
+		if (rest.isEmpty()
+				|| rest.equals("-")
+				|| rest.equals("?")
+				|| rest.equals("NONE")
+				|| rest.equals("N/A")
+				|| rest.equals("N A")) {
+			return 0;
+		}
+		int named = 0;
+		for (String part : rest.split("[,/&+]")) {
+			String token = part.trim();
+			if (token.isEmpty()) continue;
+			if (isOpenedChestNameToken(token)) named++;
+		}
+		if (named > 0) return named;
+		Matcher count = OPENED_CHEST_COUNT_PATTERN.matcher(rest);
+		if (!count.matches()) return 0;
+		try {
+			return Math.max(0, Integer.parseInt(count.group(1)));
+		} catch (NumberFormatException ignored) {
+			return 0;
+		}
+	}
+
+	private boolean isOpenedChestNameToken(String token) {
+		if (token.endsWith(" CHEST")) {
+			token = token.substring(0, token.length() - " CHEST".length()).trim();
+		}
+		return TIER_NAME_TO_CHEST_TITLE.containsKey(token);
+	}
+
+	private CroesusMainMenuHighlightState mainMenuHighlightStateForOpenedCount(int openedChestCount) {
+		if (openedChestCount <= 0) return CroesusMainMenuHighlightState.UNOPENED;
+		if (openedChestCount == 1) return CroesusMainMenuHighlightState.ONE_OPENED;
+		return CroesusMainMenuHighlightState.TWO_OR_MORE;
+	}
+
+	private void drawCroesusMainMenuSlotHighlight(
+		GuiGraphicsExtractor g,
+		int slotX,
+		int slotY,
+		CroesusMainMenuHighlightState state
+	) {
+		int left = slotX - 1;
+		int top = slotY - 1;
+		int right = slotX + 17;
+		int bottom = slotY + 17;
+		switch (state) {
+			case UNOPENED -> {
+				int color = OVERLAY_PROFIT;
+				g.fill(left, top, right, bottom, withAlpha(color, 0x14));
+				drawSlotBorder(g, left, top, right, bottom, withAlpha(color, 0xFF));
+			}
+			case ONE_OPENED -> {
+				int color = 0xFFFFDD55;
+				g.fill(left, top, right, bottom, withAlpha(color, 0x18));
+				drawSlotBorder(g, left, top, right, bottom, withAlpha(color, 0x99));
+			}
+			case TWO_OR_MORE -> {
+				int color = 0xFF8B93A7;
+				g.fill(left, top, right, bottom, withAlpha(color, 0x66));
+				drawSlotBorder(g, left, top, right, bottom, withAlpha(color, 0x55));
+			}
+		}
+	}
+
+	private void drawCroesusKismetBadge(GuiGraphicsExtractor g, int slotX, int slotY) {
+		int badgeSize = 9;
+		int x = slotX + 16 - badgeSize;
+		int y = slotY + 16 - badgeSize;
+		g.fill(x - 1, y - 1, slotX + 16, slotY + 16, 0xCC101018);
+		Matrix3x2fStack pose = g.pose();
+		pose.pushMatrix();
+		try {
+			float scale = badgeSize / 16.0F;
+			pose.translate(x, y);
+			pose.scale(scale);
+			g.item(new ItemStack(Items.FEATHER), 0, 0);
+		} finally {
+			pose.popMatrix();
+		}
+	}
+
+	private void drawSlotBorder(GuiGraphicsExtractor g, int left, int top, int right, int bottom, int borderColor) {
+		g.fill(left, top, right, top + 1, borderColor);
+		g.fill(left, bottom - 1, right, bottom, borderColor);
+		g.fill(left, top, left + 1, bottom, borderColor);
+		g.fill(right - 1, top, right, bottom, borderColor);
 	}
 
 	private boolean isCroesusMainMenuTitle(String normalizedTitle) {
@@ -2533,77 +2754,11 @@ public final class DungeonRunTrackerFeature {
 
 	private boolean isCroesusChestListTitle(String normalizedTitle) {
 		if (normalizedTitle == null || normalizedTitle.isBlank()) return false;
+		if (isCroesusMainMenuTitle(normalizedTitle)) return false;
 		if (canonicalRewardChestTitle(normalizedTitle) != null) return false;
 		return isRewardsMenuTitle(normalizedTitle)
 				|| normalizedTitle.contains("CROESUS")
 				|| normalizedTitle.contains("VESUVIUS");
-	}
-
-	/**
-	 * True when a Croesus main-menu run still has claimable chests.
-	 * Matches Hypixel states used by other mods:
-	 * never opened ("No chests opened yet!"), partially opened ("Opened Chest: Wood"),
-	 * and clickable run rows ("Click to view chests!"). Fully claimed rows
-	 * ("No more chests to open!") are excluded.
-	 */
-	private boolean croesusRunHasUnopenedChest(ItemStack stack) {
-		if (stack == null || stack.isEmpty()) return false;
-		List<String> lore = cleanLoreLines(stack);
-		if (lore.isEmpty()) return false;
-
-		boolean fullyClaimed = false;
-		boolean neverOpened = false;
-		boolean partiallyOpened = false;
-		boolean claimHint = false;
-		boolean dungeonRunSignal = false;
-
-		for (String line : lore) {
-			String normalized = normalize(line);
-			if (normalized.isEmpty()) continue;
-
-			if (normalized.contains("NO MORE CHESTS TO OPEN")
-					|| normalized.contains("NO CHESTS LEFT TO OPEN")
-					|| normalized.contains("ALL CHESTS OPENED")) {
-				fullyClaimed = true;
-				continue;
-			}
-			if (normalized.contains("NO CHESTS OPENED YET")) {
-				neverOpened = true;
-				continue;
-			}
-			// Partially claimed runs still list opened tiers; remaining chests are claimable
-			// until Hypixel shows "No more chests to open!".
-			if (normalized.contains("OPENED CHEST:") || normalized.startsWith("OPENED CHEST ")) {
-				partiallyOpened = true;
-				continue;
-			}
-			if (lineClearlyIndicatesUnopenedChest(normalized)) {
-				claimHint = true;
-				continue;
-			}
-			if (normalized.contains("CLICK TO VIEW CHEST")
-					|| normalized.contains("CLICK TO VIEW")
-					|| normalized.regionMatches(true, 0, "CLICK TO OPEN", 0, 13)) {
-				claimHint = true;
-				continue;
-			}
-			if (normalized.contains("CHESTS EXPIRE")
-					|| normalized.contains("THE CATACOMBS")
-					|| normalized.contains("MASTER MODE")
-					|| normalized.startsWith("FLOOR ")
-					|| normalized.startsWith("TIER:")
-					|| normalized.contains("TIER:")
-					|| normalized.contains(" KUUDRA")
-					|| normalized.endsWith(" TIER")
-					|| normalized.endsWith(" TIER!")) {
-				dungeonRunSignal = true;
-			}
-		}
-
-		if (fullyClaimed) return false;
-		if (neverOpened || partiallyOpened || claimHint) return true;
-		// Kuudra (and sparse Catacombs lore) often omit an explicit unopened line.
-		return dungeonRunSignal && (stack.is(Items.PLAYER_HEAD) || stack.is(Items.CHEST));
 	}
 
 	private boolean lineClearlyIndicatesUnopenedChest(String normalized) {
@@ -2656,6 +2811,11 @@ public final class DungeonRunTrackerFeature {
 		String normalizedTitle = normalize(screen.getTitle().getString());
 		String canonicalTitle = canonicalRewardChestTitle(normalizedTitle);
 		if (canonicalTitle == null) {
+			// Pending loot from a chest you just opened must not keep the breakdown
+			// overlay on Croesus menus after you go back.
+			if (isCroesusMainMenuTitle(normalizedTitle) || isCroesusChestListTitle(normalizedTitle)) {
+				return null;
+			}
 			if (!pendingLootChestAssigned || pendingLootChestTitle.isBlank()) return null;
 			canonicalTitle = pendingLootChestTitle.toUpperCase(Locale.ROOT);
 		}
@@ -2664,13 +2824,11 @@ public final class DungeonRunTrackerFeature {
 			offer = new DungeonChestOffer(pendingLootChestTitle, pendingLootCostBreakdown, 0L, pendingLootEntries);
 		}
 
-		// Live in-dungeon / direct Wood-Bedrock screens put loot in slots, not Croesus Contents lore.
-		// Without this fallback Fancy (and the side overlay) only work after visiting Croesus.
+		// Live Wood-Bedrock GUIs have the real stacks. Prefer them over Croesus Contents lore,
+		// which used to drop items like Precursor Gear and then stick that incomplete list here.
 		AbstractContainerMenu liveMenu = client.player == null ? null : client.player.containerMenu;
 		List<DungeonLootEntry> liveEntries = List.of();
-		if ((offer == null || offer.lootEntries == null || offer.lootEntries.isEmpty())
-				&& liveMenu != null
-				&& isCatacombsRewardChest(canonicalTitle)) {
+		if (liveMenu != null && isCatacombsRewardChest(canonicalTitle)) {
 			liveEntries = collectLiveRewardChestLootEntries(liveMenu);
 		}
 		if ((offer == null || offer.lootEntries == null || offer.lootEntries.isEmpty()) && liveEntries.isEmpty()) {
@@ -2725,12 +2883,12 @@ public final class DungeonRunTrackerFeature {
 		populateKnownModifierCosts(breakdown);
 		suppressDungeonChestKeyForKuudra(canonicalTitle, breakdown);
 		List<DungeonLootEntry> entries = new ArrayList<>();
-		if (offer != null && offer.lootEntries != null && !offer.lootEntries.isEmpty()) {
-			for (DungeonLootEntry entry : offer.lootEntries) {
+		if (!liveEntries.isEmpty()) {
+			for (DungeonLootEntry entry : liveEntries) {
 				if (entry != null) entries.add(entry.copy());
 			}
-		} else {
-			for (DungeonLootEntry entry : liveEntries) {
+		} else if (offer != null && offer.lootEntries != null) {
+			for (DungeonLootEntry entry : offer.lootEntries) {
 				if (entry != null) entries.add(entry.copy());
 			}
 		}
@@ -2837,9 +2995,7 @@ public final class DungeonRunTrackerFeature {
 		String mapped = TIER_NAME_TO_CHEST_TITLE.get(normalizedTitle);
 		if (mapped != null) return mapped;
 		for (String title : REWARD_CHEST_TITLES) {
-			if (normalizedTitle.startsWith(title)) return title;
-			String shortTitle = title.replace(" CHEST", "");
-			if (normalizedTitle.equals(shortTitle) || normalizedTitle.startsWith(shortTitle + " ")) return title;
+			if (normalizedTitle.equals(title) || normalizedTitle.startsWith(title + " ")) return title;
 		}
 		return null;
 	}
@@ -3190,6 +3346,7 @@ public final class DungeonRunTrackerFeature {
 		rememberRunContextFromMenuTitle(normalizedTitle, now);
 
 		if (canonicalRewardTitle != null) {
+			viewedCroesusChestTitles.add(canonicalRewardTitle);
 			if (lootWindowUntilMillis <= 0L || now > lootWindowUntilMillis) {
 				startLateOwnedOrAdHocLootWindow(now, menuTitleFloor);
 				if (menuTitleFloor != DungeonFloor.UNKNOWN) {
@@ -3229,6 +3386,14 @@ public final class DungeonRunTrackerFeature {
 				lastViewedOpenedRewardChestTitle = "";
 				return;
 			}
+			if (!openedFromArmedPreview
+				&& cached != null
+				&& cached.alreadyOpened
+				&& isHubCroesusRewardBrowsing()) {
+				updateCachedRewardChestOffers(menu);
+				lastViewedOpenedRewardChestTitle = canonicalRewardTitle;
+				return;
+			}
 
 			String screenKey = "opened#" + canonicalRewardTitle + "#" + menu.containerId;
 			boolean firstOpenScan = scannedRewardScreens.add(screenKey);
@@ -3254,6 +3419,10 @@ public final class DungeonRunTrackerFeature {
 			lastOpenedRewardChestTitleForChat = leftTitle;
 			// Allow a later real open of the same tier (new container id often reuses) to scan again.
 			scannedRewardScreens.removeIf(key -> key.startsWith("opened#" + leftTitle + "#"));
+		}
+
+		if (isCroesusMainMenuTitle(normalizedTitle)) {
+			viewedCroesusChestTitles.clear();
 		}
 
 		if (!isRewardsMenuTitle(normalizedTitle) && !isCroesusChestListTitle(normalizedTitle)) return;
@@ -3366,12 +3535,21 @@ public final class DungeonRunTrackerFeature {
 	private String canonicalChestTitleFromStack(ItemStack stack) {
 		if (stack == null || stack.isEmpty()) return null;
 		String chestTitle = normalize(cleanText(stack.getHoverName().getString()));
-		String canonicalRewardTitle = canonicalRewardChestTitle(chestTitle);
-		if (canonicalRewardTitle != null) return canonicalRewardTitle;
-		String canonicalKey = TIER_NAME_TO_CHEST_TITLE.get(chestTitle);
-		if (canonicalKey != null) return canonicalKey;
+		if (REWARD_CHEST_TITLES.contains(chestTitle)) return chestTitle;
+		// Exact short names like "GOLD" are only chest rows on the chest-list GUI.
+		// Prefix matching "GOLD " false-positives Gold Ingot / Emerald Blade / etc.
+		if (TIER_NAME_TO_CHEST_TITLE.containsKey(chestTitle)) {
+			Minecraft client = Minecraft.getInstance();
+			if (client.screen instanceof AbstractContainerScreen<?> screen) {
+				String screenTitle = normalize(screen.getTitle().getString());
+				if (isCroesusChestListTitle(screenTitle) || isRewardsMenuTitle(screenTitle)) {
+					return TIER_NAME_TO_CHEST_TITLE.get(chestTitle);
+				}
+			}
+			return null;
+		}
 		for (String title : REWARD_CHEST_TITLES) {
-			if (chestTitle.startsWith(title)) return title;
+			if (chestTitle.equals(title) || chestTitle.startsWith(title + " ")) return title;
 		}
 		return null;
 	}
@@ -3507,6 +3685,10 @@ public final class DungeonRunTrackerFeature {
 			alreadyChargedKey = false;
 			previousBreakdown = null;
 		}
+		if (offer != null && offer.contextFloor != null && offer.contextFloor != DungeonFloor.UNKNOWN
+				&& isCrossRunCroesusFloorSwitch(offer.contextFloor)) {
+			detachPendingLootFromStaleRun(offer.contextFloor);
+		}
 		if (!samePendingChest) {
 			pendingChestSessionId = openTrackingChestSession(displayTitle, containerId, DetectionSource.CONFIRMED_GUI_COMPONENT);
 			pendingChestLootDedupKeys.clear();
@@ -3577,6 +3759,17 @@ public final class DungeonRunTrackerFeature {
 		}
 		if (pendingLootFloor == offerFloor) {
 			updatePendingChestContextProjection(EvidenceStrength.CONFIRMED_GUI_COMPONENT, DetectionSource.CONFIRMED_GUI_COMPONENT);
+			return;
+		}
+		if (isCrossRunCroesusFloorSwitch(offerFloor)) {
+			DungeonFloor previousFloor = pendingLootFloor;
+			detachPendingLootFromStaleRun(offerFloor);
+			updatePendingChestContextProjection(EvidenceStrength.CONFIRMED_GUI_COMPONENT, DetectionSource.CONFIRMED_GUI_COMPONENT);
+			DungeonRunTracker.LOGGER.debug(
+				"[DRT] Switched Croesus reward context {} -> {} while browsing historical runs",
+				previousFloor.name(),
+				offerFloor.name()
+			);
 			return;
 		}
 		updateChestContextProjection(
@@ -4508,6 +4701,7 @@ public final class DungeonRunTrackerFeature {
 		dungeonSignalUntilMillis = now + DUNGEON_SIGNAL_GRACE_MS;
 		cachedChestOffersByTitle.clear();
 		scannedRewardScreens.clear();
+		viewedCroesusChestTitles.clear();
 	}
 
 	private void beginNewKuudraRun(long now, DungeonFloor tier) {
@@ -4543,6 +4737,7 @@ public final class DungeonRunTrackerFeature {
 		kuudraSignalUntilMillis = now + DUNGEON_SIGNAL_GRACE_MS;
 		cachedChestOffersByTitle.clear();
 		scannedRewardScreens.clear();
+		viewedCroesusChestTitles.clear();
 	}
 
 	private void startLootWindow(long now, int runNumber, DungeonFloor floor) {
@@ -4744,6 +4939,10 @@ public final class DungeonRunTrackerFeature {
 		// Mid-run or in-instance reward context should always have run ownership.
 		if (currentRunActive || insideDungeon || insideKuudra) {
 			return true;
+		}
+		// Hub Croesus browsing of historical runs is expected to be unassigned/orphaned.
+		if (isHubCroesusRewardBrowsing()) {
+			return false;
 		}
 		// Recent completion: late reattach should have succeeded.
 		if (lastRunRecordMillis > 0L && now - lastRunRecordMillis <= LATE_LOOT_REATTACH_MS) {
@@ -5267,6 +5466,7 @@ public final class DungeonRunTrackerFeature {
 
 	private void warnLootGuardsForEntry(DungeonLootEntry entry) {
 		if (entry == null) return;
+		if (shouldSkipLootGuards()) return;
 		if (entry.itemId == null || entry.itemId.isBlank()) {
 			recordUnresolvedItemDiagnostic(entry.rawName, sanitizeLootName(entry.rawName).toUpperCase(Locale.ROOT));
 			return;
@@ -5286,6 +5486,7 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private void warnLootGuardsForChest(List<DungeonLootEntry> entries) {
+		if (shouldSkipLootGuards()) return;
 		DungeonFloor guardFloor = authoritativePendingChestFloor();
 		if (hasLootContextConflict()) {
 			recordContextConflictDiagnostic("warnLootGuardsForChest", "context_conflict_blocks_loot_guard", guardFloor);
@@ -5725,6 +5926,31 @@ public final class DungeonRunTrackerFeature {
 		*///?}
 	}
 
+	private boolean isHubCroesusRewardBrowsing() {
+		return !currentRunActive && !insideDungeon && !insideKuudra;
+	}
+
+	private boolean shouldSkipLootGuards() {
+		if (isHubCroesusRewardBrowsing()) return true;
+		if (pendingLootOrphaned) return true;
+		return pendingLootRunNumber <= 0 && !currentRunActive;
+	}
+
+	private void detachPendingLootFromStaleRun(DungeonFloor newFloor) {
+		if (newFloor == null || newFloor == DungeonFloor.UNKNOWN) return;
+		pendingLootFloor = newFloor;
+		pendingLootOrphaned = true;
+		pendingLootRunNumber = 0;
+		pendingLootRunTimestamp = System.currentTimeMillis();
+	}
+
+	private boolean isCrossRunCroesusFloorSwitch(DungeonFloor incomingFloor) {
+		if (incomingFloor == null || incomingFloor == DungeonFloor.UNKNOWN) return false;
+		if (pendingLootFloor == DungeonFloor.UNKNOWN) return false;
+		if (pendingLootFloor == incomingFloor) return false;
+		return isHubCroesusRewardBrowsing();
+	}
+
 	private boolean menuTitleConflictsWithActiveRun(DungeonFloor titleFloor) {
 		if (titleFloor == null || titleFloor == DungeonFloor.UNKNOWN) return false;
 		// Sticky completed-run floor must not fight Croesus browsing on other floors.
@@ -5782,6 +6008,17 @@ public final class DungeonRunTrackerFeature {
 		long now = System.currentTimeMillis();
 		if (now - lastContextConflictNotifyMillis < 30_000L) {
 			incident.markUserNotified();
+			return;
+		}
+		if (isHubCroesusRewardBrowsing()) {
+			incident.markUserNotified();
+			DungeonRunTracker.LOGGER.debug(
+				"[DRT] Suppressed hub Croesus context conflict: handler={} reason={} incoming={} pending={}",
+				handler,
+				reason,
+				floorName(incomingFloor),
+				floorName(pendingLootFloor)
+			);
 			return;
 		}
 		lastContextConflictNotifyMillis = now;
@@ -6557,6 +6794,9 @@ public final class DungeonRunTrackerFeature {
 				|| normalized.contains("FERVOR") || normalized.contains("HOLLOW")
 				|| normalized.contains("MASTER STAR") || normalized.contains(" STAR")
 				|| normalized.contains("CLAYMORE") || normalized.contains("DYE")
+				|| normalized.contains("GEAR") || normalized.contains("VIAL")
+				|| normalized.contains("TOOTH") || normalized.contains("BROOCH")
+				|| normalized.contains("GEMSTONE") || normalized.contains("FRAGMENT")
 				|| isMasterStarLootName(value);
 	}
 
@@ -6638,6 +6878,19 @@ public final class DungeonRunTrackerFeature {
 		aliases.put("FUMING POTATO BOOK", "FUMING_POTATO_BOOK");
 		aliases.put("HOT POTATO BOOK", "HOT_POTATO_BOOK");
 		aliases.put("DARK ORB", "DARK_ORB");
+		aliases.put("PRECURSOR GEAR", "PRECURSOR_GEAR");
+		aliases.put("SUSPICIOUS VIAL", "SUSPICIOUS_VIAL");
+		aliases.put("GIANT TOOTH", "GIANT_TOOTH");
+		aliases.put("SADAN'S BROOCH", "SADANS_BROOCH");
+		aliases.put("SADANS BROOCH", "SADANS_BROOCH");
+		aliases.put("NECROMANCER'S BROOCH", "NECROMANCERS_BROOCH");
+		aliases.put("NECROMANCERS BROOCH", "NECROMANCERS_BROOCH");
+		aliases.put("RED NOSE", "RED_NOSE");
+		aliases.put("RED SCARF", "RED_SCARF");
+		aliases.put("ROCK GEMSTONE", "ROCK_GEMSTONE");
+		aliases.put("JADED FRAGMENT", "JADED_FRAGMENT");
+		aliases.put("BEATING HEART", "BEATING_HEART");
+		aliases.put("PREMIUM FLESH", "PREMIUM_FLESH");
 		aliases.put("SPIRIT SWORD", "SPIRIT_SWORD");
 		aliases.put("SPIRIT WING", "SPIRIT_WING");
 		aliases.put("SPIRIT LEAP", "SPIRIT_LEAP");

@@ -27,6 +27,7 @@ public final class LootFloorGuards {
 	public static List<String> evaluate(DungeonFloor floor, String chestTitle, DungeonLootEntry entry) {
 		List<String> reasons = new ArrayList<>(3);
 		if (entry == null) return reasons;
+		if (chestFloorModeMismatch(floor, chestTitle)) return reasons;
 		String raw = entry.rawName == null ? "" : entry.rawName;
 		String itemId = entry.itemId == null ? "" : entry.itemId;
 		int qty = Math.max(1, entry.quantity);
@@ -78,6 +79,7 @@ public final class LootFloorGuards {
 	public static List<String> evaluateChest(DungeonFloor floor, String chestTitle, List<DungeonLootEntry> entries) {
 		List<String> reasons = new ArrayList<>();
 		if (entries == null) return reasons;
+		if (chestFloorModeMismatch(floor, chestTitle)) return reasons;
 
 		int dropLines = 0;
 		for (DungeonLootEntry entry : entries) {
@@ -232,5 +234,15 @@ public final class LootFloorGuards {
 		String upperId = itemId.toUpperCase(Locale.ROOT);
 		if (KUUDRA_ESSENCE.contains(upperId)) return true;
 		return raw.toUpperCase(Locale.ROOT).contains("CRIMSON ESSENCE");
+	}
+
+	/** Catacombs Wood–Bedrock vs Kuudra Free/Paid titles disagree with a sticky floor projection. */
+	static boolean chestFloorModeMismatch(DungeonFloor floor, String chestTitle) {
+		if (floor == null || floor == DungeonFloor.UNKNOWN) return false;
+		ExpectedLootTables.ChestTier chest = ExpectedLootTables.parseChestTier(chestTitle);
+		if (chest == ExpectedLootTables.ChestTier.UNKNOWN) return false;
+		boolean kuudraChest = chest == ExpectedLootTables.ChestTier.FREE || chest == ExpectedLootTables.ChestTier.PAID;
+		if (floor.isKuudra() && !kuudraChest) return true;
+		return !floor.isKuudra() && kuudraChest;
 	}
 }
