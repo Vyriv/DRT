@@ -72,6 +72,71 @@ class RunRecordDeduplicatorTest {
 	}
 
 	@Test
+	void sameRunSameTierDifferentChestSessionsStillAddsSecondRecord() {
+		DungeonRunRecord firstWood = record(1_000L, "F7", "Wood Chest", List.of(
+			new DungeonLootEntry("Undead Essence", "ESSENCE_UNDEAD", 27),
+			new DungeonLootEntry("Wither Essence", "ESSENCE_WITHER", 20),
+			new DungeonLootEntry("Enchanted Book (Infinite Quiver VI)", "ENCHANTMENT_INFINITE_QUIVER_6", 1)
+		));
+		firstWood.runSessionId = "live-e8acc531-run-13";
+		firstWood.runNumber = 18;
+		firstWood.chestSessionId = "live-e8acc531-chest-9";
+
+		DungeonRunRecord secondWood = record(60_000L, "F7", "Wood Chest", List.of(
+			new DungeonLootEntry("Undead Essence", "ESSENCE_UNDEAD", 27),
+			new DungeonLootEntry("Wither Essence", "ESSENCE_WITHER", 20),
+			new DungeonLootEntry("Enchanted Book (Infinite Quiver VI)", "ENCHANTMENT_INFINITE_QUIVER_6", 1),
+			new DungeonLootEntry("Maxor the Fish", "MAXOR_THE_FISH", 1)
+		));
+		secondWood.runSessionId = "live-e8acc531-run-13";
+		secondWood.runNumber = 18;
+		secondWood.chestSessionId = "live-e8acc531-chest-15";
+
+		RunRecordDeduplicator.DuplicateDecision decision = RunRecordDeduplicator.decide(new ArrayList<>(List.of(firstWood)), secondWood);
+
+		assertEquals(RunRecordCommitDecision.ADD_INCOMING, decision.action());
+	}
+
+	@Test
+	void sameRunIdenticalLootDifferentChestSessionsStillAddsSecondRecord() {
+		DungeonRunRecord firstWood = record(1_000L, "F7", "Wood Chest", List.of(
+			new DungeonLootEntry("Undead Essence", "ESSENCE_UNDEAD", 27),
+			new DungeonLootEntry("Wither Essence", "ESSENCE_WITHER", 20),
+			new DungeonLootEntry("Enchanted Book (Infinite Quiver VI)", "ENCHANTMENT_INFINITE_QUIVER_6", 1)
+		));
+		firstWood.runSessionId = "live-e8acc531-run-13";
+		firstWood.runNumber = 18;
+		firstWood.chestSessionId = "live-e8acc531-chest-9";
+
+		DungeonRunRecord secondWood = firstWood.copy();
+		secondWood.timestampEpochMillis = 60_000L;
+		secondWood.chestSessionId = "live-e8acc531-chest-15";
+
+		RunRecordDeduplicator.DuplicateDecision decision = RunRecordDeduplicator.decide(new ArrayList<>(List.of(firstWood)), secondWood);
+
+		assertEquals(RunRecordCommitDecision.ADD_INCOMING, decision.action());
+	}
+
+	@Test
+	void immediateSameRunIdenticalLootWithAccidentallyNewChestSessionKeepsExisting() {
+		DungeonRunRecord first = record(1_000L, "M7", "Bedrock Chest", List.of(
+			new DungeonLootEntry("Wither Essence", "ESSENCE_WITHER", 100),
+			new DungeonLootEntry("Necron's Handle", "NECRON_HANDLE", 1)
+		));
+		first.runSessionId = "run-12";
+		first.runNumber = 12;
+		first.chestSessionId = "run-12-chest-9";
+
+		DungeonRunRecord duplicate = first.copy();
+		duplicate.timestampEpochMillis = 2_000L;
+		duplicate.chestSessionId = "run-12-chest-10";
+
+		RunRecordDeduplicator.DuplicateDecision decision = RunRecordDeduplicator.decide(new ArrayList<>(List.of(first)), duplicate);
+
+		assertEquals(RunRecordCommitDecision.KEEP_EXISTING, decision.action());
+	}
+
+	@Test
 	void sameLootDifferentRunsStillAddsSecondRecord() {
 		DungeonRunRecord firstRun = record(1_000L, "F7", "Bedrock Chest", List.of(
 			new DungeonLootEntry("Wither Essence", "ESSENCE_WITHER", 100)

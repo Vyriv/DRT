@@ -57,8 +57,20 @@ public final class RunRecordDeduplicator {
 		if (!sameText(left.floor, right.floor)) return false;
 		if (!sameText(left.chestTitle, right.chestTitle)) return false;
 		if (!sameLootCounts(left, right)) return false;
+		// Distinct chest sessions in one run are separate opens (e.g. two Wood chests on F7).
+		if (hasStableChestSessionId(left) && hasStableChestSessionId(right)
+			&& !sameStableId(left.chestSessionId, right.chestSessionId)) {
+			// The GUI and chat paths can occasionally create a second session for the same
+			// open. Treat an otherwise identical capture arriving immediately afterwards
+			// as that duplicate; separately opened reward chests remain distinct.
+			return Math.abs(left.timestampEpochMillis - right.timestampEpochMillis) <= 15_000L;
+		}
 		if (sameStableId(left.runSessionId, right.runSessionId)) return true;
 		return left.runNumber > 0 && left.runNumber == right.runNumber;
+	}
+
+	private static boolean hasStableChestSessionId(DungeonRunRecord record) {
+		return record != null && record.chestSessionId != null && !record.chestSessionId.isBlank();
 	}
 
 	private static boolean sameLegacyShape(DungeonRunRecord left, DungeonRunRecord right) {

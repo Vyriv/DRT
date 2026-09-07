@@ -6696,6 +6696,8 @@ public final class DungeonRunTrackerFeature {
 		String normalized = value.toUpperCase(Locale.ROOT);
 		return isDrtClientMessage(value)
 			|| isPartyRareDropAnnouncement(normalized)
+			|| normalized.contains(" IS READY TO USE")
+			|| (normalized.contains("PRESS DROP") && normalized.contains("ACTIVATE"))
 			|| normalized.contains("[NPC]") || normalized.contains("EXTRA STATS")
 			|| normalized.contains("TEAM SCORE") || normalized.contains("CLICK")
 			|| normalized.contains("OPEN") || normalized.contains("CROESUS")
