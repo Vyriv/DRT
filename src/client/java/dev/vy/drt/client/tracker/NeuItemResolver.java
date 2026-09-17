@@ -131,6 +131,9 @@ public final class NeuItemResolver {
 			"SHADOW_ASSASSIN_HELMET",
 			"NECROMANCER_LORD_HELMET",
 			"WITHER_HELMET",
+			"WITHER_CLOAK",
+			"WITHER_SHIELD_SCROLL",
+			"WITHER_BLOOD",
 			"RECOMBOBULATOR_3000",
 			"ADAPTIVE_HELMET",
 			"TRAINING_WEIGHTS",
@@ -188,8 +191,16 @@ public final class NeuItemResolver {
 			return new ItemStack(translateLegacySkullByDamage(damage));
 		}
 
+		// Prefer vanilla ItemModel when known. Custom hypixel_skyblock models resolve to BARRIER;
+		// fall back to NEU itemid (e.g. WITHER_CLOAK -> stone_sword) so icons are not blank/paper.
 		String itemModel = extractItemModel(nbttag);
-		Item item = translateItemId(itemModel != null ? itemModel : neuItemId);
+		Item item = Items.BARRIER;
+		if (itemModel != null) {
+			item = translateItemId(itemModel);
+		}
+		if (item == Items.BARRIER) {
+			item = translateItemId(neuItemId);
+		}
 		ItemStack stack = new ItemStack(item);
 		Integer leatherColor = extractLeatherColor(nbttag);
 		if (leatherColor != null && isLeatherArmor(item)) {

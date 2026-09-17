@@ -877,6 +877,9 @@ public final class DungeonRunTrackerFeature {
 
 	private boolean isFancyRewardMenuActive(Minecraft client) {
 		if (!fancyMenuEnabled || client == null || client.player == null) return false;
+		// Fancy Menu is Croesus reward-chest presentation only. Do not replace mid-dungeon
+		// chests, Kuudra free/paid, or unrelated container screens.
+		if (!isHubCroesusRewardBrowsing()) return false;
 		if (!(client.screen instanceof AbstractContainerScreen<?> screen)) return false;
 		String normalizedTitle = normalize(screen.getTitle().getString());
 		String canonicalTitle = canonicalRewardChestTitle(normalizedTitle);
@@ -1189,6 +1192,8 @@ public final class DungeonRunTrackerFeature {
 		if (button == 0 && !moveMode && handleChestTitleClick(client, mx, my)) return true;
 		if (button == 0 && !moveMode && handleChestKeyModifierClick(client, mx, my)) return true;
 		if (!moveMode && (button == 0 || button == 1) && handleCroesusOverlayClick(client, mx, my, button)) return true;
+		// HUD clicks only on the player inventory screen. Other mod UIs must keep their clicks.
+		if (!moveMode && !isHudClickScreen(client)) return false;
 		if (!isTrackerVisible(client, moveMode) || (button != 0 && button != 1)) return false;
 		if (moveMode) return false;
 		boolean showResetLine = shouldShowResetLine(client, false);
@@ -1202,6 +1207,11 @@ public final class DungeonRunTrackerFeature {
 			return false;
 		}
 		return handleOverlayClick(hit);
+	}
+
+	/** True when the DRT HUD overlay should consume mouse clicks. */
+	private boolean isHudClickScreen(Minecraft client) {
+		return client != null && client.screen instanceof InventoryScreen;
 	}
 
 	private boolean handleChestKeyModifierClick(Minecraft client, int mouseX, int mouseY) {
@@ -2024,8 +2034,7 @@ public final class DungeonRunTrackerFeature {
 	) {
 		DrtConfig config = DrtConfigManager.getConfig();
 		long totalPrice = DungeonProfitPricing.resolveTotalPrice(entry, config);
-		ItemStack icon = overlayItemIcon(entry.itemId);
-		if (icon.isEmpty()) icon = new ItemStack(Items.PAPER);
+		ItemStack icon = overlayIconOrFallback(entry.itemId);
 
 		int textY = rowY + Math.max(0, (FANCY_ROW_H - client.font.lineHeight) / 2);
 		int iconY = rowY + Math.max(0, (FANCY_ROW_H - FANCY_ICON) / 2);
@@ -2452,8 +2461,7 @@ public final class DungeonRunTrackerFeature {
 		DrtConfig config = DrtConfigManager.getConfig();
 		long totalPrice = DungeonProfitPricing.resolveTotalPrice(entry, config);
 		boolean forceSalvage = DungeonProfitPricing.isForcedSalvageValued(entry, config);
-		ItemStack icon = overlayItemIcon(entry.itemId);
-		if (icon.isEmpty()) icon = new ItemStack(Items.PAPER);
+		ItemStack icon = overlayIconOrFallback(entry.itemId);
 		g.item(icon, x, y - 4);
 		OverlayItemDisplay display = overlayItemDisplay(entry);
 		String label = display.name;
@@ -3010,20 +3018,41 @@ public final class DungeonRunTrackerFeature {
 		if (visualId.equals(ITEM_KISMET_FEATHER)) return new ItemStack(Items.FEATHER);
 		if (visualId.equals(ITEM_WHEEL_OF_FATE)) return new ItemStack(Items.CLOCK);
 		if (visualId.startsWith("ENCHANTMENT_")) return new ItemStack(Items.ENCHANTED_BOOK);
-		if (visualId.equals("FUMING_POTATO_BOOK")) return new ItemStack(Items.BOOK);
+		if (visualId.equals("FUMING_POTATO_BOOK") || visualId.equals("HOT_POTATO_BOOK")) return new ItemStack(Items.BOOK);
 		if (visualId.equals("RECOMBOBULATOR_3000")) return new ItemStack(Items.GOLD_INGOT);
+		if (visualId.equals("WITHER_CLOAK") || visualId.equals("WITHER_CLOAK_SWORD")) return new ItemStack(Items.STONE_SWORD);
+		if (visualId.endsWith("_SCROLL") || visualId.equals("WITHER_SHIELD_SCROLL") || visualId.equals("WITHER_SHIELD")) {
+			return new ItemStack(Items.WRITABLE_BOOK);
+		}
 		NeuItemResolver.enqueue(visualId);
 		ItemStack resolved = NeuItemResolver.getResolvedStack(visualId);
 		if (resolved != null && !resolved.isEmpty() && !resolved.is(Items.BARRIER)) return resolved;
 		if (visualId.startsWith("ESSENCE_")) return new ItemStack(Items.NETHER_STAR);
+		if (visualId.equals("WITHER_BLOOD")) return new ItemStack(Items.PLAYER_HEAD);
 		if (id.startsWith("SHARD_")) return new ItemStack(Items.AMETHYST_SHARD);
-		if (visualId.contains("SWORD") || visualId.contains("DAGGER") || visualId.contains("BLADE")) return new ItemStack(Items.IRON_SWORD);
+		if (visualId.contains("SWORD") || visualId.contains("DAGGER") || visualId.contains("BLADE") || visualId.contains("CLOAK")) {
+			return new ItemStack(Items.IRON_SWORD);
+		}
 		if (visualId.contains("BOW")) return new ItemStack(Items.BOW);
 		if (visualId.contains("HELMET")) return new ItemStack(Items.LEATHER_HELMET);
 		if (visualId.contains("CHESTPLATE")) return new ItemStack(Items.LEATHER_CHESTPLATE);
 		if (visualId.contains("LEGGINGS")) return new ItemStack(Items.LEATHER_LEGGINGS);
 		if (visualId.contains("BOOTS")) return new ItemStack(Items.LEATHER_BOOTS);
+		if (visualId.contains("SCROLL") || visualId.contains("SHIELD")) return new ItemStack(Items.WRITABLE_BOOK);
 		return ItemStack.EMPTY;
+	}
+
+	private ItemStack overlayIconOrFallback(String itemId) {
+		ItemStack icon = overlayItemIcon(itemId);
+		if (!icon.isEmpty()) return icon;
+		String id = itemId == null ? "" : itemId.toUpperCase(Locale.ROOT);
+		if (id.contains("CLOAK") || id.contains("SWORD") || id.contains("BLADE") || id.contains("DAGGER")) {
+			return new ItemStack(Items.IRON_SWORD);
+		}
+		if (id.contains("SCROLL") || id.contains("SHIELD")) return new ItemStack(Items.WRITABLE_BOOK);
+		if (id.contains("BOOK")) return new ItemStack(Items.ENCHANTED_BOOK);
+		if (id.startsWith("ESSENCE_")) return new ItemStack(Items.NETHER_STAR);
+		return new ItemStack(Items.ITEM_FRAME);
 	}
 
 	private String visualOverlayItemId(String id) {
@@ -4232,7 +4261,7 @@ public final class DungeonRunTrackerFeature {
 			return;
 		}
 
-		if (!(client.screen instanceof AbstractContainerScreen<?>)) {
+		if (!(client.screen instanceof InventoryScreen)) {
 			if (!leftMouseDown && dragging && positionDirty) saveHudPosition();
 			dragging = false;
 			positionDirty = false;
@@ -5139,7 +5168,8 @@ public final class DungeonRunTrackerFeature {
 		if (parsed == null) return;
 		observeTrackingLoot(parsed, DetectionSource.STRUCTURED_CHAT, -1, -1, SlotOwner.SERVER_CONTAINER, cleaned);
 		if (!markLootLineForProcessing(cleaned, now)) return;
-		boolean maxOnDuplicate = pendingLootSeededFromGui || pendingLootReconcilingGuiChat || rareRewardLine;
+		// Chat must never double-count items already captured from GUI / prior chat.
+		boolean maxOnDuplicate = true;
 		mergePendingLootEntry(parsed, maxOnDuplicate);
 		if (!pendingLootReconcilingGuiChat) pendingLootSeededFromGui = false;
 		lootCollectionUntilMillis = now + LOOT_COLLECTION_MS;
@@ -5201,34 +5231,42 @@ public final class DungeonRunTrackerFeature {
 
 		String candidateName = null;
 		int quantity = 1;
+		boolean structuredLootLine = false;
 
 		Matcher rareRewardMatcher = RARE_REWARD_ITEM_PATTERN.matcher(trimmedRaw);
 		if (!rareRewardMatcher.matches()) rareRewardMatcher = RARE_REWARD_ITEM_PATTERN.matcher(cleaned);
 		if (rareRewardMatcher.matches()) {
 			candidateName = rareRewardMatcher.group(1).trim();
+			structuredLootLine = true;
 		}
 
 		Matcher receivedMatcher = RECEIVED_PATTERN.matcher(trimmedRaw);
 		if (candidateName == null && receivedMatcher.matches()) {
 			candidateName = receivedMatcher.group(1);
 			quantity = parsePositiveInt(receivedMatcher.group(2), 1);
+			structuredLootLine = true;
 		} else if (candidateName == null) {
 			Matcher plusMatcher = PLUS_PATTERN.matcher(trimmedRaw);
+			if (!plusMatcher.matches()) plusMatcher = PLUS_PATTERN.matcher(cleaned);
 			if (plusMatcher.matches()) {
 				candidateName = plusMatcher.group(1);
 				quantity = parsePositiveInt(plusMatcher.group(2), 1);
+				structuredLootLine = true;
 			}
 		}
 
 		if (candidateName == null) {
 			Matcher trailingQuantityMatcher = TRAILING_QUANTITY_PATTERN.matcher(trimmedRaw);
+			if (!trailingQuantityMatcher.matches()) trailingQuantityMatcher = TRAILING_QUANTITY_PATTERN.matcher(cleaned);
 			if (trailingQuantityMatcher.matches()) {
 				candidateName = trailingQuantityMatcher.group(1);
 				quantity = parsePositiveInt(trailingQuantityMatcher.group(2), 1);
+				structuredLootLine = true;
 			}
 		}
 
-		if (candidateName == null) candidateName = trimmedRaw;
+		// Never treat arbitrary chat (PMs, party chat, bare words like "scroll") as loot.
+		if (!structuredLootLine || candidateName == null) return null;
 
 		candidateName = sanitizeLootName(candidateName);
 		if (candidateName.isEmpty() || candidateName.length() > 80 || looksLikeNonLootLine(candidateName) || shouldIgnoreLootName(candidateName)) {
@@ -6696,6 +6734,7 @@ public final class DungeonRunTrackerFeature {
 		String normalized = value.toUpperCase(Locale.ROOT);
 		return isDrtClientMessage(value)
 			|| isPartyRareDropAnnouncement(normalized)
+			|| isPrivateOrPublicChatLine(normalized)
 			|| normalized.contains(" IS READY TO USE")
 			|| (normalized.contains("PRESS DROP") && normalized.contains("ACTIVATE"))
 			|| normalized.contains("[NPC]") || normalized.contains("EXTRA STATS")
@@ -6706,7 +6745,27 @@ public final class DungeonRunTrackerFeature {
 			|| normalized.contains("BITS EARNED") || normalized.startsWith("TIME:")
 			|| normalized.contains("[BAZAAR]") || normalized.contains("BAZAAR")
 			|| normalized.contains("SOLD ") || normalized.contains("BOUGHT ")
-			|| normalized.contains("COINS!") || normalized.contains("RNG METER");
+			|| normalized.contains("COINS!") || normalized.contains("RNG METER")
+			|| normalized.equals("SCROLL")
+			|| normalized.equals("SHIELD")
+			|| normalized.equals("CLOAK");
+	}
+
+	/** Private messages / generic chat wrappers that must never become loot. */
+	private boolean isPrivateOrPublicChatLine(String normalized) {
+		if (normalized == null || normalized.isBlank()) return false;
+		if (normalized.startsWith("TO ") || normalized.startsWith("FROM ")) return true;
+		if (normalized.startsWith("TO [") || normalized.startsWith("FROM [")) return true;
+		if (normalized.contains(": ") && (normalized.contains("[MVP") || normalized.contains("[VIP")
+			|| normalized.contains("[YOUTUBE]") || normalized.contains("[ADMIN]")
+			|| normalized.contains("[HELPER]") || normalized.contains("[MOD]")
+			|| normalized.contains("[GM]") || normalized.contains("[PIG"))) {
+			return true;
+		}
+		if (normalized.startsWith("PARTY >") || normalized.startsWith("GUILD >") || normalized.startsWith("CO-OP >")) {
+			return true;
+		}
+		return false;
 	}
 
 	/** Party/global rare drop shout, e.g. "RARE REWARD! LfBers found a Necron's Handle in a Bedrock Chest!" */
@@ -6799,6 +6858,7 @@ public final class DungeonRunTrackerFeature {
 				|| normalized.contains("GEAR") || normalized.contains("VIAL")
 				|| normalized.contains("TOOTH") || normalized.contains("BROOCH")
 				|| normalized.contains("GEMSTONE") || normalized.contains("FRAGMENT")
+				|| normalized.contains("BLOOD") || normalized.contains("SHIELD")
 				|| isMasterStarLootName(value);
 	}
 
@@ -6849,6 +6909,7 @@ public final class DungeonRunTrackerFeature {
 		aliases.put("WITHER BOOTS", "WITHER_BOOTS");
 		aliases.put("WITHER CLOAK", "WITHER_CLOAK");
 		aliases.put("WITHER CLOAK SWORD", "WITHER_CLOAK");
+		aliases.put("WITHER BLOOD", "WITHER_BLOOD");
 		aliases.put("APEX DRAGON SHARD", "SHARD_APEX_DRAGON");
 		aliases.put("NECRON'S HANDLE", "NECRON_HANDLE");
 		aliases.put("SCARF'S STUDIES", "SCARF_STUDIES");
