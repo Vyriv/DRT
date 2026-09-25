@@ -52,7 +52,16 @@ public final class DungeonProfitPricing {
 		if (rawUpper.contains("UNDEAD ESSENCE") || itemIdUpper.equals("ESSENCE_UNDEAD")) {
 			return Math.max(0, config.undeadEssenceValuePer);
 		}
+		// Crimson has no config default (bazaar-priced). Resolve by name/id so blank or
+		// alternate ids (CRIMSON_ESSENCE) still get ESSENCE_CRIMSON bazaar value.
+		if (isCrimsonEssenceEntry(entry)) {
+			long crimsonPrice = resolveSellValue(ITEM_CRIMSON_ESSENCE, config);
+			if (crimsonPrice > 0L) return crimsonPrice;
+		}
 
+		if (itemIdUpper.isBlank()) {
+			itemIdUpper = inferPriceItemIdFromRawName(rawUpper);
+		}
 		if (!itemIdUpper.isBlank()) {
 			String resolvedItemId = normalizePriceItemId(itemIdUpper);
 			Long forcedSalvageValue = resolveForcedKuudraSalvageValue(resolvedItemId, rawUpper, config);
@@ -207,7 +216,27 @@ public final class DungeonProfitPricing {
 		if (entry == null) return false;
 		String rawUpper = entry.rawName == null ? "" : entry.rawName.trim().toUpperCase(Locale.ROOT);
 		String itemIdUpper = entry.itemId == null ? "" : entry.itemId.trim().toUpperCase(Locale.ROOT);
-		return rawUpper.contains("CRIMSON ESSENCE") || itemIdUpper.equals(ITEM_CRIMSON_ESSENCE);
+		if (itemIdUpper.equals(ITEM_CRIMSON_ESSENCE) || itemIdUpper.equals("CRIMSON_ESSENCE")) {
+			return true;
+		}
+		String compact = rawUpper.replaceAll("[^A-Z0-9]+", " ").trim().replaceAll("\\s+", " ");
+		return compact.contains("CRIMSON ESSENCE") || compact.equals("ESSENCE CRIMSON");
+	}
+
+	private static String inferPriceItemIdFromRawName(String rawUpper) {
+		if (rawUpper == null || rawUpper.isBlank()) return "";
+		String compact = rawUpper.replaceAll("[^A-Z0-9]+", " ").trim().replaceAll("\\s+", " ");
+		return switch (compact) {
+			case "CRIMSON ESSENCE", "ESSENCE CRIMSON" -> ITEM_CRIMSON_ESSENCE;
+			case "WITHER ESSENCE", "ESSENCE WITHER" -> "ESSENCE_WITHER";
+			case "UNDEAD ESSENCE", "ESSENCE UNDEAD" -> "ESSENCE_UNDEAD";
+			case "SPIDER ESSENCE", "ESSENCE SPIDER" -> "ESSENCE_SPIDER";
+			case "DRAGON ESSENCE", "ESSENCE DRAGON" -> "ESSENCE_DRAGON";
+			case "ICE ESSENCE", "ESSENCE ICE" -> "ESSENCE_ICE";
+			case "DIAMOND ESSENCE", "ESSENCE DIAMOND" -> "ESSENCE_DIAMOND";
+			case "GOLD ESSENCE", "ESSENCE GOLD" -> "ESSENCE_GOLD";
+			default -> "";
+		};
 	}
 
 	private static int adjustedCrimsonEssenceAmount(int baseAmount, DrtConfig config) {
@@ -351,6 +380,9 @@ public final class DungeonProfitPricing {
 			case "WARPED_STONE" -> "AOTE_STONE";
 			case "ADAPTIVE_BLADE" -> "STONE_BLADE";
 			case "WITHER_CLOAK_SWORD" -> "WITHER_CLOAK";
+			case "CRIMSON_ESSENCE" -> ITEM_CRIMSON_ESSENCE;
+			case "WITHER_ESSENCE" -> "ESSENCE_WITHER";
+			case "UNDEAD_ESSENCE" -> "ESSENCE_UNDEAD";
 			default -> itemId;
 		};
 	}

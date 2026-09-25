@@ -114,6 +114,8 @@ public final class DungeonRunTrackerFeature {
 	private static final Pattern QUANTITY_PREFIX_PATTERN = Pattern.compile("^(\\d+)x?\\s+(.+)$", Pattern.CASE_INSENSITIVE);
 	private static final Pattern QUANTITY_SUFFIX_PATTERN = Pattern.compile("^(.+?)\\s+[xX×]\\s*(\\d+)$");
 	private static final Pattern ENCHANTED_BOOK_PATTERN = Pattern.compile("^Enchanted Book \\((.+) ([IVX]+)\\)$", Pattern.CASE_INSENSITIVE);
+	/** Hypixel book lore is often just "One For All I" / "Ultimate Wise V" without the Enchanted Book wrapper. */
+	private static final Pattern ENCHANT_LORE_LINE_PATTERN = Pattern.compile("^(.+?)\\s+([IVX]+)$", Pattern.CASE_INSENSITIVE);
 	private static final Pattern BOSS_TIME_PATTERN = Pattern.compile("Defeated .+ in (\\d+)m\\s+(\\d+)s", Pattern.CASE_INSENSITIVE);
 	private static final Pattern SHORT_FLOOR_PATTERN = Pattern.compile("(?:^|[^A-Z0-9])([FM])\\s*([1-7])(?:$|[^A-Z0-9])");
 	private static final Pattern KUUDRA_SHORT_TIER_PATTERN = Pattern.compile("(?:^|[^A-Z0-9])(?:K|T)\\s*([1-5])(?:$|[^A-Z0-9])", Pattern.CASE_INSENSITIVE);
@@ -152,7 +154,7 @@ public final class DungeonRunTrackerFeature {
 			Map.entry("KUUDRA KEY", DungeonFloor.K1)
 	);
 	private static final Set<String> ULTIMATE_ENCHANTS = Set.of(
-			"LEGION", "ULTIMATE_WISE", "LAST_STAND", "SOUL_EATER", "SWARM", "COMBO", "REND",
+			"LEGION", "WISE", "LAST_STAND", "SOUL_EATER", "SWARM", "COMBO", "REND",
 			"NO_PAIN_NO_GAIN", "ONE_FOR_ALL", "CHIMERA", "BANK", "JERRY", "INFERNO",
 			"FATAL_TEMPO", "DUPLEX", "FLASH", "HABANERO_TACTICS"
 	);
@@ -438,6 +440,9 @@ public final class DungeonRunTrackerFeature {
 	private String lastOpenedRewardChestTitleForChat = "";
 	/** Set while viewing a Croesus preview with an Open button; consumed on the subsequent open. */
 	private String armedPreviewRewardChestTitle = "";
+	/** Last Croesus chest row the player hovered; used when Hypixel opens "Master Catacombs - Floor X". */
+	private String lastHoveredCroesusChestTitle = "";
+	private String lastSelectedCroesusChestTitle = "";
 	/** Chest tiers the player actually opened a preview/GUI for this Croesus visit. */
 	private final Set<String> viewedCroesusChestTitles = new HashSet<>();
 
@@ -1320,6 +1325,8 @@ public final class DungeonRunTrackerFeature {
 		}
 
 		lootScreenPendingMillis = 0L;
+		lastSelectedCroesusChestTitle = mapped.canonicalTitle;
+		lastHoveredCroesusChestTitle = mapped.canonicalTitle;
 		if (button == 1) {
 			scheduleAutoOpenRewardChest();
 		} else {
@@ -1359,7 +1366,7 @@ public final class DungeonRunTrackerFeature {
 			return;
 		}
 		if (!(client.screen instanceof AbstractContainerScreen<?> screen) || client.player == null || client.gameMode == null) return;
-		if (canonicalRewardChestTitle(normalize(screen.getTitle().getString())) == null) return;
+		if (resolveCanonicalRewardChestTitle(normalize(screen.getTitle().getString()), client.player.containerMenu) == null) return;
 
 		int slotIndex = findOpenRewardChestSlotIndex(client.player.containerMenu);
 		if (slotIndex < 0) return;
@@ -2140,6 +2147,9 @@ public final class DungeonRunTrackerFeature {
 		CroesusChestRow bestNormal = bestNormalChest(rows);
 		CroesusChestRow bestKey = bestKeyChest(rows, bestNormal);
 		CroesusChestRow hoverRow = hoveredChestSlot(rows, mouseX, mouseY);
+		if (hoverRow != null) {
+			lastHoveredCroesusChestTitle = hoverRow.canonicalTitle;
+		}
 		CroesusChestRow tooltipRow = null;
 		boolean itemTooltipActive = hoverRow != null;
 
@@ -2817,7 +2827,8 @@ public final class DungeonRunTrackerFeature {
 	private OverlayChestData currentOverlayChestData(Minecraft client) {
 		if (!(client.screen instanceof AbstractContainerScreen<?> screen)) return null;
 		String normalizedTitle = normalize(screen.getTitle().getString());
-		String canonicalTitle = canonicalRewardChestTitle(normalizedTitle);
+		AbstractContainerMenu liveMenu = client.player == null ? null : client.player.containerMenu;
+		String canonicalTitle = resolveCanonicalRewardChestTitle(normalizedTitle, liveMenu);
 		if (canonicalTitle == null) {
 			// Pending loot from a chest you just opened must not keep the breakdown
 			// overlay on Croesus menus after you go back.
@@ -2834,7 +2845,6 @@ public final class DungeonRunTrackerFeature {
 
 		// Live Wood-Bedrock GUIs have the real stacks. Prefer them over Croesus Contents lore,
 		// which used to drop items like Precursor Gear and then stick that incomplete list here.
-		AbstractContainerMenu liveMenu = client.player == null ? null : client.player.containerMenu;
 		List<DungeonLootEntry> liveEntries = List.of();
 		if (liveMenu != null && isCatacombsRewardChest(canonicalTitle)) {
 			liveEntries = collectLiveRewardChestLootEntries(liveMenu);
@@ -2895,6 +2905,10 @@ public final class DungeonRunTrackerFeature {
 			for (DungeonLootEntry entry : liveEntries) {
 				if (entry != null) entries.add(entry.copy());
 			}
+			// Croesus Contents lore still has books when Hypixel GUI stacks are bare "Enchanted Book".
+			if (offer != null) {
+				mergeMissingOfferLoot(entries, offer.lootEntries);
+			}
 		} else if (offer != null && offer.lootEntries != null) {
 			for (DungeonLootEntry entry : offer.lootEntries) {
 				if (entry != null) entries.add(entry.copy());
@@ -2903,6 +2917,31 @@ public final class DungeonRunTrackerFeature {
 		long loreValue = offer == null ? 0L : offer.valueCoins;
 		long value = offerValueCoins(canonicalTitle, entries, loreValue);
 		return new OverlayChestData(toDisplayChestTitle(canonicalTitle), entries, breakdown, value, value - breakdown.totalCostCoins());
+	}
+
+	/** Fill gaps from Croesus lore when live GUI stacks were incomplete (esp. enchanted books). */
+	private void mergeMissingOfferLoot(List<DungeonLootEntry> liveEntries, List<DungeonLootEntry> offerEntries) {
+		if (liveEntries == null || offerEntries == null || offerEntries.isEmpty()) return;
+		Set<String> present = new HashSet<>();
+		for (DungeonLootEntry entry : liveEntries) {
+			String key = lootMergeKey(entry);
+			if (!key.isBlank()) present.add(key);
+		}
+		for (DungeonLootEntry offerEntry : offerEntries) {
+			if (offerEntry == null) continue;
+			String key = lootMergeKey(offerEntry);
+			if (key.isBlank() || present.contains(key)) continue;
+			liveEntries.add(offerEntry.copy());
+			present.add(key);
+		}
+	}
+
+	private static String lootMergeKey(DungeonLootEntry entry) {
+		if (entry == null) return "";
+		String itemId = entry.itemId == null ? "" : entry.itemId.trim().toUpperCase(Locale.ROOT);
+		if (!itemId.isBlank()) return "id:" + itemId;
+		String raw = entry.rawName == null ? "" : entry.rawName.trim().toUpperCase(Locale.ROOT);
+		return raw.isBlank() ? "" : "name:" + raw;
 	}
 
 	/** Loot stacks sitting in an open Wood-Bedrock reward chest GUI (live run or Croesus preview). */
@@ -2916,27 +2955,8 @@ public final class DungeonRunTrackerFeature {
 			if (stack.isEmpty() || stackIndicatesOpenRewardChest(stack) || isRewardChestUiStack(stack)) continue;
 			if (canonicalChestTitleFromStack(stack) != null) continue;
 
-			String rawName = cleanText(stack.getHoverName().getString());
-			String cleaned = normalize(rawName);
-			if (rawName.isBlank() || shouldIgnoreLootName(rawName) || looksLikeNonLootLine(cleaned)) continue;
-
-			ParsedLootName parsed = parseLootDisplayName(rawName);
-			if (parsed.name().isBlank() || shouldIgnoreLootName(parsed.name()) || looksLikeNonLootLine(normalize(parsed.name()))) {
-				continue;
-			}
-
-			int quantity = Math.max(Math.max(1, stack.getCount()), parsed.quantity());
-			String itemId = resolveItemId(parsed.name());
-			if (itemId.isEmpty() && isMasterStarLootName(parsed.name())) {
-				String resolved = resolveMasterStarItemId(
-					stripTrailingLootQuantity(sanitizeLootName(parsed.name())).toUpperCase(Locale.ROOT)
-				);
-				if (resolved != null) itemId = resolved;
-			}
-			if (itemId.isEmpty() && !looksReasonableLootName(parsed.name()) && !isMasterStarLootName(parsed.name())) {
-				continue;
-			}
-			entries.add(new DungeonLootEntry(parsed.name(), itemId, quantity));
+			DungeonLootEntry entry = lootEntryFromRewardChestStack(stack);
+			if (entry != null) entries.add(entry);
 		}
 		return entries;
 	}
@@ -3006,6 +3026,61 @@ public final class DungeonRunTrackerFeature {
 			if (normalizedTitle.equals(title) || normalizedTitle.startsWith(title + " ")) return title;
 		}
 		return null;
+	}
+
+	/**
+	 * Hypixel often titles the open/preview GUI "Master Catacombs - Floor VII" instead of "Bedrock Chest".
+	 * Resolve the Wood-Bedrock tier from recent Croesus interaction or menu contents.
+	 */
+	private String resolveCanonicalRewardChestTitle(String normalizedScreenTitle, AbstractContainerMenu menu) {
+		String direct = canonicalRewardChestTitle(normalizedScreenTitle);
+		if (direct != null) return direct;
+		if (!isRewardsMenuTitle(normalizedScreenTitle)) return null;
+
+		if (pendingLootChestAssigned && pendingLootChestTitle != null && !pendingLootChestTitle.isBlank()) {
+			String pending = canonicalRewardChestTitle(normalize(pendingLootChestTitle));
+			if (pending != null) return pending;
+		}
+		if (armedPreviewRewardChestTitle != null && !armedPreviewRewardChestTitle.isBlank()) {
+			return armedPreviewRewardChestTitle;
+		}
+		if (lastSelectedCroesusChestTitle != null && !lastSelectedCroesusChestTitle.isBlank()) {
+			return lastSelectedCroesusChestTitle;
+		}
+		if (lastHoveredCroesusChestTitle != null && !lastHoveredCroesusChestTitle.isBlank()) {
+			return lastHoveredCroesusChestTitle;
+		}
+
+		String byCost = matchRewardChestTitleByOpenCost(menu);
+		if (byCost != null) return byCost;
+
+		if (menu != null) {
+			for (int slotIndex = 0; slotIndex < menu.slots.size(); slotIndex++) {
+				Slot slot = menu.getSlot(slotIndex);
+				if (slot == null || !isServerOwnedSlot(slot)) continue;
+				String fromStack = canonicalChestTitleFromStack(slot.getItem());
+				if (fromStack != null && REWARD_CHEST_TITLES.contains(fromStack)) return fromStack;
+			}
+		}
+		return null;
+	}
+
+	private String matchRewardChestTitleByOpenCost(AbstractContainerMenu menu) {
+		if (menu == null || cachedChestOffersByTitle.isEmpty()) return null;
+		int openSlot = findOpenRewardChestSlotIndex(menu);
+		if (openSlot < 0) return null;
+		Long openCost = parseChestCost(menu.getSlot(openSlot).getItem());
+		if (openCost == null || openCost < 0L) return null;
+
+		String matched = null;
+		for (Map.Entry<String, DungeonChestOffer> entry : cachedChestOffersByTitle.entrySet()) {
+			DungeonChestOffer offer = entry.getValue();
+			if (offer == null || offer.costBreakdown == null) continue;
+			if (offer.costBreakdown.baseChestCostCoins != openCost.longValue()) continue;
+			if (matched != null) return null; // ambiguous
+			matched = entry.getKey();
+		}
+		return matched;
 	}
 
 	private ItemStack overlayItemIcon(String itemId) {
@@ -3135,7 +3210,12 @@ public final class DungeonRunTrackerFeature {
 	private boolean isUltimateEnchantName(String displayName, String itemId) {
 		if (itemId != null && itemId.startsWith("ENCHANTMENT_ULTIMATE_")) return true;
 		String normalized = toItemIdPart(displayName);
-		return ULTIMATE_ENCHANTS.contains(normalized);
+		if (ULTIMATE_ENCHANTS.contains(normalized)) return true;
+		if (normalized.startsWith("ULTIMATE_") && ULTIMATE_ENCHANTS.contains(normalized.substring("ULTIMATE_".length()))) {
+			return true;
+		}
+		String stripped = normalizeEnchantName(displayName == null ? "" : displayName);
+		return ULTIMATE_ENCHANTS.contains(stripped);
 	}
 
 	private String enchantDisplayFromItemId(String itemId) {
@@ -3369,7 +3449,8 @@ public final class DungeonRunTrackerFeature {
 		if (!(client.screen instanceof AbstractContainerScreen<?> screen) || client.player == null) return;
 
 		String normalizedTitle = normalize(screen.getTitle().getString());
-		String canonicalRewardTitle = canonicalRewardChestTitle(normalizedTitle);
+		AbstractContainerMenu menu = client.player.containerMenu;
+		String canonicalRewardTitle = resolveCanonicalRewardChestTitle(normalizedTitle, menu);
 		DungeonFloor menuTitleFloor = rewardContextFloorFromTitle(normalizedTitle);
 		long now = System.currentTimeMillis();
 		rememberRunContextFromMenuTitle(normalizedTitle, now);
@@ -3385,7 +3466,6 @@ public final class DungeonRunTrackerFeature {
 			}
 			if (lootWindowUntilMillis <= 0L || now > lootWindowUntilMillis) return;
 
-			AbstractContainerMenu menu = client.player.containerMenu;
 			if (isRewardChestPreviewScreen(menu)) {
 				String previewKey = "preview#" + canonicalRewardTitle + "#" + menu.containerId;
 				refreshRewardModifierScan(menu, previewKey, now);
@@ -3459,7 +3539,6 @@ public final class DungeonRunTrackerFeature {
 		// Back on the chest list — drop any unused preview arm (backed out without opening).
 		armedPreviewRewardChestTitle = "";
 
-		AbstractContainerMenu menu = client.player.containerMenu;
 		if (menu == null) return;
 
 		String screenKey = normalizedTitle + "#" + menu.containerId;
@@ -3846,23 +3925,8 @@ public final class DungeonRunTrackerFeature {
 			if (stack.isEmpty() || stackIndicatesOpenRewardChest(stack) || isRewardChestUiStack(stack)) continue;
 			if (canonicalChestTitleFromStack(stack) != null) continue;
 
-			String rawName = cleanText(stack.getHoverName().getString());
-			String cleaned = normalize(rawName);
-			if (rawName.isBlank() || shouldIgnoreLootName(rawName) || looksLikeNonLootLine(cleaned)) continue;
-
-			ParsedLootName parsed = parseLootDisplayName(rawName);
-			if (parsed.name().isBlank() || shouldIgnoreLootName(parsed.name()) || looksLikeNonLootLine(normalize(parsed.name()))) continue;
-
-			int quantity = Math.max(Math.max(1, stack.getCount()), parsed.quantity());
-			String itemId = resolveItemId(parsed.name());
-			if (itemId.isEmpty() && isMasterStarLootName(parsed.name())) {
-				String resolved = resolveMasterStarItemId(
-					stripTrailingLootQuantity(sanitizeLootName(parsed.name())).toUpperCase(Locale.ROOT)
-				);
-				if (resolved != null) itemId = resolved;
-			}
-			if (itemId.isEmpty() && !looksReasonableLootName(parsed.name()) && !isMasterStarLootName(parsed.name())) continue;
-			DungeonLootEntry entry = new DungeonLootEntry(parsed.name(), itemId, quantity);
+			DungeonLootEntry entry = lootEntryFromRewardChestStack(stack);
+			if (entry == null) continue;
 			observeTrackingLoot(entry, DetectionSource.CONFIRMED_GUI_COMPONENT, menu.containerId, slotIndex, SlotOwner.SERVER_CONTAINER, "gui");
 			mergePendingLootEntry(entry, true);
 			found = true;
@@ -5769,25 +5833,30 @@ public final class DungeonRunTrackerFeature {
 		}
 
 		String reportId = incident.id();
-		String pathText = replayPath == null ? "" : replayPath.toAbsolutePath().toString();
+		Path absoluteReplay = replayPath == null ? null : replayPath.toAbsolutePath().normalize();
+		String safePathText = absoluteReplay == null ? "" : privacySafePath(client, absoluteReplay);
 		DungeonRunTracker.LOGGER.warn(
 			"[DRT] Tracking issue detected reportId={} path='{}'",
 			reportId,
-			pathText.isBlank() ? "(unsaved)" : pathText
+			safePathText.isBlank() ? "(unsaved)" : safePathText
 		);
 
 		var message = Component.literal("[DRT] Tracking issue detected (report " + reportId + ").\n")
 			.withStyle(Style.EMPTY.withColor(ChatFormatting.GOLD))
 			.append(Component.literal("Chest/run ownership looked inconsistent. Loot may be unassigned.\n")
 				.withStyle(ChatFormatting.YELLOW));
-		if (!pathText.isBlank()) {
+		if (absoluteReplay != null) {
 			message = message.append(Component.literal("Bug zip saved:\n")
 					.withStyle(ChatFormatting.GRAY))
-				.append(Component.literal(pathText + "\n")
+				.append(Component.literal(safePathText + "\n")
+					.withStyle(Style.EMPTY.withColor(ChatFormatting.AQUA)))
+				.append(Component.literal("[Open Folder]")
 					.withStyle(Style.EMPTY
 						.withColor(ChatFormatting.AQUA)
-						.withClickEvent(new ClickEvent.CopyToClipboard(pathText))
-						.withHoverEvent(new HoverEvent.ShowText(Component.literal("Click to copy zip path")))));
+						.withUnderlined(true)
+						.withClickEvent(new ClickEvent.RunCommand("/drt debug openfolder " + reportId))
+						.withHoverEvent(new HoverEvent.ShowText(Component.literal("Open the bug zip folder"))))
+					.append(Component.literal(" ")));
 		}
 		message = message.append(Component.literal("[Copy Bug Report]")
 			.withStyle(Style.EMPTY
@@ -5871,6 +5940,25 @@ public final class DungeonRunTrackerFeature {
 		}
 	}
 
+	public boolean openDiagnosticBugFolder(String reportId) {
+		DiagnosticIncident incident = diagnostics.incidentById(reportId);
+		Minecraft client = Minecraft.getInstance();
+		if (client.player == null) return false;
+		if (incident == null) {
+			sendDrtSystemMessage(client, Component.literal("§c[DRT] Diagnostic report not found: " + nullToEmpty(reportId)));
+			return false;
+		}
+		try {
+			Path replayPath = diagnosticReplayZipPath(incident);
+			openDiagnosticZipFolder(client, replayPath);
+			return true;
+		} catch (Exception e) {
+			DungeonRunTracker.LOGGER.warn("[DRT] Failed to open diagnostic bug folder: {}", e.getMessage());
+			sendDrtSystemMessage(client, Component.literal("§c[DRT] Could not open the export folder."));
+			return false;
+		}
+	}
+
 	public boolean copyDiagnosticZipToClipboard(String reportId) {
 		DiagnosticIncident incident = diagnostics.incidentById(reportId);
 		Minecraft client = Minecraft.getInstance();
@@ -5900,7 +5988,7 @@ public final class DungeonRunTrackerFeature {
 			return true;
 		} catch (Throwable copyFailure) {
 			DungeonRunTracker.LOGGER.warn("[DRT] Failed to copy diagnostic zip file to clipboard: {}", copyFailure.getMessage());
-			openDiagnosticZipFolder(client, replayPath);
+			openDiagnosticZipFolder(client, replayPath, "Could not copy the ZIP directly, so opened the export folder.");
 			return false;
 		}
 	}
@@ -5921,14 +6009,22 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private void openDiagnosticZipFolder(Minecraft client, Path replayPath) {
+		openDiagnosticZipFolder(client, replayPath, "Opened export folder.");
+	}
+
+	private void openDiagnosticZipFolder(Minecraft client, Path replayPath, String successPrefix) {
 		Path folder = replayPath == null ? diagnosticReplayParentDir() : replayPath.toAbsolutePath().getParent();
 		if (folder == null) folder = diagnosticReplayParentDir();
 		try {
 			openFolder(folder);
-			sendDrtSystemMessage(client, Component.literal("§e[DRT] Could not copy the ZIP directly, so opened the export folder."));
+			String safe = privacySafePath(client, folder);
+			String prefix = successPrefix == null || successPrefix.isBlank() ? "Opened export folder." : successPrefix.trim();
+			if (!prefix.endsWith(".") && !prefix.endsWith(":")) prefix = prefix + ".";
+			String detail = safe.isBlank() ? "" : (" " + safe);
+			sendDrtSystemMessage(client, Component.literal("§a[DRT] " + prefix + detail));
 		} catch (Throwable openFailure) {
 			DungeonRunTracker.LOGGER.warn("[DRT] Failed to open diagnostic export folder: {}", openFailure.getMessage());
-			sendDrtSystemMessage(client, Component.literal("§c[DRT] Could not copy the ZIP or open the export folder."));
+			sendDrtSystemMessage(client, Component.literal("§c[DRT] Could not open the export folder."));
 		}
 	}
 
@@ -5947,6 +6043,41 @@ public final class DungeonRunTrackerFeature {
 		} else {
 			new ProcessBuilder("xdg-open", file.getAbsolutePath()).start();
 		}
+	}
+
+	/** Prefer a path relative to the game dir; otherwise redact the home/username segment. */
+	private static String privacySafePath(Minecraft client, Path path) {
+		if (path == null) return "";
+		Path absolute = path.toAbsolutePath().normalize();
+		try {
+			if (client != null && client.gameDirectory != null) {
+				Path gameDir = client.gameDirectory.toPath().toAbsolutePath().normalize();
+				if (absolute.startsWith(gameDir)) {
+					return gameDir.relativize(absolute).toString().replace('\\', '/');
+				}
+			}
+		} catch (Exception ignored) {
+			// Fall through to home redaction.
+		}
+		return censorHomeDirectory(absolute.toString());
+	}
+
+	private static String censorHomeDirectory(String path) {
+		if (path == null || path.isBlank()) return "";
+		try {
+			String home = System.getProperty("user.home");
+			if (home != null && !home.isBlank()) {
+				String homeAbs = Path.of(home).toAbsolutePath().normalize().toString();
+				if (path.regionMatches(true, 0, homeAbs, 0, homeAbs.length())) {
+					String suffix = path.substring(homeAbs.length()).replace('\\', '/');
+					if (!suffix.startsWith("/") && !suffix.isEmpty()) suffix = "/" + suffix;
+					return "%USERPROFILE%" + suffix;
+				}
+			}
+		} catch (Exception ignored) {
+			// Fall through to regex redaction.
+		}
+		return path.replace('\\', '/').replaceAll("(?i)(/Users/)[^/]+", "$1<user>");
 	}
 
 	private Path diagnosticReplayParentDir() {
@@ -6708,9 +6839,105 @@ public final class DungeonRunTrackerFeature {
 		if (numericLevel <= 0) return null;
 
 		String normalizedEnchantName = normalizeEnchantName(enchantName);
-		boolean isUltimate = ULTIMATE_ENCHANTS.contains(normalizedEnchantName);
+		boolean ultimatePrefix = sanitizeLootName(enchantName).regionMatches(true, 0, "Ultimate ", 0, 9);
+		boolean isUltimate = ultimatePrefix
+			|| ULTIMATE_ENCHANTS.contains(normalizedEnchantName);
 		if (isUltimate) return "ENCHANTMENT_ULTIMATE_" + normalizedEnchantName + "_" + numericLevel;
 		return "ENCHANTMENT_" + normalizedEnchantName + "_" + numericLevel;
+	}
+
+	/**
+	 * Hypixel open-chest stacks are often named just "Enchanted Book" with the real enchant in lore.
+	 * Croesus Contents uses "Enchanted Book (One For All I)" instead.
+	 */
+	private DungeonLootEntry lootEntryFromRewardChestStack(ItemStack stack) {
+		if (stack == null || stack.isEmpty()) return null;
+
+		String rawName = cleanText(stack.getHoverName().getString());
+		if (rawName.isBlank()) return null;
+
+		String displayName = rawName;
+		boolean bareBook = isBareEnchantedBookName(rawName) || stack.is(Items.ENCHANTED_BOOK);
+		if (bareBook) {
+			String fromLore = enchantedBookDisplayNameFromLore(stack);
+			if (fromLore != null && !fromLore.isBlank()) {
+				displayName = fromLore;
+			} else if (isBareEnchantedBookName(rawName)) {
+				return null;
+			}
+		}
+
+		String cleaned = normalize(displayName);
+		if (shouldIgnoreLootName(displayName) || looksLikeNonLootLine(cleaned)) return null;
+
+		ParsedLootName parsed = parseLootDisplayName(displayName);
+		if (parsed.name().isBlank() || shouldIgnoreLootName(parsed.name()) || looksLikeNonLootLine(normalize(parsed.name()))) {
+			return null;
+		}
+
+		int quantity = Math.max(Math.max(1, stack.getCount()), parsed.quantity());
+		String itemId = resolveItemId(parsed.name());
+		if (itemId.isEmpty() && isMasterStarLootName(parsed.name())) {
+			String resolved = resolveMasterStarItemId(
+				stripTrailingLootQuantity(sanitizeLootName(parsed.name())).toUpperCase(Locale.ROOT)
+			);
+			if (resolved != null) itemId = resolved;
+		}
+		if (itemId.isEmpty() && !looksReasonableLootName(parsed.name()) && !isMasterStarLootName(parsed.name())) {
+			return null;
+		}
+		return new DungeonLootEntry(parsed.name(), itemId, quantity);
+	}
+
+	private boolean isBareEnchantedBookName(String name) {
+		String sanitized = stripTrailingLootQuantity(sanitizeLootName(name)).toUpperCase(Locale.ROOT);
+		return sanitized.equals("ENCHANTED BOOK");
+	}
+
+	private String enchantedBookDisplayNameFromLore(ItemStack stack) {
+		for (String line : cleanLoreLines(stack)) {
+			if (line == null || line.isBlank()) continue;
+			String cleaned = sanitizeLootName(line);
+			if (cleaned.isBlank() || cleaned.length() > 48) continue;
+			if (looksLikeEnchantLoreNoise(cleaned)) continue;
+
+			if (resolveEnchantedBookId(cleaned) != null) return cleaned;
+
+			Matcher matcher = ENCHANT_LORE_LINE_PATTERN.matcher(cleaned);
+			if (!matcher.matches()) continue;
+			String wrapped = "Enchanted Book ("
+				+ matcher.group(1).trim()
+				+ " "
+				+ matcher.group(2).trim().toUpperCase(Locale.ROOT)
+				+ ")";
+			if (resolveEnchantedBookId(wrapped) != null) return wrapped;
+		}
+		return null;
+	}
+
+	private boolean looksLikeEnchantLoreNoise(String cleaned) {
+		String upper = cleaned.toUpperCase(Locale.ROOT);
+		return upper.contains("COMMON")
+			|| upper.contains("UNCOMMON")
+			|| upper.contains("RARE")
+			|| upper.contains("EPIC")
+			|| upper.contains("LEGENDARY")
+			|| upper.contains("MYTHIC")
+			|| upper.contains("DIVINE")
+			|| upper.contains("SPECIAL")
+			|| upper.contains("COINS")
+			|| upper.contains("CLICK")
+			|| upper.contains("SOLD")
+			|| upper.startsWith("GEAR SCORE")
+			|| upper.contains("DAMAGE")
+			|| upper.contains("HEALTH")
+			|| upper.contains("DEFENSE")
+			|| upper.contains("INTELLIGENCE")
+			|| upper.contains("STRENGTH")
+			|| upper.contains("ABILITY")
+			|| upper.contains("GRANTS")
+			|| upper.contains("THIS ENCHANTMENT")
+			|| upper.contains("THIS ITEM");
 	}
 
 	private String normalizeEnchantName(String enchantName) {

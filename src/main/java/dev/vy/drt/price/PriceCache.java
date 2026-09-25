@@ -24,7 +24,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public final class PriceCache {
-	private static final URI PRICES_URI = URI.create("https://athen.aerii.xyz/prices");
+	private static final URI PRICES_URI = URI.create("https://api.vyriv.dev/v1/prices");
 	private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(10);
 	private static final long REFRESH_MINUTES = 10L;
 	private static final Pattern COFL_META_PRICE = Pattern.compile("<meta name=\"description\" content=\"[^\"]*?Price: ([0-9,]+) Coins", Pattern.CASE_INSENSITIVE);
@@ -136,7 +136,7 @@ public final class PriceCache {
 		try {
 			refresh();
 		} catch (Exception exception) {
-			DungeonRunTracker.LOGGER.warn("[DRT] Failed to refresh Athen prices, keeping previous cache", exception);
+			DungeonRunTracker.LOGGER.warn("[DRT] Failed to refresh Vyriv prices, keeping previous cache", exception);
 		}
 	}
 
@@ -165,7 +165,7 @@ public final class PriceCache {
 			itemIdToAuctionData = Map.copyOf(nextAuctionData);
 			itemIdToBazaarData = Map.copyOf(nextBazaarData);
 			invalidateSearchIndex();
-			DungeonRunTracker.LOGGER.info("[DRT] Loaded {} Athen price entries", nextPrices.size());
+			DungeonRunTracker.LOGGER.info("[DRT] Loaded {} Vyriv price entries", nextPrices.size());
 		}
 	}
 
@@ -228,9 +228,21 @@ public final class PriceCache {
 
 	private static Double positiveNumber(JsonObject object, String key) {
 		JsonElement element = object.get(key);
-		if (element != null && element.isJsonPrimitive() && element.getAsJsonPrimitive().isNumber()) {
-			double value = element.getAsDouble();
+		if (element == null || element.isJsonNull() || !element.isJsonPrimitive()) return null;
+		try {
+			double value;
+			if (element.getAsJsonPrimitive().isNumber()) {
+				value = element.getAsDouble();
+			} else if (element.getAsJsonPrimitive().isString()) {
+				String raw = element.getAsString();
+				if (raw == null || raw.isBlank()) return null;
+				value = Double.parseDouble(raw.trim().replace(",", ""));
+			} else {
+				return null;
+			}
 			if (value > 0.0D) return value;
+		} catch (NumberFormatException ignored) {
+			return null;
 		}
 		return null;
 	}

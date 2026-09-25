@@ -724,8 +724,14 @@ public final class DungeonLootScreen extends Screen {
 			for (DungeonLootEntry e : r.lootEntries) {
 				if (e == null) continue;
 				if (shouldHideLootEntry(e)) continue;
-				String key = e.itemId != null && !e.itemId.isBlank() ? e.itemId : e.rawName.trim().toUpperCase(Locale.ROOT);
-				MutableAgg agg = aggs.computeIfAbsent(key, k -> new MutableAgg(displayName(e), e.itemId == null ? "" : e.itemId));
+				String resolvedItemId = e.itemId == null ? "" : e.itemId.trim();
+				if (resolvedItemId.isBlank()) {
+					String raw = e.rawName == null ? "" : e.rawName.trim().toUpperCase(Locale.ROOT).replaceAll("[^A-Z0-9]+", " ").trim().replaceAll("\\s+", " ");
+					if (raw.contains("CRIMSON ESSENCE") || raw.equals("ESSENCE CRIMSON")) resolvedItemId = "ESSENCE_CRIMSON";
+				}
+				final String itemId = resolvedItemId;
+				String key = !itemId.isBlank() ? itemId : e.rawName.trim().toUpperCase(Locale.ROOT);
+				MutableAgg agg = aggs.computeIfAbsent(key, k -> new MutableAgg(displayName(e), itemId));
 				agg.quantity += Math.max(1, e.quantity);
 				if (DungeonProfitPricing.isForcedSalvageValued(e, config)) {
 					agg.forcedSalvage = true;
@@ -734,8 +740,10 @@ public final class DungeonLootScreen extends Screen {
 		}
 		List<DisplayRow> rows = new ArrayList<>();
 		for (MutableAgg agg : aggs.values()) {
-			long unit = DungeonProfitPricing.resolveUnitPrice(new DungeonLootEntry(agg.label, agg.itemId, 1), config);
-			rows.add(new DisplayRow(agg.label, agg.itemId, agg.quantity, unit, unit * agg.quantity, agg.forcedSalvage));
+			DungeonLootEntry priced = new DungeonLootEntry(agg.label, agg.itemId, Math.max(1, agg.quantity));
+			long unit = DungeonProfitPricing.resolveUnitPrice(priced, config);
+			long total = DungeonProfitPricing.resolveTotalPrice(priced, config);
+			rows.add(new DisplayRow(agg.label, agg.itemId, agg.quantity, unit, total, agg.forcedSalvage));
 		}
 		Comparator<DisplayRow> comparator = displayRowComparator();
 		if (comparator != null) {
@@ -862,7 +870,7 @@ public final class DungeonLootScreen extends Screen {
 	}
 
 	private String rowKey(DisplayRow row) {
-		return row.itemId() + " " + row.label();
+		return row.itemId() + "" + row.label();
 	}
 
 	private static String normalizeSearchText(String text) {

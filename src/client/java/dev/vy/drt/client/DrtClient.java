@@ -259,6 +259,19 @@ public final class DrtClient implements ClientModInitializer {
 							})
 						)
 					)
+					.then(ClientCommands.literal("openfolder")
+						.then(ClientCommands.argument("reportId", StringArgumentType.word())
+							.executes(context -> {
+								Minecraft client = context.getSource().getClient();
+								if (client.player == null) {
+									context.getSource().sendError(Component.literal("§c[DRT] Not in game"));
+									return 0;
+								}
+								String reportId = StringArgumentType.getString(context, "reportId");
+								return tracker.openDiagnosticBugFolder(reportId) ? Command.SINGLE_SUCCESS : 0;
+							})
+						)
+					)
 					.then(ClientCommands.literal("copyzip")
 						.then(ClientCommands.argument("reportId", StringArgumentType.word())
 							.executes(context -> {
