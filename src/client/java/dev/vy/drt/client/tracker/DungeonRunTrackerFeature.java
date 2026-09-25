@@ -3090,7 +3090,7 @@ public final class DungeonRunTrackerFeature {
 		ItemStack cached = getItemIcon(visualId);
 		if (!cached.isEmpty()) return cached;
 		if (visualId.equals(ITEM_DUNGEON_CHEST_KEY)) return new ItemStack(Items.TRIPWIRE_HOOK);
-		if (visualId.equals(ITEM_KISMET_FEATHER)) return new ItemStack(Items.FEATHER);
+		if (visualId.equals(ITEM_KISMET_FEATHER) || visualId.equals("ANANKE_FEATHER")) return new ItemStack(Items.FEATHER);
 		if (visualId.equals(ITEM_WHEEL_OF_FATE)) return new ItemStack(Items.CLOCK);
 		if (visualId.startsWith("ENCHANTMENT_")) return new ItemStack(Items.ENCHANTED_BOOK);
 		if (visualId.equals("FUMING_POTATO_BOOK") || visualId.equals("HOT_POTATO_BOOK")) return new ItemStack(Items.BOOK);
@@ -7086,6 +7086,11 @@ public final class DungeonRunTrackerFeature {
 				|| normalized.contains("TOOTH") || normalized.contains("BROOCH")
 				|| normalized.contains("GEMSTONE") || normalized.contains("FRAGMENT")
 				|| normalized.contains("BLOOD") || normalized.contains("SHIELD")
+				|| normalized.contains("FEATHER") || normalized.contains("ANANKE")
+				|| normalized.contains("MANDRAA") || normalized.contains("TENTACLE")
+				|| normalized.contains("MANDIBLE") || normalized.contains("NECKLACE")
+				|| normalized.contains("BRACELET") || normalized.contains("BELT")
+				|| normalized.contains("WAND") || normalized.contains("STAFF")
 				|| isMasterStarLootName(value);
 	}
 
@@ -7124,7 +7129,13 @@ public final class DungeonRunTrackerFeature {
 		aliases.put("RECOMBOBULATOR 3000", "RECOMBOBULATOR_3000");
 		aliases.put("DUNGEON CHEST KEY", "DUNGEON_CHEST_KEY");
 		aliases.put("KISMET FEATHER", "KISMET_FEATHER");
+		aliases.put("ANANKE FEATHER", "ANANKE_FEATHER");
+		aliases.put("ANANKE FEATHERS", "ANANKE_FEATHER");
 		aliases.put("WHEEL OF FATE", "WHEEL_OF_FATE");
+		aliases.put("MANDRAA", "MANDRAA");
+		aliases.put("HELLSTORM WAND", "HELLSTORM_WAND");
+		aliases.put("TENTACLE DYE", "TENTACLE_DYE");
+		aliases.put("HEAVY PEARL", "HEAVY_PEARL");
 		for (int tier = 1; tier <= 10; tier++) {
 			aliases.put("MASTER SKULL TIER " + tier, "MASTER_SKULL_TIER_" + tier);
 			aliases.put("MASTER SKULL - TIER " + tier, "MASTER_SKULL_TIER_" + tier);

@@ -1044,7 +1044,7 @@ public final class DungeonLootScreen extends Screen {
 		// Misc non-skull
 		if (id.equals("FUMING_POTATO_BOOK"))        return new ItemStack(Items.BOOK);
 		if (id.equals("DUNGEON_CHEST_KEY"))         return new ItemStack(Items.TRIPWIRE_HOOK);
-		if (id.equals("KISMET_FEATHER"))            return new ItemStack(Items.FEATHER);
+		if (id.equals("KISMET_FEATHER") || id.equals("ANANKE_FEATHER"))            return new ItemStack(Items.FEATHER);
 		if (id.equals("WHEEL_OF_FATE"))             return new ItemStack(Items.CLOCK);
 
 		// Skull placeholder shown while the NEU fetch is still in-flight
@@ -1056,7 +1056,7 @@ public final class DungeonLootScreen extends Screen {
 
 	private static ItemStack resolveModifierIcon(String id) {
 		if (id.equals("DUNGEON_CHEST_KEY")) return new ItemStack(Items.TRIPWIRE_HOOK);
-		if (id.equals("KISMET_FEATHER")) return new ItemStack(Items.FEATHER);
+		if (id.equals("KISMET_FEATHER") || id.equals("ANANKE_FEATHER")) return new ItemStack(Items.FEATHER);
 		if (id.equals("WHEEL_OF_FATE")) return new ItemStack(Items.CLOCK);
 		return ItemStack.EMPTY;
 	}
