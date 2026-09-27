@@ -716,6 +716,7 @@ public final class DungeonRunTrackerFeature {
 							: "Click to reset " + floorTag + " tracker";
 						drawTooltip(client, guiGraphics, tip, mouseX, mouseY);
 					}
+					case HIDE_UI -> drawTooltip(client, guiGraphics, "Click to hide the DRT overlay", mouseX, mouseY);
 					case NONE -> { }
 				}
 			}
@@ -818,6 +819,12 @@ public final class DungeonRunTrackerFeature {
 	public boolean toggleHud() {
 		setEnabled(!enabled);
 		return enabled;
+	}
+
+	private void hideHudFromOverlay() {
+		clearHudResetConfirm();
+		setEnabled(false);
+		sendDrtSystemMessage(Minecraft.getInstance(), Component.literal("§a[DRT] Overlay hidden, run /drt toggle UI to show it again"));
 	}
 
 	public boolean isTrackingEnabled() {
@@ -1163,6 +1170,7 @@ public final class DungeonRunTrackerFeature {
 			case TOGGLE_RUNS_HR -> { toggleRunsPerHrPause(); return true; }
 			case OPEN_LOOT -> { requestOpenLootScreen(selectedFloor, null); return true; }
 			case RESET -> { resetSelectedFloor(); return true; }
+			case HIDE_UI -> { hideHudFromOverlay(); return true; }
 			case NONE -> { return false; }
 		}
 		return false;

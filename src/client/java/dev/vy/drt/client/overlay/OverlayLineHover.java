@@ -7,5 +7,6 @@ public enum OverlayLineHover {
 	RUNS,
 	RUNS_HR,
 	PROFIT,
-	RESET
+	RESET,
+	HIDE_UI
 }

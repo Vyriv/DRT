@@ -12,6 +12,9 @@ public final class OverlayLayouts {
 	/** Extra pixels for drop-shadow when fitting previews. */
 	public static final int SHADOW_PAD = 1;
 
+	private static final String HIDE_UI_LABEL = "Hide UI";
+	private static final int CONTROL_ROW_GAP = 12;
+
 	private OverlayLayouts() {
 	}
 
@@ -41,10 +44,12 @@ public final class OverlayLayouts {
 		for (OverlayLine line : layout.lines) {
 			builder.add(copyLine(line));
 		}
+		int resetWidth = font.width(stats.resetLabel);
+		int hideWidth = font.width(HIDE_UI_LABEL);
+		int rowWidth = Math.max(layout.width, resetWidth + CONTROL_ROW_GAP + hideWidth);
 		builder.add(new OverlayLine.Builder()
-			.add(stats.resetLabel, OverlayColors.RESET)
-			.hover(OverlayLineHover.RESET)
-			.click(OverlayLineClick.RESET));
+			.addAt(0, stats.resetLabel, OverlayColors.RESET, OverlaySegmentRole.RESET)
+			.addAt(rowWidth - hideWidth, HIDE_UI_LABEL, OverlayColors.HIDE_UI, OverlaySegmentRole.HIDE_UI));
 		return builder.build();
 	}
 

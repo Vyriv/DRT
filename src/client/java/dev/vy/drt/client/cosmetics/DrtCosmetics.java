@@ -10,6 +10,7 @@ public final class DrtCosmetics {
 
 	public static void initialize() {
 		CosmeticsContentManager.initialize();
+		CosmeticRenderer.initialize();
 	}
 
 	public static Component styleDisplayName(Component current, GameProfile profile) {

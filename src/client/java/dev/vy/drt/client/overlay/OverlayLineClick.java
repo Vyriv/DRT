@@ -6,5 +6,6 @@ public enum OverlayLineClick {
 	CYCLE_FLOOR,
 	TOGGLE_RUNS_HR,
 	OPEN_LOOT,
-	RESET
+	RESET,
+	HIDE_UI
 }

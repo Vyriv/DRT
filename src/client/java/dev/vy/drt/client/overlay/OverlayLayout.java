@@ -78,7 +78,9 @@ public final class OverlayLayout {
 			if (localX >= segX - 3 && localX <= segX + segW + 3) {
 				if (segment.role == OverlaySegmentRole.MODE
 					|| segment.role == OverlaySegmentRole.FLOOR
-					|| segment.role == OverlaySegmentRole.RUNS_HR) {
+					|| segment.role == OverlaySegmentRole.RUNS_HR
+					|| segment.role == OverlaySegmentRole.RESET
+					|| segment.role == OverlaySegmentRole.HIDE_UI) {
 					segmentRole = segment.role;
 					break;
 				}
@@ -97,6 +99,12 @@ public final class OverlayLayout {
 		} else if (segmentRole == OverlaySegmentRole.RUNS_HR) {
 			hover = OverlayLineHover.RUNS_HR;
 			click = OverlayLineClick.TOGGLE_RUNS_HR;
+		} else if (segmentRole == OverlaySegmentRole.RESET) {
+			hover = OverlayLineHover.RESET;
+			click = OverlayLineClick.RESET;
+		} else if (segmentRole == OverlaySegmentRole.HIDE_UI) {
+			hover = OverlayLineHover.HIDE_UI;
+			click = OverlayLineClick.HIDE_UI;
 		}
 		return new HitResult(true, line, hover, click, segmentRole);
 	}

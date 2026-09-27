@@ -4,5 +4,7 @@ public enum OverlaySegmentRole {
 	TEXT,
 	MODE,
 	FLOOR,
-	RUNS_HR
+	RUNS_HR,
+	RESET,
+	HIDE_UI
 }

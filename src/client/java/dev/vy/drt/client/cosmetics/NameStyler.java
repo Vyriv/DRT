@@ -23,6 +23,7 @@ public final class NameStyler {
 	private static final float ANIMATED_GRADIENT_SPEED = 0.04F;
 	private static final int LARGE_LOBBY_ANIMATION_THRESHOLD = 40;
 	private static final float THROTTLED_ANIMATION_FPS = 15.0F;
+	private static final long UNCACHED_FRAME = Long.MAX_VALUE;
 	private static final Pattern TRAILING_BRACKET_PREFIX = Pattern.compile("(\\[[^\\]]+])(\\s*)$");
 	/** SkyBlock tab/chat level tags like [435] or [1,234] — never treat these as Hypixel ranks. */
 	private static final Pattern SKYBLOCK_LEVEL_INNER = Pattern.compile("^\\d[\\d,]*$");
@@ -42,6 +43,7 @@ public final class NameStyler {
 	private static final NameStylerIdentityCache<Component, Component> SCOREBOARD_TEXT_IDENTITY_CACHE = new NameStylerIdentityCache<>(IDENTITY_CACHE_SIZE);
 	private static final NameStylerIdentityCache<Component, Component> CHAT_HEADER_TEXT_IDENTITY_CACHE = new NameStylerIdentityCache<>(IDENTITY_CACHE_SIZE);
 	private static final NameStylerIdentityCache<FormattedCharSequence, FormattedCharSequence> GRADIENT_ORDERED_TEXT_IDENTITY_CACHE = new NameStylerIdentityCache<>(IDENTITY_CACHE_SIZE);
+	private static final NameStylerIdentityCache<FormattedCharSequence, FormattedCharSequence> CHAT_HEADER_ORDERED_TEXT_IDENTITY_CACHE = new NameStylerIdentityCache<>(IDENTITY_CACHE_SIZE);
 	private static final NameStylerIdentityCache<FormattedCharSequence, FormattedCharSequence> NAMEPLATE_ORDERED_TEXT_IDENTITY_CACHE = new NameStylerIdentityCache<>(IDENTITY_CACHE_SIZE);
 	private static final NameStylerIdentityCache<FormattedCharSequence, FormattedCharSequence> SCOREBOARD_ORDERED_TEXT_IDENTITY_CACHE = new NameStylerIdentityCache<>(IDENTITY_CACHE_SIZE);
 	private static final NameStylerIdentityCache<FormattedCharSequence, OrderedTextSourceData> ORDERED_TEXT_SOURCE_CACHE = new NameStylerIdentityCache<>(IDENTITY_CACHE_SIZE);
@@ -64,27 +66,32 @@ public final class NameStyler {
 		SCOREBOARD_TEXT_IDENTITY_CACHE.clear();
 		CHAT_HEADER_TEXT_IDENTITY_CACHE.clear();
 		GRADIENT_ORDERED_TEXT_IDENTITY_CACHE.clear();
+		CHAT_HEADER_ORDERED_TEXT_IDENTITY_CACHE.clear();
 		NAMEPLATE_ORDERED_TEXT_IDENTITY_CACHE.clear();
 		SCOREBOARD_ORDERED_TEXT_IDENTITY_CACHE.clear();
 		ORDERED_TEXT_SOURCE_CACHE.clear();
 	}
 
 	public static boolean hasGradientStyles() {
+		if (!CosmeticRenderer.active()) return false;
 		checkRegistryVersion();
 		return !PlayerCustomizationRegistry.gradientNameCandidates().isEmpty();
 	}
 
 	public static boolean hasChatHeaderStyles() {
+		if (!CosmeticRenderer.active()) return false;
 		checkRegistryVersion();
 		return !PlayerCustomizationRegistry.chatHeaderNameCandidates().isEmpty();
 	}
 
 	public static boolean hasDisplayProfile(GameProfile profile) {
+		if (!CosmeticRenderer.active()) return false;
 		PlayerCustomizationRegistry.PlayerCustomization customization = PlayerCustomizationRegistry.find(profile);
 		return customization != null && customization.hasChatDisplayOverride();
 	}
 
 	public static boolean hasAnimatedStyledProfile(GameProfile profile) {
+		if (!CosmeticRenderer.active()) return false;
 		PlayerCustomizationRegistry.PlayerCustomization customization = PlayerCustomizationRegistry.find(profile);
 		return customization != null && customization.animatedGradient();
 	}
@@ -146,7 +153,8 @@ public final class NameStyler {
 	}
 
 	public static FormattedCharSequence applyChatHeaderToOrderedText(FormattedCharSequence text) {
-		return applyCachedOrderedTextTransform(text, TransformKind.CHAT_HEADER_TEXT, GRADIENT_ORDERED_TEXT_IDENTITY_CACHE);
+		// Own cache: sharing the gradient one let a chat-header miss on a line block its gradient pass.
+		return applyCachedOrderedTextTransform(text, TransformKind.CHAT_HEADER_TEXT, CHAT_HEADER_ORDERED_TEXT_IDENTITY_CACHE);
 	}
 
 	public static String applyChatHeaderToString(String raw) {
@@ -191,18 +199,21 @@ public final class NameStyler {
 			return message;
 		}
 
-		long frame = hasAnimatedGradientMatch(plain, candidatesForKind(kind)) ? currentAnimationFrameIndex(currentAnimationTime()) : Long.MIN_VALUE;
+		// Animated results must never be identity-cached: chat and tab reuse the same Component,
+		// which would freeze the gradient until the line is rebuilt and then make it jump.
+		boolean animated = hasAnimatedGradientMatch(plain, candidatesForKind(kind));
+		long frame = animated ? currentAnimationFrameIndex(currentAnimationTime()) : Long.MIN_VALUE;
 		TextCacheKey key = new TextCacheKey(PlayerCustomizationRegistry.version(), kind, plain, styleHash(runs), frame);
-		Component cached = TEXT_TRANSFORM_CACHE.getCached(key);
+		Component cached = frame == UNCACHED_FRAME ? null : TEXT_TRANSFORM_CACHE.getCached(key);
 		if (cached != null) {
-			identityCache.put(message, cached);
+			if (!animated) identityCache.put(message, cached);
 			return cached;
 		}
 
 		OrderedTextTransformPlan plan = buildTransformPlan(runs, plain, kind);
 		Component transformed = plan == null ? message : rebuildComponentFromPlan(new OrderedTextSourceData(plain, runs, styleHash(runs)), plan, currentAnimationTime(), kind);
-		TEXT_TRANSFORM_CACHE.putCached(key, transformed);
-		identityCache.put(message, transformed);
+		if (frame != UNCACHED_FRAME) TEXT_TRANSFORM_CACHE.putCached(key, transformed);
+		if (!animated) identityCache.put(message, transformed);
 		return transformed;
 	}
 
@@ -231,6 +242,9 @@ public final class NameStyler {
 		double animationTime = plan.hasAnimatedGradient ? currentAnimationTime() : 0.0D;
 		if (plan.hasAnimatedGradient) {
 			long frame = currentAnimationFrameIndex(animationTime);
+			if (frame == UNCACHED_FRAME) {
+				return rebuildComponentFromPlan(source, plan, animationTime, kind).getVisualOrderText();
+			}
 			OrderedTextAnimatedFrameCacheKey key = new OrderedTextAnimatedFrameCacheKey(PlayerCustomizationRegistry.version(), kind, source.plain,
 					source.styleHash, frame);
 			transformed = ORDERED_TEXT_ANIMATED_FRAME_CACHE.getCached(key);
@@ -238,13 +252,15 @@ public final class NameStyler {
 				transformed = rebuildComponentFromPlan(source, plan, animationTime, kind).getVisualOrderText();
 				ORDERED_TEXT_ANIMATED_FRAME_CACHE.putCached(key, transformed);
 			}
-		} else {
-			OrderedTextResultCacheKey key = new OrderedTextResultCacheKey(PlayerCustomizationRegistry.version(), kind, source.plain, source.styleHash);
-			transformed = ORDERED_TEXT_STATIC_RESULT_CACHE.getCached(key);
-			if (transformed == null) {
-				transformed = rebuildComponentFromPlan(source, plan, 0.0D, kind).getVisualOrderText();
-				ORDERED_TEXT_STATIC_RESULT_CACHE.putCached(key, transformed);
-			}
+			// Same freeze issue as the Component path: never identity-cache animated frames.
+			return transformed;
+		}
+
+		OrderedTextResultCacheKey key = new OrderedTextResultCacheKey(PlayerCustomizationRegistry.version(), kind, source.plain, source.styleHash);
+		transformed = ORDERED_TEXT_STATIC_RESULT_CACHE.getCached(key);
+		if (transformed == null) {
+			transformed = rebuildComponentFromPlan(source, plan, 0.0D, kind).getVisualOrderText();
+			ORDERED_TEXT_STATIC_RESULT_CACHE.putCached(key, transformed);
 		}
 
 		identityCache.put(text, transformed);
@@ -258,6 +274,7 @@ public final class NameStyler {
 		if (candidates.isEmpty()) return raw;
 
 		long frame = hasAnimatedGradientMatch(raw, candidates) ? currentAnimationFrameIndex(currentAnimationTime()) : Long.MIN_VALUE;
+		if (frame == UNCACHED_FRAME) return applyDecorationsToStringUncached(raw, kind, candidates);
 		StringCacheKey key = new StringCacheKey(PlayerCustomizationRegistry.version(), kind, raw, frame);
 		String cached = STRING_TRANSFORM_CACHE.getCached(key);
 		if (cached != null) return cached;
@@ -663,19 +680,21 @@ public final class NameStyler {
 		return built;
 	}
 
+	// Local monotonic clock in tick units (50 ms). World time is server-driven and could stall
+	// or jump after a renderer switch until the next world change; this never does.
 	private static double currentAnimationTime() {
-		Minecraft client = Minecraft.getInstance();
-		if (client == null || client.level == null) return System.currentTimeMillis() / 50.0D;
-		return client.level.getGameTime();
+		return System.nanoTime() / 50_000_000.0D;
 	}
 
+	// Same keying as Skylist: normal lobbies rebuild animated names every frame, large lobbies
+	// share a frame across draws. Keying by whole ticks made the gradient visibly step.
 	private static long currentAnimationFrameIndex(double animationTime) {
 		Minecraft client = Minecraft.getInstance();
 		int visiblePlayers = client == null || client.level == null ? 0 : client.level.players().size();
 		if (visiblePlayers < LARGE_LOBBY_ANIMATION_THRESHOLD) {
-			return (long) Math.floor(animationTime);
+			return UNCACHED_FRAME;
 		}
-		return (long) Math.floor(animationTime * THROTTLED_ANIMATION_FPS / 20.0D);
+		return (long) Math.floor(animationTime * THROTTLED_ANIMATION_FPS);
 	}
 
 	private static boolean hasAnimatedGradientMatch(String text, List<PlayerCustomizationRegistry.NameCandidate> candidates) {
@@ -691,6 +710,8 @@ public final class NameStyler {
 	}
 
 	private static List<PlayerCustomizationRegistry.NameCandidate> candidatesForKind(TransformKind kind) {
+		// Every transform bails out on an empty list, so a non-owner never touches a name.
+		if (!CosmeticRenderer.active()) return List.of();
 		return switch (kind) {
 			case GRADIENT_TEXT -> PlayerCustomizationRegistry.gradientNameCandidates();
 			case CHAT_HEADER_TEXT -> PlayerCustomizationRegistry.chatHeaderNameCandidates();

@@ -11,6 +11,7 @@ public final class OverlayColors {
 	public static final int RATE = 0xFF55FFFF;
 	public static final int PAUSED = 0xFFFFAA00;
 	public static final int RESET = 0xFFFF5555;
+	public static final int HIDE_UI = 0xFFAAAAAA;
 	public static final int WARNING = 0xFFFFAA55;
 	public static final int MUTED = 0xFF7A7A8A;
 
