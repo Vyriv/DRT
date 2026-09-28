@@ -161,7 +161,8 @@ public final class DungeonLootScreen extends Screen {
 			return true;
 		}
 		if (contains(tableX, tableY, tableW, tableH, (int) mouseX, (int) mouseY)) {
-			int maxScroll = Math.max(0, buildDisplayRows().size() * ROW_H - tableH + 6);
+			int viewportH = Math.max(ROW_H, tableH - ROW_H);
+			int maxScroll = Math.max(0, buildDisplayRows().size() * ROW_H - viewportH);
 			tableScroll = clamp(tableScroll - delta, 0, maxScroll);
 			return true;
 		}
@@ -1071,6 +1072,7 @@ public final class DungeonLootScreen extends Screen {
 			case "WARPED_STONE" -> "AOTE_STONE";
 			case "ADAPTIVE_BLADE" -> "STONE_BLADE";
 			case "WITHER_CLOAK_SWORD" -> "WITHER_CLOAK";
+			case "AURORA_STAFF" -> "RUNIC_STAFF";
 			default -> {
 				String attributeShardId = NeuItemResolver.getAttributeShardInternalName(id);
 				yield attributeShardId != null ? attributeShardId : id;

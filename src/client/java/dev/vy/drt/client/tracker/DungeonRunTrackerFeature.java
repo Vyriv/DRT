@@ -3156,6 +3156,7 @@ public final class DungeonRunTrackerFeature {
 			case "WARPED_STONE" -> "AOTE_STONE";
 			case "ADAPTIVE_BLADE" -> "STONE_BLADE";
 			case "WITHER_CLOAK_SWORD" -> "WITHER_CLOAK";
+			case "AURORA_STAFF" -> "RUNIC_STAFF";
 			default -> id;
 		};
 	}

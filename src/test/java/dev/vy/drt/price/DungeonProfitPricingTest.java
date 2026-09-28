@@ -81,6 +81,48 @@ class DungeonProfitPricingTest {
 		assertEquals(2600L, unit);
 	}
 
+	@Test
+	void renamedKuudraVitalityBooksUseManaPrices() throws Exception {
+		setStaticMap("itemIdToPrice", Map.of(
+			"ENCHANTMENT_HARDENED_MANA_5", 189_000.0D,
+			"ENCHANTMENT_MANA_VAMPIRE_5", 439_000.0D
+		));
+		setStaticMap("itemIdToSource", Map.of(
+			"ENCHANTMENT_HARDENED_MANA_5", "auction",
+			"ENCHANTMENT_MANA_VAMPIRE_5", "auction"
+		));
+		DrtConfig config = new DrtConfig();
+
+		long hardened = DungeonProfitPricing.resolveUnitPrice(
+			new DungeonLootEntry("Enchanted Book (Hardened Vitality V)", "ENCHANTMENT_HARDENED_VITALITY_5", 6),
+			config
+		);
+		long vampiric = DungeonProfitPricing.resolveUnitPrice(
+			new DungeonLootEntry("Enchanted Book (Vampiric Vitality V)", "ENCHANTMENT_VAMPIRIC_VITALITY_5", 2),
+			config
+		);
+
+		assertEquals(189_000L, hardened);
+		assertEquals(439_000L, vampiric);
+	}
+
+	@Test
+	void auroraStaffUsesRunicStaffPrice() throws Exception {
+		setStaticMap("itemIdToAuctionData", Map.of(
+			"RUNIC_STAFF",
+			new PriceCache.AuctionPriceData("RUNIC_STAFF", 1_000_000.0D, 883_531.0D, 916_641.0D)
+		));
+		DrtConfig config = new DrtConfig();
+		config.forceSalvageWands = false;
+
+		long unit = DungeonProfitPricing.resolveUnitPrice(
+			new DungeonLootEntry("Aurora Staff", "AURORA_STAFF", 1),
+			config
+		);
+
+		assertEquals(883_531L, unit);
+	}
+
 	@SuppressWarnings("unchecked")
 	private static void setStaticMap(String fieldName, Map<?, ?> value) throws Exception {
 		Field field = PriceCache.class.getDeclaredField(fieldName);

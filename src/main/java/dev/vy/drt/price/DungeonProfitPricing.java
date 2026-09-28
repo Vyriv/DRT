@@ -329,6 +329,7 @@ public final class DungeonProfitPricing {
 		String id = itemId.toUpperCase(Locale.ROOT);
 		if (isKuudraArmor(id)) return KuudraSalvageCategory.ARMOR;
 		if (id.equals("AURORA_STAFF")
+			|| id.equals("RUNIC_STAFF")
 			|| id.equals("HOLLOW_WAND")
 			|| id.equals("KUUDRA_MANDIBLE")
 			|| id.equals("TORMENTOR")) {
@@ -380,11 +381,28 @@ public final class DungeonProfitPricing {
 			case "WARPED_STONE" -> "AOTE_STONE";
 			case "ADAPTIVE_BLADE" -> "STONE_BLADE";
 			case "WITHER_CLOAK_SWORD" -> "WITHER_CLOAK";
+			case "AURORA_STAFF" -> "RUNIC_STAFF";
 			case "CRIMSON_ESSENCE" -> ITEM_CRIMSON_ESSENCE;
 			case "WITHER_ESSENCE" -> "ESSENCE_WITHER";
 			case "UNDEAD_ESSENCE" -> "ESSENCE_UNDEAD";
-			default -> itemId;
+			default -> renamedKuudraBookId(itemId);
 		};
+	}
+
+	// Hypixel renamed the Kuudra mana books to "Vitality", but prices are still keyed by the old ids.
+	private static final String[][] KUUDRA_BOOK_RENAMES = {
+		{"ENCHANTMENT_HARDENED_VITALITY_", "ENCHANTMENT_HARDENED_MANA_"},
+		{"ENCHANTMENT_STRONG_VITALITY_", "ENCHANTMENT_STRONG_MANA_"},
+		{"ENCHANTMENT_VAMPIRIC_VITALITY_", "ENCHANTMENT_MANA_VAMPIRE_"},
+		{"ENCHANTMENT_VIVACIOUS_VITALITY_", "ENCHANTMENT_FEROCIOUS_MANA_"}
+	};
+
+	private static String renamedKuudraBookId(String itemId) {
+		if (!itemId.startsWith("ENCHANTMENT_")) return itemId;
+		for (String[] rename : KUUDRA_BOOK_RENAMES) {
+			if (itemId.startsWith(rename[0])) return rename[1] + itemId.substring(rename[0].length());
+		}
+		return itemId;
 	}
 
 	private static long roundPositive(double price) {
