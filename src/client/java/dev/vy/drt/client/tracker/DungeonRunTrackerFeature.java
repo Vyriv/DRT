@@ -101,6 +101,7 @@ public final class DungeonRunTrackerFeature {
 	private static final long LOOT_WINDOW_MS = 180_000L;
 	private static final long LATE_LOOT_REATTACH_MS = 15 * 60_000L;
 	private static final long LOOT_COLLECTION_MS = 3_000L;
+	private static final long REWARD_OPEN_FAILED_GRACE_MS = 1_500L;
 	private static final long REWARD_MODIFIER_SCAN_INTERVAL_MS = 300L;
 	private static final Pattern ESSENCE_PATTERN = Pattern.compile("^(?:\\+\\s*)?(WITHER|UNDEAD|SPIDER|DRAGON|ICE|DIAMOND|GOLD|CRIMSON) ESSENCE(?:\\s*[xX×]\\s*(\\d+))?$");
 	private static final Pattern RECEIVED_PATTERN = Pattern.compile("^YOU RECEIVED\\s+(.+?)(?:\\s*[xX×]\\s*(\\d+))?!?$");
@@ -413,6 +414,8 @@ public final class DungeonRunTrackerFeature {
 	private boolean pendingLootSeededFromGui;
 	private boolean pendingLootReconcilingGuiChat;
 	private boolean pendingLootChestAssigned;
+	private boolean pendingLootChatConfirmed;
+	private long lastRewardOpenFailedMillis;
 	/** Incident id waiting for a non-null player so chat notify can be delivered. */
 	private String pendingIncidentChatNotifyId = "";
 	private int openedRewardChestsInLootWindow;
@@ -3515,6 +3518,8 @@ public final class DungeonRunTrackerFeature {
 				return;
 			}
 
+			// A failed open swaps the Open button out for a moment, which looks like an opened chest.
+			if (now - lastRewardOpenFailedMillis <= REWARD_OPEN_FAILED_GRACE_MS) return;
 			String screenKey = "opened#" + canonicalRewardTitle + "#" + menu.containerId;
 			boolean firstOpenScan = scannedRewardScreens.add(screenKey);
 			// Carry forward key requirement observed on the preview "Open Reward Chest" button.
@@ -3812,6 +3817,7 @@ public final class DungeonRunTrackerFeature {
 			pendingChestSessionId = openTrackingChestSession(displayTitle, containerId, DetectionSource.CONFIRMED_GUI_COMPONENT);
 			pendingChestLootDedupKeys.clear();
 			pendingLootReconcilingGuiChat = false;
+			pendingLootChatConfirmed = false;
 			String countedTitle = normalizedTitle == null ? "" : normalizedTitle.trim().toUpperCase(Locale.ROOT);
 			if (!countedTitle.isEmpty()) openedRewardChestTitlesInLootWindow.add(countedTitle);
 			openedRewardChestsInLootWindow++;
@@ -4863,6 +4869,7 @@ public final class DungeonRunTrackerFeature {
 		pendingLootSeededFromGui = false;
 		pendingLootReconcilingGuiChat = false;
 		pendingLootChestAssigned = false;
+		pendingLootChatConfirmed = false;
 		openedRewardChestsInLootWindow = preserveOpenCount ? preservedOpenCount : 0;
 		openedRewardChestTitlesInLootWindow.clear();
 		if (preserveOpenCount) openedRewardChestTitlesInLootWindow.addAll(preservedOpenTitles);
@@ -5175,6 +5182,7 @@ public final class DungeonRunTrackerFeature {
 		pendingLootSeededFromGui = false;
 		pendingLootReconcilingGuiChat = false;
 		pendingLootChestAssigned = false;
+		pendingLootChatConfirmed = false;
 		openedRewardChestsInLootWindow = 0;
 		openedRewardChestTitlesInLootWindow.clear();
 		nextOpenedChestUsesDungeonChestKey = false;
@@ -5207,6 +5215,10 @@ public final class DungeonRunTrackerFeature {
 			startLateOwnedOrAdHocLootWindow(now, rewardContextFloorFromTitle(cleaned));
 		}
 		if (lootWindowUntilMillis <= 0L || now > lootWindowUntilMillis) return;
+		if (cleaned.equals("YOU CANNOT AFFORD THIS!")) {
+			cancelUnconfirmedOpenedChest(now);
+			return;
+		}
 		if (handleModifierMessage(cleaned)) return;
 		if (cleaned.startsWith("YOU RECEIVED ")) {
 			lootCollectionUntilMillis = now + LOOT_COLLECTION_MS;
@@ -5228,6 +5240,7 @@ public final class DungeonRunTrackerFeature {
 			} else {
 				assignOpenedChest(cleaned);
 			}
+			if (pendingLootChestAssigned) pendingLootChatConfirmed = true;
 			lootCollectionUntilMillis = now + LOOT_COLLECTION_MS;
 			return;
 		}
@@ -5246,6 +5259,15 @@ public final class DungeonRunTrackerFeature {
 		mergePendingLootEntry(parsed, maxOnDuplicate);
 		if (!pendingLootReconcilingGuiChat) pendingLootSeededFromGui = false;
 		lootCollectionUntilMillis = now + LOOT_COLLECTION_MS;
+	}
+
+	// "You cannot afford this!" means the open failed; the preview contents must not be saved.
+	private void cancelUnconfirmedOpenedChest(long now) {
+		lastRewardOpenFailedMillis = now;
+		if (!pendingLootChestAssigned || pendingLootChatConfirmed) return;
+		openedRewardChestTitlesInLootWindow.remove(pendingLootChestTitle.toUpperCase(Locale.ROOT));
+		openedRewardChestsInLootWindow = Math.max(0, openedRewardChestsInLootWindow - 1);
+		resetPendingChestState();
 	}
 
 	private String chestTitleFromLootHeader(String cleaned) {
@@ -6705,6 +6727,7 @@ public final class DungeonRunTrackerFeature {
 		pendingLootSeededFromGui = false;
 		pendingLootReconcilingGuiChat = false;
 		pendingLootChestAssigned = false;
+		pendingLootChatConfirmed = false;
 		pendingLootEntries.clear();
 		lootGuardWarnedKeys.clear();
 		recentLootMessages.clear();
