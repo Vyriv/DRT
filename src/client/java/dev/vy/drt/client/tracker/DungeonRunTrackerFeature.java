@@ -106,6 +106,8 @@ public final class DungeonRunTrackerFeature {
 	private static final Pattern RECEIVED_PATTERN = Pattern.compile("^YOU RECEIVED\\s+(.+?)(?:\\s*[xX×]\\s*(\\d+))?!?$");
 	private static final Pattern PLUS_PATTERN = Pattern.compile("^\\+\\s*(.+?)(?:\\s*[xX×]\\s*(\\d+))?$");
 	private static final Pattern TRAILING_QUANTITY_PATTERN = Pattern.compile("^(.+?)\\s*[xX×]\\s*(\\d+)$");
+	// Chat-stacking mods append " (2)" to repeated lines.
+	private static final Pattern CHAT_REPEAT_SUFFIX_PATTERN = Pattern.compile("\\s+\\(\\d+\\)$");
 	/** Chest loot rare line, e.g. "RARE REWARD! Recombobulator 3000" (not party announcements). */
 	private static final Pattern RARE_REWARD_ITEM_PATTERN = Pattern.compile(
 		"^(?:RARE REWARD|CRAZY RARE(?: REWARD)?|INSANE REWARD|PRAY RNGESUS)!?\\s+(.+)$",
@@ -5336,6 +5338,15 @@ public final class DungeonRunTrackerFeature {
 			}
 		}
 
+		// Kuudra reward chat lists items as plain lines ("Aurora Chestplate ✪✪", "Kuudra Teeth").
+		// Without the chest GUI these were dropped and only Crimson Essence was saved.
+		boolean plainKuudraRewardLine = false;
+		if (candidateName == null && pendingLootChestTitle != null && isTrackedRewardChest(normalize(pendingLootChestTitle), true)) {
+			candidateName = CHAT_REPEAT_SUFFIX_PATTERN.matcher(trimmedRaw).replaceFirst("");
+			structuredLootLine = true;
+			plainKuudraRewardLine = true;
+		}
+
 		// Never treat arbitrary chat (PMs, party chat, bare words like "scroll") as loot.
 		if (!structuredLootLine || candidateName == null) return null;
 
@@ -5344,7 +5355,9 @@ public final class DungeonRunTrackerFeature {
 			return null;
 		}
 
+		if (plainKuudraRewardLine && !looksReasonableLootName(candidateName)) return null;
 		String itemId = resolveItemId(candidateName);
+		if (plainKuudraRewardLine && itemId.isEmpty()) return null;
 		if (itemId.isEmpty() && !looksReasonableLootName(candidateName)) return null;
 		return new DungeonLootEntry(candidateName, itemId, quantity);
 	}
