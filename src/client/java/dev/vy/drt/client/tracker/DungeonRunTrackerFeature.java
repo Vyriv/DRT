@@ -4047,12 +4047,12 @@ public final class DungeonRunTrackerFeature {
 		if (best.isKuudra()) adoptKuudraKeyTier(best);
 	}
 
+	// The paid chest's Cost line names the exact key for this run, so it also overrides a
+	// higher sticky tier (a Basic run after a Hot run was being credited as Hot).
 	private void adoptKuudraKeyTier(DungeonFloor keyTier) {
 		if (keyTier == null || !keyTier.isKuudra()) return;
 		if (pendingLootOrphaned) {
-			if (pendingLootFloor == null
-				|| !pendingLootFloor.isKuudra()
-				|| kuudraTierNumber(keyTier) > kuudraTierNumber(pendingLootFloor)) {
+			if (pendingLootFloor != keyTier) {
 				pendingLootFloor = keyTier;
 				updatePendingChestContextProjection(EvidenceStrength.CONFIRMED_GUI_COMPONENT, DetectionSource.CONFIRMED_GUI_COMPONENT);
 			}
@@ -4060,9 +4060,7 @@ public final class DungeonRunTrackerFeature {
 			return;
 		}
 		rememberKuudraTier(keyTier, true);
-		if (pendingLootFloor == null
-				|| !pendingLootFloor.isKuudra()
-				|| kuudraTierNumber(keyTier) > kuudraTierNumber(pendingLootFloor)) {
+		if (pendingLootFloor != keyTier) {
 			pendingLootFloor = keyTier;
 			updatePendingChestContextProjection(EvidenceStrength.CONFIRMED_GUI_COMPONENT, DetectionSource.CONFIRMED_GUI_COMPONENT);
 		}
@@ -6533,6 +6531,10 @@ public final class DungeonRunTrackerFeature {
 			return pending;
 		}
 		if (pending.isCatacombs() && chestFloor.isKuudra()) {
+			return pending;
+		}
+		// The session copied the tier at open time; a later paid-chest key tier is newer evidence.
+		if (pending.isKuudra() && chestFloor.isKuudra()) {
 			return pending;
 		}
 		return chestFloor;

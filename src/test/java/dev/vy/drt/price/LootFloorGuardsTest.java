@@ -50,6 +50,28 @@ class LootFloorGuardsTest {
 	}
 
 	@Test
+	void kuudraFreeChestWithOnlyCrimsonIsNotSingleLineSuspicious() {
+		List<DungeonLootEntry> entries = List.of(new DungeonLootEntry("CRIMSON ESSENCE", "ESSENCE_CRIMSON", 50));
+		assertFalse(LootFloorGuards.evaluateChest(DungeonFloor.K3, "Free Chest", entries).contains("chest_drop_count_suspicious got=1"));
+	}
+
+	@Test
+	void basicKuudraChestsDoNotWarnWhenJudgedAsK1() {
+		List<DungeonLootEntry> free = List.of(new DungeonLootEntry("CRIMSON ESSENCE", "ESSENCE_CRIMSON", 22));
+		assertTrue(LootFloorGuards.evaluateChest(DungeonFloor.K1, "Free Chest", free).isEmpty());
+
+		DungeonLootEntry crimson = new DungeonLootEntry("CRIMSON ESSENCE", "ESSENCE_CRIMSON", 100);
+		List<DungeonLootEntry> paid = List.of(
+			new DungeonLootEntry("Aurora Leggings", "AURORA_LEGGINGS", 1),
+			crimson,
+			new DungeonLootEntry("Kuudra Teeth", "KUUDRA_TEETH", 1),
+			new DungeonLootEntry("Kraken Shard", "SHARD_KRAKEN", 1)
+		);
+		assertTrue(LootFloorGuards.evaluateChest(DungeonFloor.K1, "Paid Chest", paid).isEmpty());
+		assertTrue(LootFloorGuards.evaluate(DungeonFloor.K1, "Paid Chest", crimson).isEmpty());
+	}
+
+	@Test
 	void kuudraFloorWithCatacombsChestSkipsGuards() {
 		DungeonLootEntry skull = new DungeonLootEntry("Master Skull - Tier 3", "MASTER_SKULL_TIER_3", 1);
 		assertTrue(LootFloorGuards.evaluate(DungeonFloor.K3, "Obsidian Chest", skull).isEmpty());

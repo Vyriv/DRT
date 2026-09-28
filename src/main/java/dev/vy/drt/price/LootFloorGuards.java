@@ -87,12 +87,14 @@ public final class LootFloorGuards {
 		}
 
 		if (floor == null || floor == DungeonFloor.UNKNOWN) return reasons;
+		ExpectedLootTables.ChestTier chest = ExpectedLootTables.parseChestTier(chestTitle);
 		// Single-line captures are almost always truncated; 2-3 lines can be a complete chest.
-		if (dropLines == 1) {
+		// Kuudra free chests often hold only Crimson Essence.
+		boolean kuudraFreeChest = floor.isKuudra() && chest == ExpectedLootTables.ChestTier.FREE;
+		if (dropLines == 1 && !kuudraFreeChest) {
 			reasons.add("chest_drop_count_suspicious got=1");
 		}
 
-		ExpectedLootTables.ChestTier chest = ExpectedLootTables.parseChestTier(chestTitle);
 		if (chest == ExpectedLootTables.ChestTier.UNKNOWN) return reasons;
 
 		int undead = 0;
