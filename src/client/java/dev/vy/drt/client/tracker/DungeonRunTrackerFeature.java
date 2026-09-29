@@ -6001,6 +6001,62 @@ public final class DungeonRunTrackerFeature {
 		}
 	}
 
+	/**
+	 * Recalculates saved chest value and profit from current prices. With a chest number only that
+	 * chest is repriced; otherwise only chests whose saved value is under half their current value,
+	 * which is what items recorded at 0 (missing prices) look like.
+	 */
+	public boolean repriceHistory(Integer chestNumber) {
+		Minecraft client = Minecraft.getInstance();
+		if (client.player == null) return false;
+		if (!PriceCache.hasAuctionAndBazaarPrices()) {
+			sendDrtSystemMessage(client, Component.literal("§c[DRT] Prices are not fully loaded yet, try again in a moment."));
+			return false;
+		}
+		DrtConfig config = DrtConfigManager.getConfig();
+		List<String> changedLines = new ArrayList<>();
+		int changed = 0;
+		long totalDelta = 0L;
+		boolean foundTarget = false;
+		for (DungeonRunRecord record : DrtConfigManager.getRunHistory()) {
+			if (record == null) continue;
+			if (chestNumber != null && record.chestNumber != chestNumber) continue;
+			foundTarget = true;
+			long oldValue = Math.max(0L, record.chestValueCoins);
+			long newValue = DungeonProfitPricing.calculateLootValue(record.lootEntries, config);
+			if (newValue == oldValue) continue;
+			if (chestNumber == null && oldValue * 2L >= newValue) continue;
+			DungeonRunRecord updated = record.copy();
+			updated.chestValueCoins = newValue;
+			updated.chestProfitCoins = record.chestProfitCoins + (newValue - oldValue);
+			if (!DrtConfigManager.updateRunRecord(record, updated)) continue;
+			notifyRunUpdated(record, updated);
+			changed++;
+			totalDelta += newValue - oldValue;
+			if (changedLines.size() < 8) {
+				changedLines.add("§7#" + record.chestNumber + " " + nullToEmpty(record.chestTitle) + " ("
+					+ nullToEmpty(record.floor) + "): §f" + formatCoins(oldValue) + " §7to §a" + formatCoins(newValue));
+			}
+		}
+		if (chestNumber != null && !foundTarget) {
+			sendDrtSystemMessage(client, Component.literal("§c[DRT] No saved chest #" + chestNumber + "."));
+			return false;
+		}
+		if (changed == 0) {
+			sendDrtSystemMessage(client, Component.literal(chestNumber != null
+				? "§a[DRT] Chest #" + chestNumber + " already matches current prices."
+				: "§a[DRT] No saved chests look underpriced."));
+			return true;
+		}
+		String delta = (totalDelta >= 0 ? "+" : "") + formatCoins(totalDelta);
+		sendDrtSystemMessage(client, Component.literal("§a[DRT] Repriced " + changed + " chest" + (changed == 1 ? "" : "s") + " (" + delta + " value)."));
+		for (String line : changedLines) sendDrtSystemMessage(client, Component.literal(line));
+		if (changed > changedLines.size()) {
+			sendDrtSystemMessage(client, Component.literal("§7...and " + (changed - changedLines.size()) + " more."));
+		}
+		return true;
+	}
+
 	public boolean copyDiagnosticZipToClipboard(String reportId) {
 		DiagnosticIncident incident = diagnostics.incidentById(reportId);
 		Minecraft client = Minecraft.getInstance();

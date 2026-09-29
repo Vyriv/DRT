@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -57,6 +58,10 @@ public final class PriceCache {
 		Double price = itemIdToPrice.get(itemId);
 		if (price == null) return null;
 		return new PriceLookup(itemId, price, itemIdToSource.getOrDefault(itemId, "unknown"));
+	}
+
+	public static boolean hasAuctionAndBazaarPrices() {
+		return !itemIdToAuctionData.isEmpty() && !itemIdToBazaarData.isEmpty();
 	}
 
 	public static boolean containsItemId(String itemId) {
@@ -156,7 +161,17 @@ public final class PriceCache {
 		Map<String, AuctionPriceData> nextAuctionData = new ConcurrentHashMap<>();
 		Map<String, BazaarPriceData> nextBazaarData = new ConcurrentHashMap<>();
 		loadAuctionHouse(root.getAsJsonObject("auction_house"), nextPrices, nextSources, nextAuctionData);
+		if (nextAuctionData.isEmpty() && !itemIdToAuctionData.isEmpty()) {
+			DungeonRunTracker.LOGGER.warn("[DRT] Price response had no auction house entries, keeping previous auction prices");
+			carryOverSection("auction_house", itemIdToAuctionData.keySet(), nextPrices, nextSources);
+			nextAuctionData.putAll(itemIdToAuctionData);
+		}
 		loadBazaar(root.getAsJsonObject("bazaar"), nextPrices, nextSources, nextBazaarData);
+		if (nextBazaarData.isEmpty() && !itemIdToBazaarData.isEmpty()) {
+			DungeonRunTracker.LOGGER.warn("[DRT] Price response had no bazaar entries, keeping previous bazaar prices");
+			carryOverSection("bazaar", itemIdToBazaarData.keySet(), nextPrices, nextSources);
+			nextBazaarData.putAll(itemIdToBazaarData);
+		}
 		loadMasterSkullFallbacks(nextPrices, nextSources);
 		loadCoflFallback("PET_SPIRIT", "PET_SPIRIT", nextPrices, nextSources);
 		if (!nextPrices.isEmpty()) {
@@ -166,6 +181,24 @@ public final class PriceCache {
 			itemIdToBazaarData = Map.copyOf(nextBazaarData);
 			invalidateSearchIndex();
 			DungeonRunTracker.LOGGER.info("[DRT] Loaded {} Vyriv price entries", nextPrices.size());
+		}
+	}
+
+	private static void carryOverSection(
+		String source,
+		Set<String> itemIds,
+		Map<String, Double> prices,
+		Map<String, String> sources
+	) {
+		Map<String, Double> previousPrices = itemIdToPrice;
+		Map<String, String> previousSources = itemIdToSource;
+		for (String itemId : itemIds) {
+			if (prices.containsKey(itemId)) continue;
+			if (!source.equals(previousSources.get(itemId))) continue;
+			Double price = previousPrices.get(itemId);
+			if (price == null) continue;
+			prices.put(itemId, price);
+			sources.put(itemId, source);
 		}
 	}
 

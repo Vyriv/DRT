@@ -1,6 +1,7 @@
 package dev.vy.drt.client;
 
 import com.mojang.brigadier.Command;
+import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.suggestion.Suggestions;
 import com.mojang.brigadier.suggestion.SuggestionsBuilder;
@@ -51,6 +52,7 @@ public final class DrtClient implements ClientModInitializer {
 		tracker = new DungeonRunTrackerFeature();
 		tracker.applyConfig(DrtConfigManager.getConfig());
 		DrtCosmetics.initialize();
+		VyaddonsUpdateChecker.initialize();
 
 		ClientTickEvents.END_CLIENT_TICK.register(client -> {
 			if (!iconCachesLoaded && client.player != null && client.level != null) {
@@ -256,6 +258,27 @@ public final class DrtClient implements ClientModInitializer {
 								}
 								String reportId = StringArgumentType.getString(context, "reportId");
 								return tracker.exportDiagnosticBug(reportId) ? Command.SINGLE_SUCCESS : 0;
+							})
+						)
+					)
+					.then(ClientCommands.literal("reprice")
+						.executes(context -> {
+							Minecraft client = context.getSource().getClient();
+							if (client.player == null) {
+								context.getSource().sendError(Component.literal("§c[DRT] Not in game"));
+								return 0;
+							}
+							return tracker.repriceHistory(null) ? Command.SINGLE_SUCCESS : 0;
+						})
+						.then(ClientCommands.argument("chestNumber", IntegerArgumentType.integer(1))
+							.executes(context -> {
+								Minecraft client = context.getSource().getClient();
+								if (client.player == null) {
+									context.getSource().sendError(Component.literal("§c[DRT] Not in game"));
+									return 0;
+								}
+								int chestNumber = IntegerArgumentType.getInteger(context, "chestNumber");
+								return tracker.repriceHistory(chestNumber) ? Command.SINGLE_SUCCESS : 0;
 							})
 						)
 					)
