@@ -445,6 +445,7 @@ public final class DungeonRunTrackerFeature {
 	private String lastOpenedRewardChestTitleForChat = "";
 	/** Set while viewing a Croesus preview with an Open button; consumed on the subsequent open. */
 	private String armedPreviewRewardChestTitle = "";
+	private long armedPreviewRewardChestCost = -1L;
 	/** Last Croesus chest row the player hovered; used when Hypixel opens "Master Catacombs - Floor X". */
 	private String lastHoveredCroesusChestTitle = "";
 	private String lastSelectedCroesusChestTitle = "";
@@ -3049,6 +3050,8 @@ public final class DungeonRunTrackerFeature {
 		String direct = canonicalRewardChestTitle(normalizedScreenTitle);
 		if (direct != null) return direct;
 		if (!isRewardsMenuTitle(normalizedScreenTitle)) return null;
+		// The Croesus chest list shares this title; its chest rows must keep going through offer caching.
+		if (menuHasChestListRows(menu) || !menuHasServerItems(menu)) return null;
 
 		if (pendingLootChestAssigned && pendingLootChestTitle != null && !pendingLootChestTitle.isBlank()) {
 			String pending = canonicalRewardChestTitle(normalize(pendingLootChestTitle));
@@ -3064,18 +3067,26 @@ public final class DungeonRunTrackerFeature {
 			return lastHoveredCroesusChestTitle;
 		}
 
-		String byCost = matchRewardChestTitleByOpenCost(menu);
-		if (byCost != null) return byCost;
+		return matchRewardChestTitleByOpenCost(menu);
+	}
 
-		if (menu != null) {
-			for (int slotIndex = 0; slotIndex < menu.slots.size(); slotIndex++) {
-				Slot slot = menu.getSlot(slotIndex);
-				if (slot == null || !isServerOwnedSlot(slot)) continue;
-				String fromStack = canonicalChestTitleFromStack(slot.getItem());
-				if (fromStack != null && REWARD_CHEST_TITLES.contains(fromStack)) return fromStack;
-			}
+	private boolean menuHasServerItems(AbstractContainerMenu menu) {
+		if (menu == null) return false;
+		for (int slotIndex = 0; slotIndex < menu.slots.size(); slotIndex++) {
+			Slot slot = menu.getSlot(slotIndex);
+			if (slot != null && isServerOwnedSlot(slot) && !slot.getItem().isEmpty()) return true;
 		}
-		return null;
+		return false;
+	}
+
+	private boolean menuHasChestListRows(AbstractContainerMenu menu) {
+		if (menu == null) return false;
+		for (int slotIndex = 0; slotIndex < menu.slots.size(); slotIndex++) {
+			Slot slot = menu.getSlot(slotIndex);
+			if (slot == null || !isServerOwnedSlot(slot)) continue;
+			if (canonicalChestTitleFromStack(slot.getItem()) != null) return true;
+		}
+		return false;
 	}
 
 	private String matchRewardChestTitleByOpenCost(AbstractContainerMenu menu) {
@@ -3491,6 +3502,8 @@ public final class DungeonRunTrackerFeature {
 				// Arm so the paid open counts even if this tier was already opened earlier in Croesus
 				// (offers are cached by title, so a second Wood from another run looks "Already Opened").
 				armedPreviewRewardChestTitle = canonicalRewardTitle;
+				Long previewCost = parseChestCost(menu.getSlot(findOpenRewardChestSlotIndex(menu)).getItem());
+				armedPreviewRewardChestCost = previewCost == null ? -1L : previewCost;
 				// Keep key-requirement from this preview so the subsequent open can bill a key.
 				lastViewedOpenedRewardChestTitle = "";
 				return;
@@ -3498,7 +3511,11 @@ public final class DungeonRunTrackerFeature {
 
 			DungeonChestOffer cached = cachedChestOffersByTitle.get(canonicalRewardTitle);
 			boolean openedFromArmedPreview = canonicalRewardTitle.equals(armedPreviewRewardChestTitle);
-			if (openedFromArmedPreview) armedPreviewRewardChestTitle = "";
+			long previewOpenCost = openedFromArmedPreview ? armedPreviewRewardChestCost : -1L;
+			if (openedFromArmedPreview) {
+				armedPreviewRewardChestTitle = "";
+				armedPreviewRewardChestCost = -1L;
+			}
 			// Skip pure re-views of an already-counted tier. Never skip a preview→Open sequence —
 			// multi-run Croesus reuses titles (two Wood chests) and the title-keyed cache stays opened.
 			if (!openedFromArmedPreview
@@ -3529,6 +3546,7 @@ public final class DungeonRunTrackerFeature {
 			// Do not bill kismet from the sticky global reroll marker on every open.
 			if (firstOpenScan || openedFromArmedPreview) {
 				assignPendingOpenedChest(canonicalRewardTitle, cached, paidWithKey, openedFromArmedPreview, menu.containerId);
+				applyPreviewOpenCost(previewOpenCost);
 			}
 			captureOpenedRewardChestLoot(client, menu, now);
 			lastViewedOpenedRewardChestTitle = canonicalRewardTitle;
@@ -3554,6 +3572,7 @@ public final class DungeonRunTrackerFeature {
 
 		// Back on the chest list — drop any unused preview arm (backed out without opening).
 		armedPreviewRewardChestTitle = "";
+		armedPreviewRewardChestCost = -1L;
 
 		if (menu == null) return;
 
@@ -3872,6 +3891,13 @@ public final class DungeonRunTrackerFeature {
 		suppressDungeonChestKeyForKuudra(normalizedTitle, pendingLootCostBreakdown);
 		trackingSession.updateChestCost(pendingChestSessionId, pendingLootCostBreakdown);
 		lootCollectionUntilMillis = System.currentTimeMillis() + LOOT_COLLECTION_MS;
+	}
+
+	private void applyPreviewOpenCost(long previewOpenCost) {
+		if (previewOpenCost <= 0L || !pendingLootChestAssigned || pendingLootCostBreakdown == null) return;
+		if (pendingLootCostBreakdown.baseChestCostCoins > 0L) return;
+		pendingLootCostBreakdown.baseChestCostCoins = previewOpenCost;
+		trackingSession.updateChestCost(pendingChestSessionId, pendingLootCostBreakdown);
 	}
 
 	private void applyOfferContextFloor(DungeonChestOffer offer, String handler) {
@@ -5203,6 +5229,7 @@ public final class DungeonRunTrackerFeature {
 		lastViewedOpenedRewardChestTitle = "";
 		lastOpenedRewardChestTitleForChat = "";
 		armedPreviewRewardChestTitle = "";
+		armedPreviewRewardChestCost = -1L;
 		recentLootMessages.clear();
 		pendingChestLootDedupKeys.clear();
 		ignoredPlayerInventoryDiagnosticKeys.clear();
