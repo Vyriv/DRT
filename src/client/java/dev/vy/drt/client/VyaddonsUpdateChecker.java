@@ -166,13 +166,13 @@ public final class VyaddonsUpdateChecker {
 
 	private static Component outdatedLine(Result result) {
 		Target target = result.target();
-		MutableComponent button = Component.literal("[Get new update]").setStyle(Style.EMPTY
+		MutableComponent button = Component.literal("[Update]").setStyle(Style.EMPTY
 			.withColor(target.color())
 			.withBold(true)
 			.withClickEvent(new ClickEvent.OpenUrl(URI.create(target.modrinthUrl())))
 			.withHoverEvent(new HoverEvent.ShowText(Component.literal("Open " + target.label() + " on Modrinth"))));
-		return Component.literal(target.label() + " new version available (Current " + displayVersion(result.installed())
-				+ ", latest " + displayVersion(result.latest()) + ") ")
+		return Component.literal(target.label() + " new version available (" + displayVersion(result.installed())
+				+ " -> " + displayVersion(result.latest()) + ") ")
 			.withColor(target.color())
 			.append(button);
 	}
