@@ -9,8 +9,10 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
@@ -30,17 +32,18 @@ import net.minecraft.network.chat.Style;
  * Notification only: any network or parse failure is silently ignored.
  */
 public final class VyaddonsUpdateChecker {
-	private static final String CLAIM_PROPERTY = "vyaddons.updateChecker";
+	private static final String CLAIM_PROPERTY = "vyaddons.updateChecker.v2";
 	private static final String SELF = "drt";
 	private static final Duration TIMEOUT = Duration.ofSeconds(3);
+	private static final String UPDATE_URL = "https://api.vyriv.dev/v1/updates";
 	private static final String USER_AGENT = "Vyaddons-Update-Checker";
 	private static final int HEADER_COLOR = 0xAAAAAA;
 	private static final int UP_TO_DATE_COLOR = 0x55FF55;
 	private static final int DISCORD_COLOR = 0x5865F2;
 	private static final String DISCORD_URL = "https://discord.gg/PFfhe9MWnr";
 	private static final List<Target> TARGETS = List.of(
-		new Target("betterpv", "BetterPV", "Vyriv/BetterPV", "https://modrinth.com/mod/betterpv", 0xC9A7FF),
-		new Target("drt", "DRT", "Vyriv/DRT", "https://modrinth.com/mod/drt", 0xFF8A8A)
+		new Target("betterpv", "BetterPV", "https://modrinth.com/mod/betterpv", 0xC9A7FF),
+		new Target("drt", "DRT", "https://modrinth.com/mod/drt", 0xFF8A8A)
 	);
 	private static final HttpClient HTTP = HttpClient.newBuilder().connectTimeout(TIMEOUT).build();
 
@@ -54,20 +57,25 @@ public final class VyaddonsUpdateChecker {
 		if (System.getProperties().putIfAbsent(CLAIM_PROPERTY, SELF) != null) {
 			return;
 		}
-		List<CompletableFuture<Result>> checks = new ArrayList<>();
+		List<Result> installed = new ArrayList<>();
 		for (Target target : TARGETS) {
 			Optional<ModContainer> mod = FabricLoader.getInstance().getModContainer(target.modId());
 			if (mod.isEmpty()) {
 				continue;
 			}
-			String installed = mod.get().getMetadata().getVersion().getFriendlyString();
-			checks.add(fetchLatest(target).thenApply(latest -> new Result(target, installed, latest)));
+			String installedVersion = mod.get().getMetadata().getVersion().getFriendlyString();
+			installed.add(new Result(target, installedVersion, null));
 		}
-		if (checks.isEmpty()) {
+		if (installed.isEmpty()) {
 			return;
 		}
-		pending = CompletableFuture.allOf(checks.toArray(CompletableFuture[]::new))
-			.thenApply(ignored -> checks.stream().map(CompletableFuture::join).toList());
+		pending = fetchLatestVersions().thenApply(versions -> installed.stream()
+			.map(result -> new Result(
+				result.target(),
+				result.installed(),
+				versions == null ? null : versions.get(result.target().modId())
+			))
+			.toList());
 		ClientTickEvents.END_CLIENT_TICK.register(VyaddonsUpdateChecker::tick);
 	}
 
@@ -85,24 +93,23 @@ public final class VyaddonsUpdateChecker {
 		}
 	}
 
-	private static CompletableFuture<String> fetchLatest(Target target) {
+	private static CompletableFuture<Map<String, String>> fetchLatestVersions() {
 		try {
-			HttpRequest request = HttpRequest.newBuilder(URI.create("https://api.github.com/repos/" + target.repo() + "/releases/latest"))
+			HttpRequest request = HttpRequest.newBuilder(URI.create(UPDATE_URL))
 				.timeout(TIMEOUT)
 				.header("User-Agent", USER_AGENT)
-				.header("Accept", "application/vnd.github+json")
+				.header("Accept", "application/json")
 				.GET()
 				.build();
 			return HTTP.sendAsync(request, HttpResponse.BodyHandlers.ofString())
-				.thenApply(VyaddonsUpdateChecker::parseTag)
+				.thenApply(VyaddonsUpdateChecker::parseVersions)
 				.exceptionally(error -> null);
 		} catch (RuntimeException exception) {
 			return CompletableFuture.completedFuture(null);
 		}
 	}
 
-	// releases/latest already skips drafts and prereleases; the flags are checked anyway.
-	private static String parseTag(HttpResponse<String> response) {
+	private static Map<String, String> parseVersions(HttpResponse<String> response) {
 		if (response.statusCode() != 200 || response.body() == null) {
 			return null;
 		}
@@ -110,17 +117,17 @@ public final class VyaddonsUpdateChecker {
 		if (!parsed.isJsonObject()) {
 			return null;
 		}
-		JsonObject release = parsed.getAsJsonObject();
-		if (flag(release, "draft") || flag(release, "prerelease")) {
-			return null;
+		JsonObject root = parsed.getAsJsonObject();
+		Map<String, String> versions = new HashMap<>();
+		for (Target target : TARGETS) {
+			JsonElement entry = root.get(target.modId());
+			if (entry == null || !entry.isJsonObject()) continue;
+			JsonElement version = entry.getAsJsonObject().get("version");
+			if (version != null && version.isJsonPrimitive()) {
+				versions.put(target.modId(), version.getAsString());
+			}
 		}
-		JsonElement tag = release.get("tag_name");
-		return tag != null && tag.isJsonPrimitive() ? tag.getAsString() : null;
-	}
-
-	private static boolean flag(JsonObject object, String key) {
-		JsonElement value = object.get(key);
-		return value != null && value.isJsonPrimitive() && value.getAsBoolean();
+		return versions.isEmpty() ? null : versions;
 	}
 
 	private static List<Component> buildLines(List<Result> results) {
@@ -235,7 +242,7 @@ public final class VyaddonsUpdateChecker {
 		return out;
 	}
 
-	private record Target(String modId, String label, String repo, String modrinthUrl, int color) {
+	private record Target(String modId, String label, String modrinthUrl, int color) {
 	}
 
 	private record Result(Target target, String installed, String latest) {
