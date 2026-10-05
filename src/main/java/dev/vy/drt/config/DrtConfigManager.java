@@ -355,7 +355,8 @@ public final class DrtConfigManager {
 		boolean forceSalvageEquipment,
 		boolean coolForgedEnabled,
 		int coolForgedLevel,
-		String bazaarPriceMode
+		String bazaarPriceMode,
+		int crimsonEssenceBonusPercent
 	) {
 		config.onboardingComplete = onboardingComplete;
 		config.kuudraFaction = normalizeKuudraFaction(kuudraFaction);
@@ -368,7 +369,19 @@ public final class DrtConfigManager {
 		config.coolForgedEnabled = coolForgedEnabled;
 		config.coolForgedLevel = clamp(coolForgedLevel, 1, 5);
 		config.bazaarPriceMode = normalizeBazaarPriceMode(bazaarPriceMode);
+		config.crimsonEssenceBonusPercent = clamp(crimsonEssenceBonusPercent, 0, 100);
 		save();
+	}
+
+	/** Stores a shop-read key cost. Returns true when it differed from the saved one. */
+	public static synchronized boolean updateKuudraKeyShopCost(DungeonFloor tier, KuudraKeyShopCost cost) {
+		if (tier == null || !tier.isKuudra() || cost == null || cost.coins <= 0L) return false;
+		if (config.kuudraKeyShopCosts == null) config.kuudraKeyShopCosts = new LinkedHashMap<>();
+		KuudraKeyShopCost previous = config.kuudraKeyShopCosts.get(tier.name());
+		if (cost.sameCostAs(previous)) return false;
+		config.kuudraKeyShopCosts.put(tier.name(), cost);
+		save();
+		return true;
 	}
 
 	public static synchronized void clearAllData() {
@@ -482,6 +495,8 @@ public final class DrtConfigManager {
 		loaded.kuudraPetLevel = clamp(loaded.kuudraPetLevel, 1, 100);
 		loaded.coolForgedLevel = clamp(loaded.coolForgedLevel, 1, 5);
 		loaded.bazaarPriceMode = normalizeBazaarPriceMode(loaded.bazaarPriceMode);
+		if (loaded.kuudraKeyShopCosts == null) loaded.kuudraKeyShopCosts = new LinkedHashMap<>();
+		loaded.crimsonEssenceBonusPercent = clamp(loaded.crimsonEssenceBonusPercent, 0, 100);
 	}
 
 	private static void applyFreshOverlayDefaults(DrtConfig cfg) {

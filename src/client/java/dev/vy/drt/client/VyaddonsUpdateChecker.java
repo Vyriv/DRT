@@ -36,6 +36,8 @@ public final class VyaddonsUpdateChecker {
 	private static final String USER_AGENT = "Vyaddons-Update-Checker";
 	private static final int HEADER_COLOR = 0xAAAAAA;
 	private static final int UP_TO_DATE_COLOR = 0x55FF55;
+	private static final int DISCORD_COLOR = 0x5865F2;
+	private static final String DISCORD_URL = "https://discord.gg/PFfhe9MWnr";
 	private static final List<Target> TARGETS = List.of(
 		new Target("betterpv", "BetterPV", "Vyriv/BetterPV", "https://modrinth.com/mod/betterpv", 0xC9A7FF),
 		new Target("drt", "DRT", "Vyriv/DRT", "https://modrinth.com/mod/drt", 0xFF8A8A)
@@ -139,12 +141,20 @@ public final class VyaddonsUpdateChecker {
 		lines.add(Component.literal("Vyaddons update checker:").withColor(HEADER_COLOR));
 		if (outdated.isEmpty()) {
 			lines.add(Component.literal("All up to date :)").withColor(UP_TO_DATE_COLOR));
-			return lines;
 		}
 		for (Result result : outdated) {
 			lines.add(outdatedLine(result));
 		}
+		lines.add(discordLine());
 		return lines;
+	}
+
+	private static Component discordLine() {
+		return Component.literal("Join the discord!").setStyle(Style.EMPTY
+			.withColor(DISCORD_COLOR)
+			.withBold(true)
+			.withClickEvent(new ClickEvent.OpenUrl(URI.create(DISCORD_URL)))
+			.withHoverEvent(new HoverEvent.ShowText(Component.literal("Open the Vyaddons Discord"))));
 	}
 
 	private static Component outdatedLine(Result result) {

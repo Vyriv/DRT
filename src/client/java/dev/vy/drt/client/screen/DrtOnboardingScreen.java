@@ -43,7 +43,6 @@ public final class DrtOnboardingScreen extends Screen {
 	private static final String DISCORD_INVITE_URL = "https://discord.com/invite/R5NdTVRDpb";
 
 	private static final String[] PET_RARITIES = {"COMMON", "UNCOMMON", "RARE", "EPIC", "LEGENDARY"};
-
 	private final DungeonRunTrackerFeature trackerFeature;
 	private final List<ClickTarget> clickTargets = new ArrayList<>();
 
@@ -62,6 +61,7 @@ public final class DrtOnboardingScreen extends Screen {
 	private boolean fancyMenuEnabled;
 	private boolean croesusOverlayEnabled;
 	private boolean includeEssence;
+	private int crimsonEssenceBonusPercent;
 	private Dropdown openDropdown = Dropdown.NONE;
 
 	private int ox;
@@ -102,6 +102,7 @@ public final class DrtOnboardingScreen extends Screen {
 		fancyMenuEnabled = config.fancyMenuEnabled;
 		croesusOverlayEnabled = config.croesusOverlayEnabled;
 		includeEssence = config.essenceCountsTowardProfit;
+		crimsonEssenceBonusPercent = clamp(config.crimsonEssenceBonusPercent, 0, 100);
 	}
 
 	@Override
@@ -143,6 +144,8 @@ public final class DrtOnboardingScreen extends Screen {
 		drawSection(g, "Kuudra", y + 2);
 		y += 16;
 		drawFactionRow(g, mouseX, mouseY, y);
+		y += ROW_H + GAP;
+		drawEssenceBonusRow(g, mouseX, mouseY, y);
 		y += ROW_H + GAP;
 		drawPetRow(g, mouseX, mouseY, y);
 		y += ROW_H + GAP;
@@ -236,7 +239,7 @@ public final class DrtOnboardingScreen extends Screen {
 
 	private void updateLayout() {
 		winW = Math.max(PANEL_MIN_W, Math.min(PANEL_MAX_W, width - 24));
-		int kuudraRows = 4 + (kuudraPetEnabled ? 1 : 0);
+		int kuudraRows = 5 + (kuudraPetEnabled ? 1 : 0);
 		int desiredH = 34
 			+ 13 + (ROW_H + GAP) * 5
 			+ 16 + kuudraRows * (ROW_H + GAP) - GAP
@@ -320,6 +323,16 @@ public final class DrtOnboardingScreen extends Screen {
 		factionDropdownY = y + 3;
 		drawDropdownButton(g, mouseX, mouseY, factionDropdownX, factionDropdownY, factionDropdownW, 16,
 			titleCase(kuudraFaction), openDropdown == Dropdown.FACTION, () -> toggleDropdown(Dropdown.FACTION), "Select Kuudra faction");
+	}
+
+	private void drawEssenceBonusRow(GuiGraphicsExtractor g, int mouseX, int mouseY, int y) {
+		drawRowBase(g, mouseX, mouseY, y);
+		g.text(font, "Essence shards", ox + 18, y + 7, TEXT);
+		String tip = "Extra Crimson Essence from shards such as Lava Leech, on top of the Kuudra pet";
+		drawStepper(g, controlX(88), y + 3, 88, 16, "+" + crimsonEssenceBonusPercent + "%", false,
+			() -> crimsonEssenceBonusPercent = clamp(crimsonEssenceBonusPercent - 1, 0, 100),
+			() -> crimsonEssenceBonusPercent = clamp(crimsonEssenceBonusPercent + 1, 0, 100),
+			tip);
 	}
 
 	private void drawPetRow(GuiGraphicsExtractor g, int mouseX, int mouseY, int y) {
@@ -666,7 +679,8 @@ public final class DrtOnboardingScreen extends Screen {
 			forceSalvageEquipment,
 			coolForgedEnabled,
 			coolForgedLevel,
-			bazaarPriceMode
+			bazaarPriceMode,
+			crimsonEssenceBonusPercent
 		);
 	}
 

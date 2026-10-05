@@ -3,8 +3,10 @@ package dev.vy.drt.price;
 import dev.vy.drt.config.DrtConfig;
 import dev.vy.drt.config.DungeonFloor;
 import dev.vy.drt.config.DungeonLootEntry;
+import dev.vy.drt.config.KuudraKeyShopCost;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 public final class DungeonProfitPricing {
 	private static final String ITEM_CRIMSON_ESSENCE = "ESSENCE_CRIMSON";
@@ -101,6 +103,17 @@ public final class DungeonProfitPricing {
 	}
 
 	public static long resolveKuudraKeyCost(DungeonFloor floor, DrtConfig config) {
+		KuudraKeyShopCost shopCost = kuudraKeyShopCost(floor, config);
+		if (shopCost != null) {
+			long total = Math.max(0L, shopCost.coins);
+			if (shopCost.materials != null) {
+				for (Map.Entry<String, Integer> material : shopCost.materials.entrySet()) {
+					total += resolveMaterialCost(material.getKey(), material.getValue() == null ? 0 : material.getValue(), config);
+				}
+			}
+			return total;
+		}
+
 		KuudraKeyRecipe recipe = kuudraKeyRecipe(floor);
 		if (recipe == null) return 0L;
 		String factionMaterial = normalizedKuudraFaction(config).equals("BARBARIAN")
@@ -112,10 +125,24 @@ public final class DungeonProfitPricing {
 		return Math.max(0L, coinCost) + materialCost + starCost;
 	}
 
+	public static KuudraKeyShopCost kuudraKeyShopCost(DungeonFloor floor, DrtConfig config) {
+		if (floor == null || !floor.isKuudra() || config == null || config.kuudraKeyShopCosts == null) return null;
+		KuudraKeyShopCost cost = config.kuudraKeyShopCosts.get(floor.name());
+		return cost != null && cost.coins > 0L ? cost : null;
+	}
+
+	/** Shop lore names to price ids. The shop calls the star just "Nether Star". */
+	public static String kuudraKeyMaterialItemId(String displayName) {
+		if (displayName == null) return "";
+		String upper = displayName.trim().toUpperCase(Locale.ROOT);
+		if (upper.isEmpty()) return "";
+		if (upper.equals("NETHER STAR") || upper.equals("CORRUPTED NETHER STAR")) return ITEM_CORRUPTED_NETHER_STAR;
+		return upper.replaceAll("[^A-Z0-9]+", "_").replaceAll("^_+|_+$", "");
+	}
+
 	/**
-	 * Emissary coin discount by faction reputation:
-	 * 0 → 0%, 1k → 5%, 3k → 10%, 7k → 15%, 12k → 20%.
-	 * Materials are not discounted.
+	 * Fallback estimate when the shop has not been seen yet. Emissary coin discount by
+	 * faction reputation: 0 → 0%, 1k → 5%, 3k → 10%, 7k → 15%, 12k → 20%.
 	 */
 	public static int kuudraKeyCoinDiscountPercent(int reputation) {
 		if (reputation >= 12_000) return 20;
@@ -240,9 +267,26 @@ public final class DungeonProfitPricing {
 	}
 
 	private static int adjustedCrimsonEssenceAmount(int baseAmount, DrtConfig config) {
-		if (config == null || !config.kuudraPetEnabled) return Math.max(0, baseAmount);
-		double bonusPercent = kuudraPetCrimsonBonusPercent(config.kuudraPetRarity, config.kuudraPetLevel);
-		return (int) Math.round(Math.max(0, baseAmount) * (100.0D + bonusPercent) / 100.0D);
+		return applyEssenceBonus(baseAmount, crimsonEssenceBonusPercent(config, false));
+	}
+
+	private static double crimsonEssenceBonusPercent(DrtConfig config, boolean includeCoolForged) {
+		if (config == null) return 0.0D;
+		double bonus = 0.0D;
+		if (config.kuudraPetEnabled) {
+			bonus += kuudraPetCrimsonBonusPercent(config.kuudraPetRarity, config.kuudraPetLevel);
+		}
+		bonus += Math.max(0, Math.min(100, config.crimsonEssenceBonusPercent));
+		if (includeCoolForged && config.coolForgedEnabled) {
+			bonus += Math.max(1, Math.min(5, config.coolForgedLevel)) * 4;
+		}
+		return bonus;
+	}
+
+	private static int applyEssenceBonus(int baseAmount, double bonusPercent) {
+		if (baseAmount <= 0) return 0;
+		if (bonusPercent <= 0.0D) return baseAmount;
+		return (int) Math.round(baseAmount * (100.0D + bonusPercent) / 100.0D);
 	}
 
 	private static int baseForcedSalvageEssence(KuudraSalvageCategory category, String rawName) {
@@ -272,14 +316,7 @@ public final class DungeonProfitPricing {
 	}
 
 	private static int adjustedSalvageEssence(int baseEssence, DrtConfig config) {
-		double bonusPercent = 0.0D;
-		if (config != null && config.kuudraPetEnabled) {
-			bonusPercent += kuudraPetCrimsonBonusPercent(config.kuudraPetRarity, config.kuudraPetLevel);
-		}
-		if (config != null && config.coolForgedEnabled) {
-			bonusPercent += Math.max(1, Math.min(5, config.coolForgedLevel)) * 4;
-		}
-		return (int) Math.round(baseEssence * (100.0D + bonusPercent) / 100.0D);
+		return applyEssenceBonus(baseEssence, crimsonEssenceBonusPercent(config, true));
 	}
 
 	private static double kuudraPetCrimsonBonusPercent(String rarity, int level) {

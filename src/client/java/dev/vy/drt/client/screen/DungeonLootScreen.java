@@ -347,7 +347,7 @@ public final class DungeonLootScreen extends Screen {
 			String chestLabel = (r.chestTitle == null || r.chestTitle.isBlank()) ? null : " " + r.chestTitle;
 			ItemStack icon = resolveChestIcon(r.chestTitle);
 			drawRunListRow(g, mouseX, mouseY, i, icon, modifierIcons(r), runLabel, chestLabel, chestColor(r.chestTitle),
-				formatSigned(r.chestProfitCoins), listY + (i + 1) * ROW_H - listScroll);
+				formatSigned(shownProfit(r)), listY + (i + 1) * ROW_H - listScroll);
 		}
 
 		g.disableScissor();
@@ -708,7 +708,7 @@ public final class DungeonLootScreen extends Screen {
 	private RunSelection currentSelection() {
 		if (selectedRunIndex >= 0 && selectedRunIndex < tabHistory.size()) {
 			DungeonRunRecord r = tabHistory.get(selectedRunIndex);
-			return new RunSelection(List.of(r), r.chestCostCoins, r.chestValueCoins, r.chestProfitCoins);
+			return new RunSelection(List.of(r), shownCost(r), shownValue(r), shownProfit(r));
 		}
 		return new RunSelection(tabHistory, sumCoins(tabHistory, false, true), sumCoins(tabHistory, false, false), sumProfit(tabHistory));
 	}
@@ -898,7 +898,7 @@ public final class DungeonLootScreen extends Screen {
 
 	private long sumProfit(List<DungeonRunRecord> records) {
 		long t = 0L;
-		for (DungeonRunRecord r : records) if (r != null) t += r.chestProfitCoins;
+		for (DungeonRunRecord r : records) if (r != null) t += shownProfit(r);
 		return t;
 	}
 
@@ -906,10 +906,38 @@ public final class DungeonLootScreen extends Screen {
 		long t = 0L;
 		for (DungeonRunRecord r : records) {
 			if (r == null) continue;
-			if (cost) t += r.chestCostCoins;
-			else if (value) t += r.chestValueCoins;
+			if (cost) t += shownCost(r);
+			else if (value) t += shownValue(r);
 		}
 		return t;
+	}
+
+	/** Live loot price, so the footer matches the item rows. */
+	private long shownValue(DungeonRunRecord record) {
+		if (record == null) return 0L;
+		return DungeonProfitPricing.calculateLootValue(record.lootEntries, DrtConfigManager.getConfig());
+	}
+
+	/** Kuudra key cost follows the current discount. Other costs stay as recorded. */
+	private long shownCost(DungeonRunRecord record) {
+		if (record == null) return 0L;
+		long stored = record.chestCostCoins;
+		if (!record.usedKuudraKey) return stored;
+		DungeonFloor floor;
+		try {
+			floor = record.floor == null ? DungeonFloor.UNKNOWN : DungeonFloor.valueOf(record.floor.trim());
+		} catch (IllegalArgumentException ignored) {
+			return stored;
+		}
+		long key = DungeonProfitPricing.resolveKuudraKeyCost(floor, DrtConfigManager.getConfig());
+		if (key <= 0L) return stored;
+		long other = stored - Math.max(0L, record.kuudraKeyCostCoins);
+		if (other < 0L) other = 0L;
+		return other + key;
+	}
+
+	private long shownProfit(DungeonRunRecord record) {
+		return shownValue(record) - shownCost(record);
 	}
 
 	// ── Formatting ───────────────────────────────────────────────────────────

@@ -3,7 +3,9 @@ package dev.vy.drt.price;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import dev.vy.drt.config.DrtConfig;
+import dev.vy.drt.config.DungeonFloor;
 import dev.vy.drt.config.DungeonLootEntry;
+import dev.vy.drt.config.KuudraKeyShopCost;
 import java.lang.reflect.Field;
 import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
@@ -121,6 +123,38 @@ class DungeonProfitPricingTest {
 		);
 
 		assertEquals(883_531L, unit);
+	}
+
+	@Test
+	void shopReadKeyCostBeatsRecipeEstimate() throws Exception {
+		setStaticMap("itemIdToPrice", Map.of("ENCHANTED_MYCELIUM", 1_500.0D, "CORRUPTED_NETHER_STAR", 12_000.0D));
+		DrtConfig config = new DrtConfig();
+		KuudraKeyShopCost basic = new KuudraKeyShopCost();
+		basic.coins = 198_000L;
+		basic.materials.put(DungeonProfitPricing.kuudraKeyMaterialItemId("Enchanted Mycelium"), 2);
+		basic.materials.put(DungeonProfitPricing.kuudraKeyMaterialItemId("Nether Star"), 2);
+		config.kuudraKeyShopCosts.put(DungeonFloor.K1.name(), basic);
+
+		assertEquals(198_000L + 3_000L + 24_000L, DungeonProfitPricing.resolveKuudraKeyCost(DungeonFloor.K1, config));
+		// No shop read for Hot yet: recipe estimate, 400k coins + 6 Mycelium + 2 stars.
+		assertEquals(400_000L + 9_000L + 24_000L, DungeonProfitPricing.resolveKuudraKeyCost(DungeonFloor.K2, config));
+	}
+
+	@Test
+	void petAndShardBonusStackOnCrimsonEssence() {
+		DrtConfig config = new DrtConfig();
+		config.essenceCountsTowardProfit = true;
+		config.kuudraPetEnabled = true;
+		config.kuudraPetRarity = "LEGENDARY";
+		config.kuudraPetLevel = 100;
+		config.crimsonEssenceBonusPercent = 1;
+
+		long total = DungeonProfitPricing.resolveTotalPrice(
+			new DungeonLootEntry("CRIMSON ESSENCE", "ESSENCE_CRIMSON", 2000),
+			config
+		);
+
+		assertEquals(2_420_000L, total);
 	}
 
 	@SuppressWarnings("unchecked")

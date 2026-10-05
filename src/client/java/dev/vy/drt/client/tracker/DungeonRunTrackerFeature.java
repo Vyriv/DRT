@@ -19,6 +19,7 @@ import dev.vy.drt.config.DungeonFloor;
 import dev.vy.drt.config.DungeonLootEntry;
 import dev.vy.drt.config.DungeonRunCompletionRecord;
 import dev.vy.drt.config.DungeonRunRecord;
+import dev.vy.drt.config.KuudraKeyShopCost;
 import dev.vy.drt.config.RunRecordCommitDecision;
 import dev.vy.drt.config.RunRecordDeduplicator;
 import dev.vy.drt.mixin.AbstractContainerScreenAccessor;
@@ -101,12 +102,14 @@ public final class DungeonRunTrackerFeature {
 	private static final long LOOT_WINDOW_MS = 180_000L;
 	private static final long LATE_LOOT_REATTACH_MS = 15 * 60_000L;
 	private static final long LOOT_COLLECTION_MS = 3_000L;
+	private static final long KUUDRA_KEY_SHOP_SCAN_INTERVAL_MS = 500L;
+	private static final Pattern KUUDRA_KEY_SHOP_MATERIAL_PATTERN = Pattern.compile("^(.+?)\\s+[xX×]\\s*(\\d[\\d,]*)$");
 	private static final long REWARD_OPEN_FAILED_GRACE_MS = 1_500L;
 	private static final long REWARD_MODIFIER_SCAN_INTERVAL_MS = 300L;
-	private static final Pattern ESSENCE_PATTERN = Pattern.compile("^(?:\\+\\s*)?(WITHER|UNDEAD|SPIDER|DRAGON|ICE|DIAMOND|GOLD|CRIMSON) ESSENCE(?:\\s*[xX×]\\s*(\\d+))?$");
+	private static final Pattern ESSENCE_PATTERN = Pattern.compile("^(?:\\+\\s*)?(WITHER|UNDEAD|SPIDER|DRAGON|ICE|DIAMOND|GOLD|CRIMSON) ESSENCE(?:\\s*[xX×]\\s*(\\d[\\d,]*))?$");
 	private static final Pattern RECEIVED_PATTERN = Pattern.compile("^YOU RECEIVED\\s+(.+?)(?:\\s*[xX×]\\s*(\\d+))?!?$");
 	private static final Pattern PLUS_PATTERN = Pattern.compile("^\\+\\s*(.+?)(?:\\s*[xX×]\\s*(\\d+))?$");
-	private static final Pattern TRAILING_QUANTITY_PATTERN = Pattern.compile("^(.+?)\\s*[xX×]\\s*(\\d+)$");
+	private static final Pattern TRAILING_QUANTITY_PATTERN = Pattern.compile("^(.+?)\\s*[xX×]\\s*(\\d[\\d,]*)$");
 	// Chat-stacking mods append " (2)" to repeated lines.
 	private static final Pattern CHAT_REPEAT_SUFFIX_PATTERN = Pattern.compile("\\s+\\(\\d+\\)$");
 	/** Chest loot rare line, e.g. "RARE REWARD! Recombobulator 3000" (not party announcements). */
@@ -114,8 +117,8 @@ public final class DungeonRunTrackerFeature {
 		"^(?:RARE REWARD|CRAZY RARE(?: REWARD)?|INSANE REWARD|PRAY RNGESUS)!?\\s+(.+)$",
 		Pattern.CASE_INSENSITIVE);
 	private static final Pattern COIN_PATTERN = Pattern.compile("([-+]?\\d[\\d,]*(?:\\.\\d+)?)\\s*([kmb])?(?:\\s*Coins)?", Pattern.CASE_INSENSITIVE);
-	private static final Pattern QUANTITY_PREFIX_PATTERN = Pattern.compile("^(\\d+)x?\\s+(.+)$", Pattern.CASE_INSENSITIVE);
-	private static final Pattern QUANTITY_SUFFIX_PATTERN = Pattern.compile("^(.+?)\\s+[xX×]\\s*(\\d+)$");
+	private static final Pattern QUANTITY_PREFIX_PATTERN = Pattern.compile("^(\\d[\\d,]*)x?\\s+(.+)$", Pattern.CASE_INSENSITIVE);
+	private static final Pattern QUANTITY_SUFFIX_PATTERN = Pattern.compile("^(.+?)\\s+[xX×]\\s*(\\d[\\d,]*)$");
 	private static final Pattern ENCHANTED_BOOK_PATTERN = Pattern.compile("^Enchanted Book \\((.+) ([IVX]+)\\)$", Pattern.CASE_INSENSITIVE);
 	/** Hypixel book lore is often just "One For All I" / "Ultimate Wise V" without the Enchanted Book wrapper. */
 	private static final Pattern ENCHANT_LORE_LINE_PATTERN = Pattern.compile("^(.+?)\\s+([IVX]+)$", Pattern.CASE_INSENSITIVE);
@@ -382,6 +385,7 @@ public final class DungeonRunTrackerFeature {
 	/** Compatibility projection of the active RunSession floor. Do not assign without evidence acceptance. */
 	private DungeonFloor currentFloor = DungeonFloor.UNKNOWN;
 	private DungeonFloor lastKnownKuudraFloor = DungeonFloor.UNKNOWN;
+	private long lastKuudraKeyShopScanMillis;
 	private long dungeonSignalUntilMillis;
 	private long kuudraSignalUntilMillis;
 	private long awaitingExtraStatsUntilMillis;
@@ -638,6 +642,7 @@ public final class DungeonRunTrackerFeature {
 		// Assign / switch pending chest title before GUI loot merge so a new chest
 		// cannot bleed into the previous pending session.
 		captureRewardChestCosts(client);
+		captureKuudraKeyShopCosts(client, now);
 		captureOpenedRewardChestLootIfViewing(client, now);
 		if (lootCollectionUntilMillis > 0L && now > lootCollectionUntilMillis) {
 			flushPendingLootRecord(lootWindowUntilMillis > 0L && now <= lootWindowUntilMillis);
@@ -2843,15 +2848,9 @@ public final class DungeonRunTrackerFeature {
 		String normalizedTitle = normalize(screen.getTitle().getString());
 		AbstractContainerMenu liveMenu = client.player == null ? null : client.player.containerMenu;
 		String canonicalTitle = resolveCanonicalRewardChestTitle(normalizedTitle, liveMenu);
-		if (canonicalTitle == null) {
-			// Pending loot from a chest you just opened must not keep the breakdown
-			// overlay on Croesus menus after you go back.
-			if (isCroesusMainMenuTitle(normalizedTitle) || isCroesusChestListTitle(normalizedTitle)) {
-				return null;
-			}
-			if (!pendingLootChestAssigned || pendingLootChestTitle.isBlank()) return null;
-			canonicalTitle = pendingLootChestTitle.toUpperCase(Locale.ROOT);
-		}
+		// Pending loot must not put the breakdown on Croesus menus or unrelated containers
+		// (island chests, minions, sacks) opened while a chest is still pending.
+		if (canonicalTitle == null) return null;
 		DungeonChestOffer offer = cachedChestOffersByTitle.get(canonicalTitle);
 		if (offer == null && pendingLootChestAssigned && toDisplayChestTitle(canonicalTitle).equalsIgnoreCase(pendingLootChestTitle)) {
 			offer = new DungeonChestOffer(pendingLootChestTitle, pendingLootCostBreakdown, 0L, pendingLootEntries);
@@ -3598,7 +3597,9 @@ public final class DungeonRunTrackerFeature {
 
 	private void rememberRunContextFromMenuTitle(String normalizedTitle, long now) {
 		if (normalizedTitle == null || normalizedTitle.isBlank()) return;
-		DungeonFloor kuudraTier = detectKuudraTierFromLine(normalizedTitle, normalizedTitle.contains("KUUDRA") || insideKuudra || isCurrentFloorKuudra());
+		DungeonFloor kuudraTier = hasKuudraTierTextContext(normalizedTitle)
+				? detectKuudraTierFromLine(normalizedTitle, normalizedTitle.contains("KUUDRA") || insideKuudra || isCurrentFloorKuudra())
+				: DungeonFloor.UNKNOWN;
 		if (kuudraTier != DungeonFloor.UNKNOWN) {
 			if (menuTitleConflictsWithActiveRun(kuudraTier)) {
 				if (pendingLootFloor == DungeonFloor.UNKNOWN && lootWindowUntilMillis > 0L && now <= lootWindowUntilMillis) {
@@ -4110,6 +4111,85 @@ public final class DungeonRunTrackerFeature {
 		return best;
 	}
 
+	// Mage/Barbarian shop key offers show the player's real price (emissary, Seal, etc.).
+	// Slots can fill a moment after the shop opens, so keep rescanning while it stays open.
+	private void captureKuudraKeyShopCosts(Minecraft client, long now) {
+		if (!(client.screen instanceof AbstractContainerScreen<?> screen) || client.player == null) return;
+		String title = normalize(screen.getTitle().getString());
+		if (!title.equals("MAGE SHOP") && !title.equals("BARBARIAN SHOP")) return;
+		if (now - lastKuudraKeyShopScanMillis < KUUDRA_KEY_SHOP_SCAN_INTERVAL_MS) return;
+		lastKuudraKeyShopScanMillis = now;
+		AbstractContainerMenu menu = client.player.containerMenu;
+		if (menu == null) return;
+
+		List<String> updated = new ArrayList<>();
+		for (Slot slot : menu.slots) {
+			if (slot == null || !isServerOwnedSlot(slot)) continue;
+			ItemStack stack = slot.getItem();
+			if (stack.isEmpty()) continue;
+			DungeonFloor tier = kuudraKeyTierFromExactName(normalize(cleanText(stack.getHoverName().getString())));
+			if (tier == DungeonFloor.UNKNOWN) continue;
+			KuudraKeyShopCost cost = parseKuudraKeyShopCost(cleanLoreLines(stack), now);
+			if (cost == null) continue;
+			if (DrtConfigManager.updateKuudraKeyShopCost(tier, cost)) {
+				updated.add(cleanText(stack.getHoverName().getString()) + " " + formatCoins(DungeonProfitPricing.resolveKuudraKeyCost(tier, DrtConfigManager.getConfig())));
+				DungeonRunTracker.LOGGER.info("[DRT] Kuudra key shop cost noted: tier={} coins={} materials={}", tier, cost.coins, cost.materials);
+			}
+		}
+		if (!updated.isEmpty()) notifyKuudraKeyCostsInChat(updated);
+	}
+
+	private static DungeonFloor kuudraKeyTierFromExactName(String normalizedName) {
+		if (normalizedName == null || normalizedName.isBlank()) return DungeonFloor.UNKNOWN;
+		for (Map.Entry<String, DungeonFloor> entry : KUUDRA_KEY_NAMES) {
+			if (normalizedName.equals(entry.getKey())) return entry.getValue();
+		}
+		return DungeonFloor.UNKNOWN;
+	}
+
+	/** Reads "Cost" / "198,000 Coins" / "Enchanted Mycelium x2" / "Nether Star x2" from a shop offer. */
+	private KuudraKeyShopCost parseKuudraKeyShopCost(List<String> loreLines, long now) {
+		int costIndex = -1;
+		for (int index = 0; index < loreLines.size(); index++) {
+			if (loreLines.get(index).equalsIgnoreCase("Cost")) {
+				costIndex = index;
+				break;
+			}
+		}
+		if (costIndex < 0) return null;
+
+		KuudraKeyShopCost cost = new KuudraKeyShopCost();
+		cost.seenAtMillis = now;
+		for (int index = costIndex + 1; index < loreLines.size(); index++) {
+			String line = loreLines.get(index);
+			if (line.toUpperCase(Locale.ROOT).endsWith(" COINS")) {
+				Long coins = parseCoins(line);
+				if (coins == null || coins <= 0L) return null;
+				cost.coins = coins;
+				continue;
+			}
+			Matcher material = KUUDRA_KEY_SHOP_MATERIAL_PATTERN.matcher(line);
+			if (!material.matches()) break;
+			String itemId = DungeonProfitPricing.kuudraKeyMaterialItemId(material.group(1));
+			int amount = parsePositiveInt(material.group(2), 0);
+			if (itemId.isEmpty() || amount <= 0) break;
+			cost.materials.merge(itemId, amount, Integer::sum);
+		}
+		return cost.coins > 0L ? cost : null;
+	}
+
+	private void notifyKuudraKeyCostsInChat(List<String> updated) {
+		Minecraft client = Minecraft.getInstance();
+		if (client.player == null) return;
+		Component message = Component.literal("[DRT] Kuudra key cost noted: " + String.join(", ", updated))
+			.withStyle(ChatFormatting.GREEN);
+		//? if >= 26.1 {
+		client.player.sendSystemMessage(message);
+		//? } else {
+		/*client.player.displayClientMessage(message, false);
+		*///?}
+	}
+
 	private DungeonFloor detectKuudraKeyTierFromText(String text) {
 		if (text == null || text.isBlank()) return DungeonFloor.UNKNOWN;
 		String upper = normalize(text);
@@ -4571,7 +4651,16 @@ public final class DungeonRunTrackerFeature {
 	private boolean hasStrongKuudraTierSignal(String line) {
 		if (line == null || line.isBlank()) return false;
 		if (!(line.contains("KUUDRA") || line.contains("HOLLOW") || line.contains("TIER"))) return false;
+		if (!hasKuudraTierTextContext(line)) return false;
 		return detectKuudraTierFromLine(line, true) != DungeonFloor.UNKNOWN;
+	}
+
+	// "TIER V" alone also appears in minion craft broadcasts and other island chat.
+	private boolean hasKuudraTierTextContext(String line) {
+		if (line == null || line.isBlank()) return false;
+		if (line.contains("KUUDRA") || line.contains("HOLLOW")) return true;
+		if (line.contains("MINION")) return false;
+		return insideKuudra || inCrimsonIsle;
 	}
 
 	private int kuudraTierConfidence(String line, DungeonFloor tier) {
@@ -5415,7 +5504,16 @@ public final class DungeonRunTrackerFeature {
 		return normalizedTitle.startsWith("CATACOMBS - FLOOR ")
 				|| normalizedTitle.startsWith("MASTER CATACOMBS - FLOOR ")
 				|| normalizedTitle.contains("KUUDRA")
-				|| ((insideKuudra || isCurrentFloorKuudra()) && (normalizedTitle.contains("REWARD") || normalizedTitle.contains("CHEST")));
+				|| (insideKuudra && !isPlayerStorageTitle(normalizedTitle)
+					&& (normalizedTitle.contains("REWARD") || normalizedTitle.contains("CHEST")));
+	}
+
+	private static boolean isPlayerStorageTitle(String normalizedTitle) {
+		return normalizedTitle.equals("CHEST")
+				|| normalizedTitle.equals("LARGE CHEST")
+				|| normalizedTitle.startsWith("ENDER CHEST")
+				|| normalizedTitle.contains("BACKPACK")
+				|| normalizedTitle.contains("MINION");
 	}
 
 	private Long parseChestCost(ItemStack stack) {
@@ -5715,9 +5813,8 @@ public final class DungeonRunTrackerFeature {
 		sb.append("kuudraReputation=").append(DrtConfigManager.getConfig().kuudraReputationKnown
 			? Integer.toString(DrtConfigManager.getConfig().kuudraReputation)
 			: "unknown").append('\n');
-		sb.append("kuudraKeyCoinDiscountPercent=").append(DrtConfigManager.getConfig().kuudraReputationKnown
-			? DungeonProfitPricing.kuudraKeyCoinDiscountPercent(DrtConfigManager.getConfig().kuudraReputation)
-			: 0).append('\n');
+		DrtConfig debugConfig = DrtConfigManager.getConfig();
+		sb.append("kuudraKeyShopCosts=").append(debugConfig.kuudraKeyShopCosts == null ? "{}" : debugConfig.kuudraKeyShopCosts.keySet()).append('\n');
 		sb.append("dungeonSignalMsLeft=").append(Math.max(0L, dungeonSignalUntilMillis - now)).append('\n');
 		sb.append("kuudraSignalMsLeft=").append(Math.max(0L, kuudraSignalUntilMillis - now)).append('\n');
 		sb.append('\n');
@@ -7006,6 +7103,10 @@ public final class DungeonRunTrackerFeature {
 		}
 
 		int quantity = Math.max(Math.max(1, stack.getCount()), parsed.quantity());
+		if (isCrimsonEssenceName(parsed.name())) {
+			int fromLore = essenceQuantityFromLore(stack);
+			if (fromLore > quantity) quantity = fromLore;
+		}
 		String itemId = resolveItemId(parsed.name());
 		if (itemId.isEmpty() && isMasterStarLootName(parsed.name())) {
 			String resolved = resolveMasterStarItemId(
@@ -7017,6 +7118,31 @@ public final class DungeonRunTrackerFeature {
 			return null;
 		}
 		return new DungeonLootEntry(parsed.name(), itemId, quantity);
+	}
+
+	private boolean isCrimsonEssenceName(String name) {
+		if (name == null || name.isBlank()) return false;
+		String compact = sanitizeLootName(name).toUpperCase(Locale.ROOT).replaceAll("[^A-Z0-9]+", " ").trim();
+		return compact.equals("CRIMSON ESSENCE") || compact.equals("ESSENCE CRIMSON");
+	}
+
+	/** Paid-chest bonus essence is sometimes only in lore, and amounts use thousands separators. */
+	private int essenceQuantityFromLore(ItemStack stack) {
+		int best = 0;
+		for (String line : cleanLoreLines(stack)) {
+			if (line == null || line.isBlank()) continue;
+			String sanitized = sanitizeLootName(line);
+			Matcher essence = ESSENCE_PATTERN.matcher(sanitized.toUpperCase(Locale.ROOT));
+			if (essence.matches()) {
+				best = Math.max(best, parsePositiveInt(essence.group(2), 0));
+				continue;
+			}
+			Matcher suffix = QUANTITY_SUFFIX_PATTERN.matcher(sanitized);
+			if (suffix.matches() && isCrimsonEssenceName(suffix.group(1))) {
+				best = Math.max(best, parsePositiveInt(suffix.group(2), 0));
+			}
+		}
+		return best;
 	}
 
 	private boolean isBareEnchantedBookName(String name) {
@@ -7232,7 +7358,7 @@ public final class DungeonRunTrackerFeature {
 	private int parsePositiveInt(String value, int fallback) {
 		if (value == null || value.isBlank()) return fallback;
 		try {
-			return Math.max(1, Integer.parseInt(value.trim()));
+			return Math.max(1, Integer.parseInt(value.trim().replace(",", "")));
 		} catch (NumberFormatException ignored) {
 			return fallback;
 		}

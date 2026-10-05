@@ -39,6 +39,10 @@ public final class DrtConfig {
 	/** Last Mage/Barbarian reputation read from tab (Crimson Isle). Used for emissary key coin discounts. */
 	public int kuudraReputation = 0;
 	public boolean kuudraReputationKnown = false;
+	/** Key costs read from the faction shop, keyed by tier (K1-K5). Preferred over the recipe estimate. */
+	public Map<String, KuudraKeyShopCost> kuudraKeyShopCosts = new LinkedHashMap<>();
+	/** Extra Crimson Essence percent from attribute shards, on top of the Kuudra pet. */
+	public int crimsonEssenceBonusPercent = 0;
 	public boolean kuudraPetEnabled = false;
 	public String kuudraPetRarity = "LEGENDARY";
 	public int kuudraPetLevel = 100;
