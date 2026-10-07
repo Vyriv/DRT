@@ -131,7 +131,7 @@ public final class DungeonRunTrackerFeature {
 	/** Hypixel paginated Croesus title, e.g. "(1/3) CROESUS". */
 	private static final Pattern CROESUS_PAGED_TITLE_PATTERN = Pattern.compile("^\\(\\d+/\\d+\\)\\s+CROESUS$");
 	/** Croesus run lore: "Opened Chest: Wood" or "Opened Chests: 1". */
-	private static final Pattern OPENED_CHEST_LINE_PATTERN = Pattern.compile("^OPENED CHESTS?\\s*:\\s*(.*)$");
+	private static final Pattern OPENED_CHEST_LINE_PATTERN = Pattern.compile("^(?:OPENED CHESTS?|CHESTS? OPENED)\\s*:\\s*(.*)$");
 	private static final Pattern OPENED_CHEST_COUNT_PATTERN = Pattern.compile("^(\\d+)(?:\\s*/\\s*\\d+)?$");
 	private static final Set<String> REWARD_CHEST_TITLES = Set.of(
 			"WOOD CHEST", "GOLD CHEST", "DIAMOND CHEST", "EMERALD CHEST", "OBSIDIAN CHEST", "BEDROCK CHEST",
@@ -2218,6 +2218,9 @@ public final class DungeonRunTrackerFeature {
 		if (!isCroesusChestListTitle(normalize(screen.getTitle().getString()))) return;
 		List<CroesusChestRow> rows = currentCroesusChestRows(client);
 		if (rows.isEmpty()) return;
+		for (CroesusChestRow row : rows) {
+			if (row.alreadyOpened) drawSlotHighlight(g, row, 0xFF8B93A7, false);
+		}
 		CroesusChestRow bestNormal = bestNormalChest(rows);
 		CroesusChestRow bestKey = bestKeyChest(rows, bestNormal);
 		if (bestNormal != null) drawSlotHighlight(g, bestNormal, OVERLAY_PROFIT, false);
@@ -3774,6 +3777,9 @@ public final class DungeonRunTrackerFeature {
 		}
 		DungeonFloor loreFloor = detectFloorFromLines(normalizedLore);
 		if (loreFloor != DungeonFloor.UNKNOWN) return loreFloor;
+		// Catacombs loot commonly contains names such as "Master Skull - Tier 4". A bare
+		// TIER 4 in that Contents section is loot metadata, not evidence for Kuudra K4.
+		if (isCatacombsRewardChest(normalizedTitle)) return DungeonFloor.UNKNOWN;
 		for (String line : normalizedLore) {
 			DungeonFloor kuudraFloor = detectKuudraTierFromLine(line, isKuudraRewardContext(normalizedTitle));
 			if (kuudraFloor != DungeonFloor.UNKNOWN) return kuudraFloor;
@@ -6870,7 +6876,7 @@ public final class DungeonRunTrackerFeature {
 				|| commitDecision == RunRecordCommitDecision.REPLACE_EXISTING) {
 				trackingSession.updateChestCost(record.chestSessionId, costBreakdown);
 				trackingSession.commitChest(record.chestSessionId, record.commitFingerprint);
-				if (!orphanCommit) {
+				if (sessionActive && sessionStartMillis > 0L && record.timestampEpochMillis >= sessionStartMillis) {
 					sessionTotalProfit += chestProfitCoins;
 					sessionFloorProfitTotals.merge(floorName, chestProfitCoins, Long::sum);
 				}
@@ -7313,6 +7319,7 @@ public final class DungeonRunTrackerFeature {
 		String sanitized = stripTrailingLootQuantity(sanitizeLootName(value)).toUpperCase(Locale.ROOT);
 		return sanitized.equals("ANCIENT ROSE")
 			|| sanitized.equals("ENCHANTED BOOK")
+			|| sanitized.equals("ALREADY OPENED")
 			|| sanitized.equals("GO BACK")
 			|| sanitized.equals("CLOSE")
 			|| sanitized.equals("REROLL CHEST")
