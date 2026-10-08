@@ -7385,6 +7385,7 @@ public final class DungeonRunTrackerFeature {
 		aliases.put("SHADOW ASSASSIN LEGGINGS", "SHADOW_ASSASSIN_LEGGINGS");
 		aliases.put("SHADOW ASSASSIN BOOTS", "SHADOW_ASSASSIN_BOOTS");
 		aliases.put("SHADOW ASSASSIN HELMET", "SHADOW_ASSASSIN_HELMET");
+		aliases.put("SHADOW ASSASSIN CLOAK", "SHADOW_ASSASSIN_CLOAK");
 		aliases.put("LAST BREATH", "LAST_BREATH");
 		aliases.put("LIVID DAGGER", "LIVID_DAGGER");
 		aliases.put("SHADOW FURY", "SHADOW_FURY");

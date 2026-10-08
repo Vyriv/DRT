@@ -84,6 +84,21 @@ class DungeonProfitPricingTest {
 	}
 
 	@Test
+	void shadowAssassinCloakPricesByNameForOlderBlankIds() throws Exception {
+		setStaticMap("itemIdToAuctionData", Map.of(
+			"SHADOW_ASSASSIN_CLOAK",
+			new PriceCache.AuctionPriceData("SHADOW_ASSASSIN_CLOAK", 2_240_000.0D, 2_196_862.0D, 2_284_949.0D)
+		));
+
+		long unit = DungeonProfitPricing.resolveUnitPrice(
+			new DungeonLootEntry("Shadow Assassin Cloak", "", 1),
+			new DrtConfig()
+		);
+
+		assertEquals(2_196_862L, unit);
+	}
+
+	@Test
 	void renamedKuudraVitalityBooksUseManaPrices() throws Exception {
 		setStaticMap("itemIdToPrice", Map.of(
 			"ENCHANTMENT_HARDENED_MANA_5", 189_000.0D,

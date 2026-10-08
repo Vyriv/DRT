@@ -254,6 +254,7 @@ public final class DungeonProfitPricing {
 		if (rawUpper == null || rawUpper.isBlank()) return "";
 		String compact = rawUpper.replaceAll("[^A-Z0-9]+", " ").trim().replaceAll("\\s+", " ");
 		return switch (compact) {
+			case "SHADOW ASSASSIN CLOAK" -> "SHADOW_ASSASSIN_CLOAK";
 			case "CRIMSON ESSENCE", "ESSENCE CRIMSON" -> ITEM_CRIMSON_ESSENCE;
 			case "WITHER ESSENCE", "ESSENCE WITHER" -> "ESSENCE_WITHER";
 			case "UNDEAD ESSENCE", "ESSENCE UNDEAD" -> "ESSENCE_UNDEAD";
