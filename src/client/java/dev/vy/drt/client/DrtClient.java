@@ -7,6 +7,7 @@ import com.mojang.brigadier.suggestion.Suggestions;
 import com.mojang.brigadier.suggestion.SuggestionsBuilder;
 import dev.vy.drt.DungeonRunTracker;
 import dev.vy.drt.client.cosmetics.DrtCosmetics;
+import dev.vy.drt.client.luck.LuckProbeClient;
 import dev.vy.drt.client.screen.DungeonLootScreen;
 import dev.vy.drt.client.screen.DrtOnboardingScreen;
 import dev.vy.drt.client.screen.DungeonTrackerPositionScreen;
@@ -60,6 +61,7 @@ public final class DrtClient implements ClientModInitializer {
 			}
 
 			tracker.tick(client);
+			LuckProbeClient.tick(client);
 
 			if (!autoOpenedOnboardingThisSession
 				&& client.player != null
@@ -295,6 +297,13 @@ public final class DrtClient implements ClientModInitializer {
 							})
 						)
 					)
+					.then(ClientCommands.literal("luckprobe")
+						.executes(context -> setLuckProbe(context.getSource().getClient(), !LuckProbeClient.isEnabled()))
+						.then(ClientCommands.literal("on")
+							.executes(context -> setLuckProbe(context.getSource().getClient(), true)))
+						.then(ClientCommands.literal("off")
+							.executes(context -> setLuckProbe(context.getSource().getClient(), false)))
+					)
 					.then(ClientCommands.literal("copyzip")
 						.then(ClientCommands.argument("reportId", StringArgumentType.word())
 							.executes(context -> {
@@ -312,9 +321,13 @@ public final class DrtClient implements ClientModInitializer {
 			);
 		});
 
-		ClientReceiveMessageEvents.GAME.register((message, overlay) -> tracker.handleGameMessage(message, overlay));
+		ClientReceiveMessageEvents.GAME.register((message, overlay) -> {
+			tracker.handleGameMessage(message, overlay);
+			LuckProbeClient.onMessage(message, overlay);
+		});
 		ClientReceiveMessageEvents.ALLOW_CHAT.register((message, signedMessage, sender, params, receptionTimestamp) -> {
 			tracker.handleChatMessage(message);
+			LuckProbeClient.onMessage(message, false);
 			return true;
 		});
 
@@ -458,6 +471,16 @@ public final class DrtClient implements ClientModInitializer {
 		//? } else {
 		/*client.player.displayClientMessage(message, false);
 		*///?}
+	}
+
+	private static int setLuckProbe(Minecraft client, boolean on) {
+		if (client == null || client.player == null) return 0;
+		LuckProbeClient.setEnabled(on);
+		sendSystemChat(client, Component.literal("§a[DRT] Luck probe: " + onOff(on)));
+		if (on) {
+			sendSystemChat(client, Component.literal("§7Writing raw Croesus, reward chest, RNG Meter and score samples to " + LuckProbeClient.outputFile()));
+		}
+		return Command.SINGLE_SUCCESS;
 	}
 
 	private static String onOff(boolean on) {
