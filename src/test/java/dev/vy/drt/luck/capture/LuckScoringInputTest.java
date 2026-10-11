@@ -14,17 +14,18 @@ import dev.vy.drt.luck.ScoreTier;
 import dev.vy.drt.luck.meter.RngMeterModel;
 import dev.vy.drt.luck.meter.RngMeterState;
 import dev.vy.drt.luck.rules.ModifierPreset;
+import dev.vy.drt.luck.rules.RuleEvidence;
 import dev.vy.drt.luck.rules.RuleVariants;
 import dev.vy.drt.luck.sim.KismetPolicy;
 import dev.vy.drt.luck.sim.RunRarity;
 import dev.vy.drt.luck.sim.RunSimulator;
 import dev.vy.drt.luck.sim.SelectionPolicy;
+import dev.vy.drt.luck.stats.HistoryConfigurations;
 import dev.vy.drt.luck.stats.LuckEvaluator;
 import dev.vy.drt.luck.stats.LuckEvaluator.Configuration;
-import dev.vy.drt.luck.stats.LuckEvaluator.Evaluation;
 import dev.vy.drt.luck.stats.LuckEvaluator.Verdict;
+import dev.vy.drt.luck.stats.MeterScenarioPlanner;
 import dev.vy.drt.luck.stats.ObservedRun;
-import dev.vy.drt.luck.stats.RareOutcomeGate;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -35,7 +36,7 @@ import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-/** The live F5 captures, loaded from disk, converted for the Stage B engine and passed through its gates. */
+/** The live F5 captures, loaded from disk, converted for the Stage B engine and evaluated as a history. */
 class LuckScoringInputTest {
 	private static final String S_RUN = "luck-26478f2d-e379-4adb-8f58-96b04733526c";
 	private static final String S_PLUS_RUN = "luck-5ff1bf45-ca65-4dd6-adc1-576f5fefea20";
@@ -74,15 +75,22 @@ class LuckScoringInputTest {
 		return runs.stream().filter(run -> run.luckRunId.equals(id)).findFirst().orElseThrow();
 	}
 
-	private static List<Configuration> configurations(ModifierPreset preset) {
-		return LuckEvaluator.plausibleConfigurations(preset, RuleVariants.defaults(), List.of(Map.of()),
-			SelectionPolicy.highestTier(), KismetPolicy.never());
+	private static LuckHistoryEvaluation evaluate(List<LuckRunRecord> runs, int samples) {
+		return LuckHistoryEvaluation.evaluate(runs, LuckTestData.defaults(), RuleVariants.defaults(), RuleEvidence.RECORDED,
+			SelectionPolicy.highestTier(), samples, 11L);
 	}
 
-	private static Evaluation evaluate(LuckScoringInput.History history, int samples) {
-		List<Configuration> configurations = configurations(history.modifiers());
-		return LuckEvaluator.evaluate(LuckTestData.defaults(), history.observed(), configurations.get(0),
-			configurations.subList(1, configurations.size()), samples, 11L);
+	/** The live S run with an Obsidian Kismet reroll that replaced the Legion book. */
+	private static LuckRunRecord rerolled(LuckRunRecord live, String id, long completedAt) {
+		LuckRunRecord rerolled = copy(live, id, completedAt);
+		LuckRunRecord.LuckChestRecord obsidian = rerolled.chests.get(4);
+		LuckRunRecord.LuckOfferSnapshot after = GSON.fromJson(GSON.toJson(obsidian.offers.get(0)), LuckRunRecord.LuckOfferSnapshot.class);
+		after.index = 1;
+		after.changedFromPrevious = true;
+		after.afterKismetReroll = true;
+		after.contents.removeIf(line -> "ENCHANTMENT_ULTIMATE_LEGION_1".equals(line.key));
+		obsidian.offers.add(after);
+		return rerolled;
 	}
 
 	@Test
@@ -92,6 +100,7 @@ class LuckScoringInputTest {
 		assertEquals(List.of(S_PLUS_RUN), history.rejected().stream().map(LuckScoringInput.Rejected::luckRunId).toList());
 		assertEquals(List.of("OFFERS_NOT_OBSERVED"), history.rejected().get(0).reasons());
 		assertEquals(1, history.runs().size());
+		assertEquals(2, history.recorded());
 
 		LuckScoringInput.Converted converted = history.runs().get(0);
 		assertEquals(S_RUN, converted.luckRunId());
@@ -107,12 +116,15 @@ class LuckScoringInputTest {
 			"ENCHANTMENT_ULTIMATE_WISE_1", "HOT_POTATO_BOOK", "ENCHANTMENT_REJUVENATE_2", "ENCHANTMENT_ULTIMATE_LEGION_1"), observed.appearedKeys());
 		assertEquals(Set.of(), observed.purchasedKeys(), "nothing was opened");
 		assertEquals(new RngMeterState(FloorId.F5, null, 3_556L), observed.meterBefore());
+		assertEquals(new RngMeterState(FloorId.F5, null, 3_785L), observed.meterAfter());
 
-		assertEquals(10, history.modifiers().pityLevel());
-		assertTrue(history.modifiers().isFullyKnown());
+		ModifierPreset snapshot = history.runModifiers().get(0);
+		assertEquals(10, snapshot.pityLevel());
+		assertTrue(snapshot.isFullyKnown());
 		assertEquals(List.of(), history.caveats());
+		assertEquals(Set.of(), history.gapsBefore(), "the rejected S+ run came before the floor's first scored run");
 
-		RunSimulator simulator = new RunSimulator(LuckTestData.defaults(), history.modifiers().resolveKnown(), RuleVariants.defaults());
+		RunSimulator simulator = new RunSimulator(LuckTestData.defaults(), snapshot.resolveKnown(), RuleVariants.defaults());
 		assertEquals(LuckCoverage.expectedChests(FloorId.F5, ScoreTier.S).stream().toList(), simulator.eligibleChests(FloorId.F5, ScoreTier.S),
 			"capture coverage and the simulator agree on eligible chests");
 		RunRarity rarity = simulator.rarity(FloorId.F5, ScoreTier.S);
@@ -120,8 +132,24 @@ class LuckScoringInputTest {
 	}
 
 	@Test
-	void aSingleLiveRunIsWithheldByTheMinimumDataGate() throws Exception {
-		Evaluation evaluation = evaluate(LuckScoringInput.history(loadedLiveRuns(), LuckTestData.defaults()), 50);
+	void aScorableRunIsNotASufficientHistory() throws Exception {
+		LuckHistoryEvaluation result = evaluate(loadedLiveRuns(), 50);
+		assertEquals(LuckHistoryEvaluation.Status.INSUFFICIENT_DATA, result.status());
+		assertEquals(2, result.recordedRuns());
+		assertEquals(1, result.scorableRuns());
+		assertEquals(1, result.rejectedRuns());
+		assertEquals(0, result.excludedRuns());
+		assertFalse(result.statisticallySufficient());
+		assertEquals(Map.of("OFFERS_NOT_OBSERVED", 1), result.rejectionReasonCounts());
+		assertEquals(Map.of("KISMET_PROVISIONAL", 1), result.runCaveatCounts());
+		assertEquals(List.of(S_PLUS_RUN), result.rejected().stream().map(LuckScoringInput.Rejected::luckRunId).toList());
+		assertTrue(result.historyCaveats().stream().anyMatch(c -> c.startsWith("RUNS_NOT_SCORED:1")), result.historyCaveats().toString());
+		assertEquals(List.of(), result.meterWindows(), "the S run's start was read");
+		assertEquals(List.of(), result.withheldReasons());
+		assertEquals(1, result.modifierSnapshots());
+
+		LuckEvaluator.Evaluation evaluation = result.evaluation();
+		assertNotNull(evaluation);
 		assertEquals(Verdict.INSUFFICIENT_DATA, evaluation.verdict());
 		assertTrue(evaluation.reasons().stream().anyMatch(r -> r.startsWith("F5 loot data is")), evaluation.reasons().toString());
 		assertTrue(evaluation.reasons().stream().anyMatch(r -> r.startsWith("S-run meter gain rule is PROVISIONAL")));
@@ -130,19 +158,37 @@ class LuckScoringInputTest {
 	}
 
 	@Test
-	void enoughLiveRunsPassTheGateAndAreScored() throws Exception {
+	void enoughLiveRunsAreScoredWithEveryCountCarried() throws Exception {
+		List<LuckRunRecord> loaded = loadedLiveRuns();
+		LuckRunRecord live = find(loaded, S_RUN);
+		List<LuckRunRecord> runs = new ArrayList<>(loaded);
+		for (int i = 1; i < 150; i++) {
+			LuckRunRecord next = copy(live, "copy-" + i, live.completedAtEpochMillis + i * 600_000L);
+			next.meterSnapshots.clear();
+			runs.add(next);
+		}
+		LuckHistoryEvaluation result = evaluate(runs, 60);
+		assertTrue(result.status() == LuckHistoryEvaluation.Status.PROVISIONAL || result.status() == LuckHistoryEvaluation.Status.UNRESOLVED,
+			result.status() + " " + result.withheldReasons());
+		assertTrue(result.statisticallySufficient());
+		assertEquals(151, result.recordedRuns());
+		assertEquals(150, result.scorableRuns());
+		assertEquals(1, result.rejectedRuns());
+		assertEquals(List.of(), result.meterWindows(), "later runs carry the meter forward from the live reading");
+		assertNotNull(result.evaluation().baseline());
+		assertEquals(12, result.evaluation().alternatives().size(), "known Pity 10: twelve rule alternatives, no modifier extremes");
+	}
+
+	@Test
+	void repeatedIdenticalReadingsContradictTheRunsAndWithholdTheScore() throws Exception {
 		LuckRunRecord live = find(loadedLiveRuns(), S_RUN);
 		List<LuckRunRecord> runs = new ArrayList<>();
-		for (int i = 0; i < 150; i++) runs.add(copy(live, "copy-" + i, live.completedAtEpochMillis + i * 600_000L));
-		LuckScoringInput.History history = LuckScoringInput.history(runs, LuckTestData.defaults());
-		assertEquals(150, history.runs().size());
-		RunSimulator simulator = new RunSimulator(LuckTestData.defaults(), history.modifiers().resolveKnown(), RuleVariants.defaults());
-		assertTrue(RareOutcomeGate.scorable(history.observed().stream().map(ObservedRun::run).toList(), simulator));
-
-		Evaluation evaluation = evaluate(history, 60);
-		assertTrue(evaluation.verdict() == Verdict.PROVISIONAL || evaluation.verdict() == Verdict.UNRESOLVED, evaluation.verdict() + " " + evaluation.reasons());
-		assertNotNull(evaluation.baseline());
-		assertEquals(12, evaluation.alternatives().size(), "known Pity 10: twelve rule alternatives, no modifier extremes");
+		for (int i = 0; i < 3; i++) runs.add(copy(live, "same-reading-" + i, live.completedAtEpochMillis + i * 600_000L));
+		LuckHistoryEvaluation result = evaluate(runs, 10);
+		assertEquals(LuckHistoryEvaluation.Status.WITHHELD, result.status());
+		assertEquals(3, result.scorableRuns(), "each run is complete on its own");
+		assertNull(result.evaluation());
+		assertTrue(result.withheldReasons().stream().anyMatch(r -> r.startsWith("METER_BELOW_CAPTURED_GAINS:F5")), result.withheldReasons().toString());
 	}
 
 	@Test
@@ -150,48 +196,73 @@ class LuckScoringInputTest {
 		LuckRunRecord live = find(loadedLiveRuns(), S_RUN);
 		LuckRunRecord gradeOnly = copy(live, "grade-only", live.completedAtEpochMillis + 1L);
 		gradeOnly.score = null;
-		LuckRunRecord rerolled = copy(live, "changed", live.completedAtEpochMillis + 2L);
-		LuckRunRecord.LuckOfferSnapshot changed = GSON.fromJson(GSON.toJson(rerolled.chests.get(4).offers.get(0)), LuckRunRecord.LuckOfferSnapshot.class);
-		changed.index = 1;
-		changed.changedFromPrevious = true;
-		changed.contents.get(0).text = "Enchanted Book (Legion II)";
-		rerolled.chests.get(4).offers.add(changed);
-
-		LuckScoringInput.History history = LuckScoringInput.history(List.of(live, gradeOnly, rerolled), LuckTestData.defaults());
+		LuckScoringInput.History history = LuckScoringInput.history(List.of(live, gradeOnly), LuckTestData.defaults());
 		assertEquals(1, history.runs().size());
 		assertEquals(List.of("NUMERIC_SCORE_MISSING"), history.rejected().get(0).reasons());
-		assertEquals(List.of("OFFER_CHANGED_UNVERIFIED"), history.rejected().get(1).reasons());
 
 		ObservedRun incomplete = new ObservedRun(history.observed().get(0).run(), Set.of(), Set.of(), false);
 		List<ObservedRun> withIncomplete = new ArrayList<>(history.observed());
 		withIncomplete.add(incomplete);
-		List<Configuration> configurations = configurations(history.modifiers());
+		List<Configuration> configurations = LuckEvaluator.plausibleConfigurations(history.runModifiers().get(0), RuleVariants.defaults(),
+			List.of(Map.of()), SelectionPolicy.highestTier(), KismetPolicy.never());
 		assertEquals(Verdict.INCOMPLETE_RECORDS, LuckEvaluator.evaluate(LuckTestData.defaults(), withIncomplete, configurations.get(0),
 			configurations.subList(1, configurations.size()), 10, 1L).verdict(), "the engine refuses an incomplete record if one is passed");
 	}
 
 	@Test
-	void aCapturedRerollIsScoredWithItsOriginalAndFlagged() throws Exception {
+	void aConfirmedRerollIsHeldOutWithItsEvidence() throws Exception {
 		LuckRunRecord live = find(loadedLiveRuns(), S_RUN);
-		LuckRunRecord rerolled = copy(live, "rerolled", live.completedAtEpochMillis);
-		LuckRunRecord.LuckChestRecord obsidian = rerolled.chests.get(4);
-		LuckRunRecord.LuckOfferSnapshot after = GSON.fromJson(GSON.toJson(obsidian.offers.get(0)), LuckRunRecord.LuckOfferSnapshot.class);
-		after.index = 1;
-		after.changedFromPrevious = true;
-		after.afterKismetReroll = true;
-		after.contents.removeIf(line -> "ENCHANTMENT_ULTIMATE_LEGION_1".equals(line.key));
-		obsidian.offers.add(after);
-
+		LuckRunRecord rerolled = rerolled(live, "rerolled", live.completedAtEpochMillis + 600_000L);
 		assertEquals("REROLL_WITH_ORIGINAL", LuckCoverage.evaluate(rerolled).kismetStatus);
-		LuckScoringInput.History history = LuckScoringInput.history(List.of(rerolled), LuckTestData.defaults());
-		LuckScoringInput.Converted converted = history.runs().get(0);
-		assertTrue(converted.observed().appearedKeys().contains("ENCHANTMENT_ULTIMATE_LEGION_1"), "the original offer still appeared, as the simulator counts it");
-		assertTrue(converted.caveats().contains("KISMET_REROLLED:OBSIDIAN"));
-		assertEquals(List.of("KISMET_REROLLED:rerolled"), history.caveats());
 
-		after.afterKismetReroll = false;
-		assertEquals(List.of("OFFER_CHANGED_UNVERIFIED"), LuckScoringInput.convert(rerolled, LuckTestData.defaults()).rejected().reasons(),
-			"a change not known to be a reroll is never scored");
+		LuckScoringInput.Result result = LuckScoringInput.convert(rerolled, LuckTestData.defaults());
+		assertFalse(result.accepted());
+		assertNull(result.rejected(), "nothing else is wrong with the run");
+		assertEquals(LuckScoringInput.KISMET_REROLL_CONFIRMED, result.excluded().reason());
+		assertEquals("REROLL_WITH_ORIGINAL", result.excluded().kismetStatus());
+		assertEquals(List.of("OBSIDIAN: offer 1 after a Kismet reroll"), result.excluded().evidence());
+
+		LuckHistoryEvaluation evaluation = evaluate(List.of(live, rerolled), 10);
+		assertEquals(2, evaluation.recordedRuns());
+		assertEquals(1, evaluation.scorableRuns());
+		assertEquals(1, evaluation.excludedRuns());
+		assertEquals(List.of("rerolled"), evaluation.excluded().stream().map(LuckScoringInput.Excluded::luckRunId).toList());
+		assertEquals(Map.of(LuckScoringInput.KISMET_REROLL_CONFIRMED, 1), evaluation.rejectionReasonCounts());
+		assertTrue(evaluation.historyCaveats().stream().anyMatch(c -> c.startsWith("KISMET_RUNS_EXCLUDED:1")), evaluation.historyCaveats().toString());
+		assertTrue(evaluation.scored().stream().noneMatch(run -> run.luckRunId().equals("rerolled")), "never simulated with the no-reroll policy");
+	}
+
+	@Test
+	void anUnexplainedChangeIsASuspectedRerollAndAlsoHeldOut() throws Exception {
+		LuckRunRecord live = find(loadedLiveRuns(), S_RUN);
+		LuckRunRecord changed = rerolled(live, "changed", live.completedAtEpochMillis);
+		changed.chests.get(4).offers.get(1).afterKismetReroll = false;
+		LuckScoringInput.Excluded excluded = LuckScoringInput.convert(changed, LuckTestData.defaults()).excluded();
+		assertEquals(LuckScoringInput.KISMET_REROLL_SUSPECTED, excluded.reason());
+		assertEquals("CONTENTS_CHANGED_UNVERIFIED", excluded.kismetStatus());
+		assertEquals(List.of("OBSIDIAN: contents changed at offer 1 without a recorded reroll"), excluded.evidence());
+
+		changed.score = null;
+		LuckScoringInput.Rejected rejected = LuckScoringInput.convert(changed, LuckTestData.defaults()).rejected();
+		assertEquals(List.of("NUMERIC_SCORE_MISSING", "OFFER_CHANGED_UNVERIFIED"), rejected.reasons(), "other blockers make it a rejection, with every reason kept");
+	}
+
+	@Test
+	void anExcludedRunBreaksMeterContinuityLikeARejectedOne() throws Exception {
+		LuckRunRecord live = find(loadedLiveRuns(), S_RUN);
+		LuckRunRecord rerolled = rerolled(live, "rerolled", live.completedAtEpochMillis + 300_000L);
+		LuckRunRecord later = copy(live, "later", live.completedAtEpochMillis + 600_000L);
+		later.meterSnapshots.clear();
+		LuckScoringInput.History history = LuckScoringInput.history(List.of(live, rerolled, later), LuckTestData.defaults());
+		assertEquals(Set.of(1), history.gapsBefore());
+		assertEquals(List.of("METER_GAP:later"), history.caveats());
+
+		LuckHistoryEvaluation evaluation = evaluate(List.of(live, rerolled, later), 10);
+		assertEquals(1, evaluation.meterWindows().size());
+		MeterScenarioPlanner.Window window = evaluation.meterWindows().get(0);
+		assertEquals(MeterScenarioPlanner.WindowKind.GAP, window.kind());
+		assertEquals(1, window.startRun());
+		assertFalse(window.selectionUnknown(), "the live reading showed nothing selected before the gap");
 	}
 
 	@Test
@@ -208,11 +279,16 @@ class LuckScoringInputTest {
 		LuckRunRecord rejectedBetween = copy(find(loaded, S_PLUS_RUN), "rejected-between", live.completedAtEpochMillis + 300_000L);
 		LuckScoringInput.History gap = LuckScoringInput.history(List.of(live, rejectedBetween, noMeter), LuckTestData.defaults());
 		assertEquals(List.of("METER_GAP:no-meter"), gap.caveats());
+		assertEquals(Set.of(1), gap.gapsBefore());
 
 		LuckScoringInput.History unknownStart = LuckScoringInput.history(List.of(noMeter), LuckTestData.defaults());
 		assertEquals(List.of("METER_START_UNKNOWN:F5"), unknownStart.caveats());
 		assertNull(unknownStart.observed().get(0).meterBefore());
 		assertTrue(unknownStart.runs().get(0).caveats().contains("METER_UNKNOWN"));
+
+		LuckHistoryEvaluation evaluated = evaluate(List.of(noMeter), 10);
+		assertEquals(MeterScenarioPlanner.WindowKind.UNKNOWN_START, evaluated.meterWindows().get(0).kind());
+		assertTrue(evaluated.meterWindows().get(0).selectionUnknown(), "no reading at all: every selection stays plausible");
 	}
 
 	@Test
@@ -233,9 +309,10 @@ class LuckScoringInputTest {
 	}
 
 	@Test
-	void purchasesAndModifierSnapshotsStayExplicit() throws Exception {
+	void differingSnapshotsKeepTheirKnownValuesPerRun() throws Exception {
 		LuckRunRecord live = find(loadedLiveRuns(), S_RUN);
-		LuckRunRecord bought = copy(live, "bought", live.completedAtEpochMillis + 1L);
+		LuckRunRecord bought = copy(live, "bought", live.completedAtEpochMillis + 600_000L);
+		bought.meterSnapshots.clear();
 		bought.chests.get(4).purchased = true;
 		bought.chests.get(4).purchasedOfferIndex = 0;
 		bought.chests.get(0).purchased = null;
@@ -248,10 +325,22 @@ class LuckScoringInputTest {
 		assertTrue(converted.caveats().contains("MODIFIERS_PARTIALLY_UNKNOWN"));
 
 		LuckScoringInput.History mixed = LuckScoringInput.history(List.of(live, bought), LuckTestData.defaults());
-		assertEquals(List.of("MODIFIER_SNAPSHOTS_DIFFER:bossLuck,pityLevel"), mixed.caveats());
-		assertNull(mixed.modifiers().pityLevel(), "differing Pity snapshots are evaluated as unknown, never as one of them");
-		assertNull(mixed.modifiers().bossLuck());
-		assertEquals(10, mixed.modifiers().catacombsBoxLevel());
-		assertFalse(configurations(mixed.modifiers()).stream().allMatch(c -> c.modifiers().pityLevel() == 10));
+		assertEquals(List.of(), mixed.caveats(), "a preset change is not a gap");
+		ModifierPreset first = mixed.runModifiers().get(0);
+		ModifierPreset second = mixed.runModifiers().get(1);
+		assertEquals(10, first.pityLevel());
+		assertEquals(5, second.pityLevel());
+		assertNull(second.bossLuck());
+
+		HistoryConfigurations.Result configurations = HistoryConfigurations.build(mixed.observed(), mixed.gapsBefore(), mixed.runModifiers(),
+			LuckTestData.defaults(), RuleVariants.defaults(), RuleEvidence.RECORDED, SelectionPolicy.highestTier(), KismetPolicy.never());
+		assertTrue(configurations.scorable(), configurations.withheld().toString());
+		for (Configuration configuration : configurations.configurations()) {
+			assertEquals(first.resolveKnown(), configuration.modifiersFor(0), "the first run's known snapshot is never widened: " + configuration.label());
+			assertEquals(5, configuration.modifiersFor(1).pityLevel(), configuration.label());
+		}
+		assertTrue(configurations.configurations().stream().anyMatch(c -> c.modifiersFor(1).bossLuck() == ModifierPreset.BossLuck.IV),
+			"only the unknown Boss Luck of the second run is widened");
+		assertEquals(2, evaluate(List.of(live, bought), 10).modifierSnapshots());
 	}
 }

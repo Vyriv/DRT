@@ -7,6 +7,7 @@ import dev.vy.drt.luck.data.ChestTable;
 import dev.vy.drt.luck.data.FloorStatus;
 import dev.vy.drt.luck.data.KnownGap;
 import dev.vy.drt.luck.data.LootEntry;
+import dev.vy.drt.luck.meter.MeterEvent;
 import dev.vy.drt.luck.meter.RngMeterState;
 import dev.vy.drt.luck.rules.ModifierPreset;
 import dev.vy.drt.luck.rules.ResolvedModifiers;
@@ -17,12 +18,15 @@ import dev.vy.drt.luck.sim.RunContext;
 import dev.vy.drt.luck.sim.RunSimulator;
 import dev.vy.drt.luck.sim.SelectionPolicy;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.SplittableRandom;
 import java.util.TreeSet;
+import java.util.function.IntFunction;
 
 /**
  * Scores an observed history against simulated alternatives under every plausible configuration.
@@ -60,16 +64,48 @@ public final class LuckEvaluator {
 		}
 	}
 
+	/**
+	 * @param modifiers         modifiers for every run without its own entry in {@code runModifiers}
+	 * @param runModifiers      per-run modifiers in history order, or empty when every run uses {@code modifiers}
+	 * @param meterAssumptions  assumed meter states where the real state was not read, applied after
+	 *                          the readings at the same run so they can replace a forward-simulated meter
+	 */
 	public record Configuration(
 		String label,
 		ResolvedModifiers modifiers,
 		RuleVariants rules,
 		Map<FloorId, RngMeterState> meterStart,
 		SelectionPolicy selection,
-		KismetPolicy kismet
+		KismetPolicy kismet,
+		List<ResolvedModifiers> runModifiers,
+		List<MeterEvent> meterAssumptions
 	) {
 		public Configuration {
 			meterStart = Map.copyOf(meterStart);
+			runModifiers = List.copyOf(runModifiers);
+			meterAssumptions = List.copyOf(meterAssumptions);
+		}
+
+		public Configuration(String label, ResolvedModifiers modifiers, RuleVariants rules, Map<FloorId, RngMeterState> meterStart,
+			SelectionPolicy selection, KismetPolicy kismet) {
+			this(label, modifiers, rules, meterStart, selection, kismet, List.of(), List.of());
+		}
+
+		public ResolvedModifiers modifiersFor(int runIndex) {
+			return runModifiers.isEmpty() ? modifiers : runModifiers.get(runIndex);
+		}
+
+		/** One simulator per distinct modifier set, indexed by run. */
+		IntFunction<RunSimulator> simulators(CatacombsLootDatabase database, int runCount) {
+			if (!runModifiers.isEmpty() && runModifiers.size() != runCount) {
+				throw new IllegalArgumentException(runModifiers.size() + " run modifiers for " + runCount + " runs");
+			}
+			Map<ResolvedModifiers, RunSimulator> byModifiers = new HashMap<>();
+			RunSimulator[] perRun = new RunSimulator[runCount];
+			for (int i = 0; i < runCount; i++) {
+				perRun[i] = byModifiers.computeIfAbsent(modifiersFor(i), resolved -> new RunSimulator(database, resolved, rules));
+			}
+			return index -> perRun[index];
 		}
 	}
 
@@ -112,8 +148,7 @@ public final class LuckEvaluator {
 		}
 
 		List<RunContext> runs = observed.stream().map(ObservedRun::run).toList();
-		RunSimulator baselineSimulator = new RunSimulator(database, baseline.modifiers(), baseline.rules());
-		double expectedRare = RareOutcomeGate.expectedRareAppearances(runs, baselineSimulator, RareOutcomeGate.DEFAULT_RARE_THRESHOLD);
+		double expectedRare = RareOutcomeGate.expectedRareAppearances(runs, baseline.simulators(database, runs.size()), RareOutcomeGate.DEFAULT_RARE_THRESHOLD);
 		if (expectedRare < RareOutcomeGate.DEFAULT_MINIMUM_EXPECTED) {
 			reasons.add(String.format("only %.2f rare drops expected; need %.0f", expectedRare, RareOutcomeGate.DEFAULT_MINIMUM_EXPECTED));
 			return new Evaluation(Verdict.INSUFFICIENT_DATA, null, List.of(), Double.NaN, Double.NaN, reasons);
@@ -198,9 +233,12 @@ public final class LuckEvaluator {
 		int samples,
 		long seed
 	) {
-		RunSimulator simulator = new RunSimulator(database, configuration.modifiers(), configuration.rules());
-		double statistic = SurprisalStatistic.ofObserved(observed, simulator);
-		double[] nullSamples = NullDistribution.sample(simulator, runs, configuration.meterStart(), NullDistribution.observedMeterEvents(observed),
+		IntFunction<RunSimulator> simulators = configuration.simulators(database, runs.size());
+		double statistic = SurprisalStatistic.ofObserved(observed, simulators);
+		List<MeterEvent> events = new ArrayList<>(NullDistribution.observedMeterEvents(observed));
+		events.addAll(configuration.meterAssumptions());
+		events.sort(Comparator.comparingInt(MeterEvent::beforeRun));
+		double[] nullSamples = NullDistribution.sample(simulators, runs, configuration.meterStart(), events,
 			configuration.selection(), configuration.kismet(), samples, seed);
 		return new ConfigurationResult(configuration, statistic, MidPPercentile.compute(statistic, nullSamples, TIE_TOLERANCE));
 	}

@@ -10,9 +10,9 @@ Pure Java under `dev.vy.drt.luck` (no Minecraft imports). Tests: `.\gradlew.bat 
 | `luck.data` | `CatacombsLootDatabase` (hash-verified base data plus overrides), `ChestTable`, `FloorTable`, `LootEntry`, `DataDispute`, `KnownGap`, `FloorStatus` |
 | `luck.rules` | `RuleVariants` (13 named rule choices), `ModifierPreset` (nullable = unknown), `ResolvedModifiers`, `QualityCalculator`, `SensitivityAnalysis` |
 | `luck.engine` | `ChestRoller` (Monte Carlo), `ExactChestDistribution` (exact DP), `MeterBoost`, `ChestRoll` |
-| `luck.meter` | `RngMeterModel`, `RngMeterState`, `MeterAssumptions` (plausible starts for unknown meters) |
+| `luck.meter` | `RngMeterModel`, `RngMeterState`, `MeterAssumptions` (plausible starts for unknown meters; live histories use `MeterScenarioPlanner`, see Stage C) |
 | `luck.sim` | `RunSimulator`, `HistorySimulator` (one meter per floor), `SelectionPolicy`, `KismetPolicy`, `RunOutcome`, `RunRarity`, `AppearanceEstimator`, `ChestEligibility` |
-| `luck.stats` | `SurprisalStatistic`, `NullDistribution`, `MidPPercentile`, `RareOutcomeGate`, `ObservedRun`, `LuckEvaluator` |
+| `luck.stats` | `SurprisalStatistic`, `NullDistribution`, `MidPPercentile`, `RareOutcomeGate`, `ObservedRun`, `LuckEvaluator`, `HistoryConfigurations` and `MeterScenarioPlanner` (live histories, per-run modifiers) |
 
 ## Evaluation flow
 

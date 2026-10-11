@@ -9,7 +9,8 @@ Live capture for future runs, from dungeon completion to Stage B scoring input. 
 3. **Croesus run view.** Every chest offer is stored with raw lore and resolved content lines. Identical contents are not stored twice. Different contents for a chest already seen are appended and flagged, and only count as a Kismet reroll when marked as one.
 4. **RNG Meter.** A reading is attached as `AFTER_RUN` to the floor's latest run before it, if that run has none. An unchanged reading with no run in between only moves its last-seen time.
 5. **Coverage.** `LuckCoverage.evaluate` (version 3) is recomputed on every change and on every load, so a stale stored verdict is never trusted.
-6. **Conversion.** `LuckScoringInput.history` turns stored runs into `ObservedRun`s for `LuckEvaluator`, re-evaluating coverage itself. Runs it cannot score come back as rejected with their blockers; gaps the engine can widen over come back as caveats.
+6. **Conversion.** `LuckScoringInput.history` turns stored runs into `ObservedRun`s, re-evaluating coverage itself. Runs it cannot score come back as rejected with their blockers, runs with a Kismet reroll as excluded with their evidence, and gaps the engine can widen over as caveats.
+7. **Evaluation.** `LuckHistoryEvaluation.evaluate` builds configurations with `HistoryConfigurations` (per-run modifiers, meter scenarios from `MeterScenarioPlanner`) and runs `LuckEvaluator`. The result keeps everything the Luck Rating screen needs; see below.
 
 ## Coverage
 
@@ -32,7 +33,39 @@ Blockers stop a run from being scored. Caveats are passed on.
 | `METER_UNKNOWN`, `METER_DERIVED` | No exact before-run reading |
 | `METER_SELECTION_UNRESOLVED` | A selected drop DRT could not name; the reading is not treated as exact |
 
-Conversion adds `CROESUS_MODIFIERS_UNKNOWN`, `PURCHASES_UNKNOWN`, `METER_SELECTION_NOT_SELECTABLE` and `KISMET_REROLLED:<tier>` per run. At history level it adds `METER_START_UNKNOWN:<floor>` when a floor's first scored run has no reading, `METER_GAP:<run>` when a rejected run on the same floor sits before a run without a reading, `MODIFIER_SNAPSHOTS_DIFFER:<fields>` when the runs' snapshots disagree (those fields become unknown), and `KISMET_REROLLED:<run>`.
+Conversion adds `CROESUS_MODIFIERS_UNKNOWN`, `PURCHASES_UNKNOWN` and `METER_SELECTION_NOT_SELECTABLE` per run. At history level it adds `METER_START_UNKNOWN:<floor>` when a floor's first scored run has no reading and `METER_GAP:<run>` when a rejected or excluded run on the same floor sits before a run without a reading.
+
+## Kismet exclusion
+
+A run whose only blockers are Kismet ones, or whose coverage shows a reroll with its original offer, is excluded rather than rejected: `KISMET_REROLL_CONFIRMED` for a recorded reroll, `KISMET_REROLL_SUSPECTED` for contents that changed without a recorded reroll or a reroll whose original was not seen. Each carries per-chest evidence and stays in the store unchanged, so it can be scored once the real reroll behaviour is verified and a matching simulation policy exists. Until then evaluation uses the never-reroll policy and no excluded run is simulated. Excluded runs break meter continuity like rejected ones. Players usually reroll poor offers, so leaving rerolled runs out can make the rest look luckier; the result says so whenever a run is excluded.
+
+## Modifier snapshots
+
+Every scored run keeps the snapshot recorded with it. `LuckEvaluator.Configuration` carries per-run modifiers and the simulator, statistic, null distribution and rare-outcome gate use one simulator per distinct snapshot, while the meter carries across runs. Unknown fields widen only the runs recorded with them: one alternative per extreme of each snapshot, plus one with every snapshot at its highest unknowns when several are uncertain. Known values are never replaced by unknowns. The no-Pity rule leaves the alternatives only when every snapshot records a nonzero Pity level.
+
+## Meter scenarios
+
+`MeterScenarioPlanner` replays each floor's meter exactly between readings, using each run's score and modifiers for the gain and the observed appearances or purchases for resets. Selections are assumed unchanged between readings. Where the chain breaks, it opens a window:
+
+| Window | When | Candidates |
+|---|---|---|
+| `UNKNOWN_START` | The floor's first scored run has no reading before it | Derived exactly from the next reading when the selected drop did not reset in between. Otherwise every fill (0, 50, 100%) of the next reading's selection; with no later reading at all, nothing selected plus every selectable drop at each fill |
+| `GAP` | A rejected or excluded run sits before a run without a reading | As above, but with the selection known from before the gap when no later reading says otherwise |
+| `UNEXPLAINED_GAIN` | A reading shows more progress than the captured runs since the last reading explain, which points to uncaptured runs | The missing progress after the runs (baseline) or before them |
+
+A reading after a floor's last run counts as an anchor too. Every candidate must reproduce each later reading exactly and must not imply a full-meter guarantee whose drop never appeared. The baseline scenario takes each window's weakest candidate. Alternatives raise every window's fill together, and try each other selection of an unknown-selection window at its weakest and strongest fill. Each configuration is planned with its own rules and modifiers. An alternative that contradicts the readings is dropped with its reason. If the baseline contradicts them (a reading below what the captured runs gave, an unseen guarantee, or no start reproducing a reading), the score is withheld with the contradiction. It is also withheld when more than 64 configurations would be needed, naming the floors whose RNG Meter should be read. The simulator's empty-meter default is never relied on: every floor's first run is set by a reading or an assumption in every configuration.
+
+## Evaluation result
+
+`LuckHistoryEvaluation` keeps:
+
+- the counts of recorded, scorable, rejected and excluded runs;
+- every scored run with its caveats, every rejected run with all its blockers, and every excluded run with its Kismet evidence;
+- tallies of rejection reasons and run caveats, and history caveats, including the possible bias from runs left out;
+- the number of distinct modifier snapshots, the baseline meter windows and notes, the alternatives dropped for contradicting readings, and why a score was withheld;
+- the engine's evaluation, when it ran.
+
+A run is scorable when its own record is complete. A history is statistically sufficient only when its scorable runs expect at least one rare drop. Status is `NO_RECORDED_RUNS`, `NO_SCORABLE_RUNS`, `WITHHELD` (the meter data contradicts the runs or leaves too many scenarios), `INSUFFICIENT_DATA`, `PROVISIONAL` or `UNRESOLVED`.
 
 ## Meter attachment
 
@@ -55,20 +88,19 @@ Gaps found and fixed:
 - A meter reading with an unresolved selected drop counted as an exact state.
 - Essence totals would have been reported to the engine as unmodelled items. Conversion leaves them out, since they sum repeated picks and filler.
 
-Regression tests: `LuckScoringInputTest`, `LuckCoverageTest`, `LuckTrackingStoreTest` (runs between readings, older schema) and `LiveCaptureF5Test`.
+Regression tests: `LuckScoringInputTest`, `LuckCoverageTest`, `LuckTrackingStoreTest` (runs between readings, older schema), `LiveCaptureF5Test`, `MeterScenarioPlannerTest` and `HistoryConfigurationsTest`.
 
 ## Remaining limitations
 
-- **Kismet.** No real reroll has been captured. A reroll is only recognised when the offer is marked as one; any other change blocks the run. A reroll used before DRT first saw the chest looks like a normal offer and cannot be detected. A captured reroll counts both offers as appeared, as the simulator does, but the default configurations use a never-reroll policy, so those runs carry `KISMET_REROLLED` until Stage D evaluates them with a matching policy.
+- **Kismet.** No real reroll has been captured. Confirmed and suspected rerolls are excluded from the score until the real behaviour is verified and simulated. A reroll used before DRT first saw the chest looks like a normal offer and cannot be detected.
 - **Opened-chest formats.** How an opened chest looks in the Croesus run view has not been observed. If its contents are not shown, the run is blocked as `OFFERS_PARTIAL`. Chests opened at the end of the dungeon are only known through Croesus "Opened Chest:" lines; their contents are not captured from the in-dungeon chest screen.
 - **Master Mode.** The run view title has only been seen for Normal floors. A title without a Master Mode marker leaves the mode unknown and relies on the matched menu entry. No Master Mode run has been captured end to end.
 - **Mechanic variants.** S-run meter gain is still provisional (round first or one combined multiplier) until an S score of 285 or 299 is read. M7 chest eligibility, guarantee placement, meter reset trigger, overflow, Kismet and meter, and the rounding variants are still unconfirmed and stay in sensitivity analysis.
-- **Data gaps.** Dyes and other known gaps are not modelled. Runs played without DRT running, or rejected runs, break meter continuity; this is named as `METER_GAP` or shows up as conflicting meter evidence.
-- **Engine inputs.** `LuckEvaluator` takes one modifier preset per history, so differing snapshots are merged to unknown rather than applied per run. `HistorySimulator` starts a floor with no reading at an empty meter, which is why `METER_START_UNKNOWN` must become meter scenarios. Selection changes between readings are not seen.
+- **Data gaps.** Dyes and other known gaps are not modelled. Runs played without DRT running are only noticed when a later reading shows unexplained progress; a derived start assumes no such run happened inside its window.
+- **Meter assumptions.** Selections are assumed unchanged between readings; a change is only noted when the next reading shows a different selection. Fills between the 0, 50 and 100% candidates are not tried. Resets under the on-purchase rule rely on recorded purchases, which can be unknown.
+- **Runs left out.** Rejected and excluded runs are not simulated. If whether a run was captured or rerolled depends on its loot, the remaining history is biased; this is reported, not corrected.
 
 ## What remains before Stage D
 
-1. Build meter scenarios from `METER_START_UNKNOWN` and `METER_GAP` caveats (for example with `MeterAssumptions`), instead of letting the simulator default to an empty meter.
-2. Pass the converted history's caveats and rejected runs through to the evaluation result, so the screen can say which runs were left out and why.
-3. Decide how to evaluate runs with `KISMET_REROLLED`: a Kismet policy that rerolls the recorded chest, or leaving those runs out.
-4. Capture more live runs: an S score of 285 or 299, a real Kismet reroll, an opened chest in the run view, and a Master Mode run.
+1. Decide whether runs left out (rejected or Kismet-excluded) should only be reported, as now, or should withhold the score above some share of the history.
+2. Capture more live runs: an S score of 285 or 299, a real Kismet reroll, an opened chest in the run view, and a Master Mode run.

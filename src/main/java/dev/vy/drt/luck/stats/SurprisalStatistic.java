@@ -6,6 +6,7 @@ import dev.vy.drt.luck.sim.RunRarity;
 import dev.vy.drt.luck.sim.RunSimulator;
 import java.util.List;
 import java.util.Set;
+import java.util.function.IntFunction;
 
 /**
  * Luck statistic: sum over runs of -ln(p) for every rolled item that appeared, where p is the
@@ -33,10 +34,22 @@ public final class SurprisalStatistic {
 	}
 
 	public static double ofObserved(List<ObservedRun> runs, RunSimulator simulator) {
+		return ofObserved(runs, index -> simulator);
+	}
+
+	/** Each run's probabilities come from the simulator for its own modifiers. */
+	public static double of(List<RunOutcome> outcomes, IntFunction<RunSimulator> simulatorFor) {
 		double total = 0.0;
-		for (ObservedRun run : runs) {
+		for (int i = 0; i < outcomes.size(); i++) total += ofKeys(outcomes.get(i).run(), outcomes.get(i).appearedKeys(), simulatorFor.apply(i));
+		return total;
+	}
+
+	public static double ofObserved(List<ObservedRun> runs, IntFunction<RunSimulator> simulatorFor) {
+		double total = 0.0;
+		for (int i = 0; i < runs.size(); i++) {
+			ObservedRun run = runs.get(i);
 			if (!run.offersComplete()) throw new IllegalArgumentException("Run with incomplete offers cannot be scored by appearance");
-			total += ofKeys(run.run(), run.appearedKeys(), simulator);
+			total += ofKeys(run.run(), run.appearedKeys(), simulatorFor.apply(i));
 		}
 		return total;
 	}

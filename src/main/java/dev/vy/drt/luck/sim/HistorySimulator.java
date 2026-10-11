@@ -9,6 +9,7 @@ import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import java.util.SplittableRandom;
+import java.util.function.IntFunction;
 
 /**
  * Replays a sequence of run opportunities with simulated loot, carrying each floor's meter
@@ -59,6 +60,22 @@ public final class HistorySimulator {
 		KismetPolicy kismet,
 		long seed
 	) {
+		return simulate(runs, index -> simulator, initialMeters, events, selection, kismet, seed);
+	}
+
+	/**
+	 * As above with each run simulated under its own modifiers. Every simulator must share this
+	 * one's database and rules; the meter carries across runs whatever their modifiers.
+	 */
+	public static List<RunOutcome> simulate(
+		List<RunContext> runs,
+		IntFunction<RunSimulator> simulatorFor,
+		Map<FloorId, RngMeterState> initialMeters,
+		List<MeterEvent> events,
+		SelectionPolicy selection,
+		KismetPolicy kismet,
+		long seed
+	) {
 		for (MeterEvent event : events) {
 			if (event.beforeRun() > runs.size()) throw new IllegalArgumentException("Meter event after the last run");
 		}
@@ -67,7 +84,8 @@ public final class HistorySimulator {
 		meters.putAll(initialMeters);
 		List<RunOutcome> out = new ArrayList<>(runs.size());
 		for (int i = 0; i < runs.size(); i++) {
-			applyEvents(events, i, meters);
+			RunSimulator simulator = simulatorFor.apply(i);
+			applyEvents(simulator, events, i, meters);
 			RunContext run = runs.get(i);
 			RngMeterState meter = meters.computeIfAbsent(run.floor(), RngMeterState::empty);
 			RunOutcome outcome = simulator.simulate(run, meter, selection, kismet, random);
@@ -77,7 +95,7 @@ public final class HistorySimulator {
 		return out;
 	}
 
-	private void applyEvents(List<MeterEvent> events, int runIndex, Map<FloorId, RngMeterState> meters) {
+	private static void applyEvents(RunSimulator simulator, List<MeterEvent> events, int runIndex, Map<FloorId, RngMeterState> meters) {
 		for (MeterEvent event : events) {
 			if (event.beforeRun() != runIndex) continue;
 			switch (event) {

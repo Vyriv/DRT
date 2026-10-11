@@ -6,12 +6,14 @@ import dev.vy.drt.luck.meter.RngMeterState;
 import dev.vy.drt.luck.sim.HistorySimulator;
 import dev.vy.drt.luck.sim.KismetPolicy;
 import dev.vy.drt.luck.sim.RunContext;
+import dev.vy.drt.luck.sim.RunOutcome;
 import dev.vy.drt.luck.sim.RunSimulator;
 import dev.vy.drt.luck.sim.SelectionPolicy;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.SplittableRandom;
+import java.util.function.IntFunction;
 
 /** Surprisal of many simulated alternative histories with the same runs, meter start and policies. */
 public final class NullDistribution {
@@ -53,11 +55,25 @@ public final class NullDistribution {
 		int samples,
 		long seed
 	) {
-		HistorySimulator history = new HistorySimulator(simulator);
+		return sample(index -> simulator, runs, initialMeters, events, selection, kismet, samples, seed);
+	}
+
+	/** As above with each run simulated and scored under its own modifiers. */
+	public static double[] sample(
+		IntFunction<RunSimulator> simulatorFor,
+		List<RunContext> runs,
+		Map<FloorId, RngMeterState> initialMeters,
+		List<MeterEvent> events,
+		SelectionPolicy selection,
+		KismetPolicy kismet,
+		int samples,
+		long seed
+	) {
 		SplittableRandom seeds = new SplittableRandom(seed);
 		double[] out = new double[samples];
 		for (int i = 0; i < samples; i++) {
-			out[i] = SurprisalStatistic.of(history.simulate(runs, initialMeters, events, selection, kismet, seeds.nextLong()), simulator);
+			List<RunOutcome> history = HistorySimulator.simulate(runs, simulatorFor, initialMeters, events, selection, kismet, seeds.nextLong());
+			out[i] = SurprisalStatistic.of(history, simulatorFor);
 		}
 		return out;
 	}
