@@ -58,8 +58,18 @@ public record RuleVariants(
 	public static final Set<SRunMeterGain> PLAUSIBLE_S_RUN_METER_GAINS =
 		Collections.unmodifiableSet(EnumSet.of(SRunMeterGain.ROUND, SRunMeterGain.COMBINED_MULTIPLIER));
 
-	/** RNG Meter Pity: +1% gain per level (single source) or not applied. */
+	/**
+	 * RNG Meter Pity: +1% gain per level, or not applied. NOT_APPLIED is refuted by an observed F5 S+
+	 * run at Pity 10 (+332, not +302) but stays available for diagnostics and conflict checks.
+	 */
 	public enum PityApplication { MULTIPLY_GAIN_TRUNCATE, NOT_APPLIED }
+
+	/**
+	 * Pity rules not refuted by recorded meter readings. Only applied where Pity is known and
+	 * nonzero (see {@link RuleEvidence#pityApplicationsFor}); elsewhere every Pity rule stays.
+	 */
+	public static final Set<PityApplication> PLAUSIBLE_PITY_APPLICATIONS =
+		Collections.unmodifiableSet(EnumSet.of(PityApplication.MULTIPLY_GAIN_TRUNCATE));
 
 	/** Whether a Kismet reroll gets the meter weight boost and guarantee. */
 	public enum KismetMeter { APPLIES, IGNORED }
@@ -90,13 +100,16 @@ public record RuleVariants(
 		);
 	}
 
-	/** Every plausible variant that differs from {@code this} in exactly one rule. */
+	/**
+	 * Every plausible variant that differs from {@code this} in exactly one rule. Without a
+	 * configuration the Pity level is unknown, so every Pity rule is kept.
+	 */
 	public List<RuleVariants> oneAtATimeAlternatives() {
-		return oneAtATimeAlternatives(PLAUSIBLE_S_RUN_METER_GAINS);
+		return oneAtATimeAlternatives(PLAUSIBLE_S_RUN_METER_GAINS, EnumSet.allOf(PityApplication.class));
 	}
 
-	/** As {@link #oneAtATimeAlternatives()}, with the S-run gain rules still consistent with the caller's meter readings. */
-	public List<RuleVariants> oneAtATimeAlternatives(Set<SRunMeterGain> plausibleSRunGains) {
+	/** As {@link #oneAtATimeAlternatives()}, limited to the S-run gain and Pity rules the caller still considers plausible. */
+	public List<RuleVariants> oneAtATimeAlternatives(Set<SRunMeterGain> plausibleSRunGains, Set<PityApplication> plausiblePity) {
 		List<RuleVariants> out = new ArrayList<>();
 		for (SPlusQualityRounding v : SPlusQualityRounding.values()) if (v != sPlusRounding) out.add(withSPlusRounding(v));
 		for (QualityRounding v : QualityRounding.values()) if (v != qualityRounding) out.add(withQualityRounding(v));
@@ -106,7 +119,7 @@ public record RuleVariants(
 		for (MeterResetTrigger v : MeterResetTrigger.values()) if (v != meterResetTrigger) out.add(withMeterResetTrigger(v));
 		for (MeterOverflow v : MeterOverflow.values()) if (v != meterOverflow) out.add(withMeterOverflow(v));
 		for (SRunMeterGain v : SRunMeterGain.values()) if (v != sRunMeterGain && plausibleSRunGains.contains(v)) out.add(withSRunMeterGain(v));
-		for (PityApplication v : PityApplication.values()) if (v != pityApplication) out.add(withPityApplication(v));
+		for (PityApplication v : PityApplication.values()) if (v != pityApplication && plausiblePity.contains(v)) out.add(withPityApplication(v));
 		for (KismetMeter v : KismetMeter.values()) if (v != kismetMeter) out.add(withKismetMeter(v));
 		for (RequiredScoreRounding v : RequiredScoreRounding.values()) if (v != requiredScoreRounding) out.add(withRequiredScoreRounding(v));
 		for (SelectionCarryOver v : SelectionCarryOver.values()) if (v != selectionCarryOver) out.add(withSelectionCarryOver(v));

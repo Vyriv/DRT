@@ -5,9 +5,9 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vy.drt.luck.meter.MeterGainObservation;
+import dev.vy.drt.luck.meter.MeterRuleStatus;
 import dev.vy.drt.luck.meter.SRunMeterGainEvidence;
 import dev.vy.drt.luck.meter.SRunMeterGainEvidence.Assessment;
-import dev.vy.drt.luck.meter.SRunMeterGainEvidence.Status;
 import dev.vy.drt.luck.rules.RuleVariants;
 import dev.vy.drt.luck.rules.RuleVariants.SRunMeterGain;
 import java.util.ArrayList;
@@ -45,7 +45,7 @@ class SRunMeterGainEvidenceTest {
 	@Test
 	void roundingFirstIsTheDefaultButOnlyProvisional() {
 		Assessment assessment = SRunMeterGainEvidence.recorded();
-		assertEquals(Status.PROVISIONAL, assessment.status());
+		assertEquals(MeterRuleStatus.PROVISIONAL, assessment.status());
 		assertEquals(EnumSet.of(SRunMeterGain.ROUND, SRunMeterGain.COMBINED_MULTIPLIER), assessment.consistent());
 		assertEquals(SRunMeterGain.ROUND, assessment.recommended());
 		assertEquals(assessment.recommended(), RuleVariants.defaults().sRunMeterGain());
@@ -70,26 +70,26 @@ class SRunMeterGainEvidenceTest {
 	@Test
 	void aDiscriminatingReadingSettlesTheDefault() {
 		Assessment combined = withRecorded(new MeterGainObservation("test", FloorId.F5, 299, 10, 3_785L, 4_015L));
-		assertEquals(Status.CONFIRMED, combined.status());
+		assertEquals(MeterRuleStatus.CONFIRMED, combined.status());
 		assertEquals(EnumSet.of(SRunMeterGain.COMBINED_MULTIPLIER), combined.consistent());
 		assertEquals(SRunMeterGain.COMBINED_MULTIPLIER, combined.recommended());
 		assertEquals(SRunMeterGain.COMBINED_MULTIPLIER, combined.apply(RuleVariants.defaults()).sRunMeterGain());
 		assertEquals(1, combined.discriminating().size());
 
 		Assessment round = withRecorded(new MeterGainObservation("test", FloorId.F5, 285, 10, 3_785L, 4_005L));
-		assertEquals(Status.CONFIRMED, round.status());
+		assertEquals(MeterRuleStatus.CONFIRMED, round.status());
 		assertEquals(SRunMeterGain.ROUND, round.recommended());
 	}
 
 	@Test
 	void readingsNoRuleExplainsAreAConflictThatWidensSensitivity() {
 		Assessment conflict = withRecorded(new MeterGainObservation("test", FloorId.F5, 299, 10, 3_785L, 4_016L));
-		assertEquals(Status.CONFLICT, conflict.status());
+		assertEquals(MeterRuleStatus.CONFLICT, conflict.status());
 		assertEquals(SRunMeterGain.ROUND, conflict.recommended(), "a conflict keeps the default rather than picking a rule");
 		assertEquals(EnumSet.allOf(SRunMeterGain.class), conflict.plausible());
 
 		Assessment noPity = SRunMeterGainEvidence.assess(List.of(new MeterGainObservation("test", FloorId.F5, 302, 10, 3_224L, 3_526L)), RuleVariants.defaults());
-		assertEquals(Status.CONFLICT, noPity.status(), "an S+ gain without Pity contradicts the Pity rule");
+		assertEquals(MeterRuleStatus.CONFLICT, noPity.status(), "an S+ gain without Pity contradicts the Pity rule");
 	}
 
 	@Test

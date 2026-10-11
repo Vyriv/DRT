@@ -2,6 +2,8 @@ package dev.vy.drt.luck.meter;
 
 import dev.vy.drt.luck.FloorId;
 import dev.vy.drt.luck.ScoreTier;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Stored meter score read before and after one completed run, with no selected drop that could
@@ -27,5 +29,14 @@ public record MeterGainObservation(String source, FloorId floor, int score, int 
 	/** Same readings regardless of where they were recorded. */
 	public boolean sameReadings(MeterGainObservation other) {
 		return floor == other.floor && score == other.score && pityLevel == other.pityLevel && before == other.before && after == other.after;
+	}
+
+	/** Duplicate readings (the same run recorded in code and captured live) kept once. */
+	public static List<MeterGainObservation> distinct(List<MeterGainObservation> observations) {
+		List<MeterGainObservation> unique = new ArrayList<>();
+		for (MeterGainObservation observation : observations) {
+			if (unique.stream().noneMatch(observation::sameReadings)) unique.add(observation);
+		}
+		return unique;
 	}
 }

@@ -64,8 +64,9 @@ class RulesTest {
 			.filter(rule -> rule != RuleVariants.defaults().sRunMeterGain())
 			.toList();
 		assertEquals(List.of(RuleVariants.SRunMeterGain.COMBINED_MULTIPLIER), sRunRules);
-		assertEquals(14, RuleVariants.defaults().oneAtATimeAlternatives(EnumSet.allOf(RuleVariants.SRunMeterGain.class)).size());
-		assertEquals(12, RuleVariants.defaults().oneAtATimeAlternatives(EnumSet.of(RuleVariants.SRunMeterGain.ROUND)).size());
+		EnumSet<RuleVariants.PityApplication> everyPityRule = EnumSet.allOf(RuleVariants.PityApplication.class);
+		assertEquals(14, RuleVariants.defaults().oneAtATimeAlternatives(EnumSet.allOf(RuleVariants.SRunMeterGain.class), everyPityRule).size());
+		assertEquals(12, RuleVariants.defaults().oneAtATimeAlternatives(EnumSet.of(RuleVariants.SRunMeterGain.ROUND), everyPityRule).size());
 
 		SensitivityAnalysis.Result gain = SensitivityAnalysis.oneAtATime(RuleVariants.defaults(),
 			rules -> RngMeterModel.scoreGain(ScoreTier.S, 299, new ResolvedModifiers(BossLuck.NONE, TreasureAccessory.NONE, 0, 0, 0, 10), rules));

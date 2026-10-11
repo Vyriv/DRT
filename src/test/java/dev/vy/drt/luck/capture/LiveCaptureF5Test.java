@@ -13,8 +13,15 @@ import dev.vy.drt.luck.FloorId;
 import dev.vy.drt.luck.LuckTestData;
 import dev.vy.drt.luck.data.FloorTable;
 import dev.vy.drt.luck.meter.MeterGainObservation;
+import dev.vy.drt.luck.meter.MeterRuleStatus;
+import dev.vy.drt.luck.meter.PityApplicationEvidence;
+import dev.vy.drt.luck.meter.RngMeterState;
 import dev.vy.drt.luck.meter.SRunMeterGainEvidence;
+import dev.vy.drt.luck.rules.ModifierPreset;
 import dev.vy.drt.luck.rules.RuleVariants;
+import dev.vy.drt.luck.sim.KismetPolicy;
+import dev.vy.drt.luck.sim.SelectionPolicy;
+import dev.vy.drt.luck.stats.LuckEvaluator;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -22,6 +29,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
@@ -171,7 +179,23 @@ class LiveCaptureF5Test {
 		assertEquals(2, gains.size());
 		assertTrue(gains.get(0).sameReadings(SRunMeterGainEvidence.RECORDED.get(0)), "S+ 302: 3,224 to 3,556");
 		assertTrue(gains.get(1).sameReadings(SRunMeterGainEvidence.RECORDED.get(1)), "S 298: 3,556 to 3,785");
-		assertEquals(SRunMeterGainEvidence.Status.PROVISIONAL, SRunMeterGainEvidence.assess(gains, RuleVariants.defaults()).status());
+		assertEquals(MeterRuleStatus.PROVISIONAL, SRunMeterGainEvidence.assess(gains, RuleVariants.defaults()).status());
+
+		PityApplicationEvidence.Assessment pity = PityApplicationEvidence.assess(gains, RuleVariants.defaults());
+		assertEquals(MeterRuleStatus.CONFIRMED, pity.status());
+		assertEquals(Set.of(RuleVariants.PityApplication.MULTIPLY_GAIN_TRUNCATE), pity.consistent());
+		assertEquals(302L, pity.checks().get(0).predictions().get(RuleVariants.PityApplication.NOT_APPLIED), "the live S+ 302 refutes the no-Pity gain");
+		assertEquals(332L, pity.checks().get(0).observation().gain());
+	}
+
+	@Test
+	void theRunsRecordedPityDropsTheRefutedNoPityRuleFromItsConfigurations() {
+		ModifierPreset snapshot = liveRun(S_PLUS_RUN).modifiers.toPreset();
+		assertEquals(10, snapshot.pityLevel());
+		List<LuckEvaluator.Configuration> configurations = LuckEvaluator.plausibleConfigurations(snapshot, RuleVariants.defaults(),
+			List.of(Map.of(FloorId.F5, RngMeterState.empty(FloorId.F5))), SelectionPolicy.highestTier(), KismetPolicy.never());
+		assertTrue(configurations.stream().noneMatch(c -> c.rules().pityApplication() == RuleVariants.PityApplication.NOT_APPLIED));
+		assertTrue(configurations.stream().allMatch(c -> c.modifiers().pityLevel() == 10));
 	}
 
 	private static void assertSnapshot(LuckRunRecord.LuckMeterSnapshot snapshot, String phase, long stored, String text) {

@@ -4,11 +4,15 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vy.drt.luck.meter.MeterAssumptions;
+import dev.vy.drt.luck.meter.MeterGainObservation;
+import dev.vy.drt.luck.meter.MeterRuleEvidence;
 import dev.vy.drt.luck.meter.RngMeterModel;
 import dev.vy.drt.luck.meter.RngMeterState;
+import dev.vy.drt.luck.meter.SRunMeterGainEvidence;
 import dev.vy.drt.luck.rules.ModifierPreset;
 import dev.vy.drt.luck.rules.ModifierPreset.BossLuck;
 import dev.vy.drt.luck.rules.ModifierPreset.TreasureAccessory;
+import dev.vy.drt.luck.rules.RuleEvidence;
 import dev.vy.drt.luck.rules.RuleVariants;
 import dev.vy.drt.luck.sim.KismetPolicy;
 import dev.vy.drt.luck.sim.RunContext;
@@ -25,6 +29,7 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 
 class LuckEvaluatorTest {
@@ -99,13 +104,61 @@ class LuckEvaluatorTest {
 			Map.of(FloorId.F1, f1), Map.of(FloorId.F1, "BONZO_STAFF"), RuleVariants.defaults());
 		List<Configuration> configurations = LuckEvaluator.plausibleConfigurations(echoesUnknown, RuleVariants.defaults(), meters,
 			SelectionPolicy.highestTier(), KismetPolicy.never());
-		assertEquals(1 + 3 + 13 + 2, configurations.size());
+		// Pity 10 is known, so the refuted no-Pity rule is not among the 12 rule alternatives.
+		assertEquals(1 + 3 + 12 + 2, configurations.size());
 		assertTrue(configurations.stream().anyMatch(c -> c.rules().sRunMeterGain() == RuleVariants.SRunMeterGain.COMBINED_MULTIPLIER));
 		assertTrue(configurations.stream().noneMatch(c -> c.rules().sRunMeterGain() == RuleVariants.SRunMeterGain.TRUNCATE));
 
 		List<Configuration> settled = LuckEvaluator.plausibleConfigurations(echoesUnknown, RuleVariants.defaults(),
-			EnumSet.of(RuleVariants.SRunMeterGain.ROUND), meters, SelectionPolicy.highestTier(), KismetPolicy.never());
-		assertEquals(1 + 3 + 12 + 2, settled.size(), "a settled S-run rule drops out of the alternatives");
+			new RuleEvidence(EnumSet.of(RuleVariants.SRunMeterGain.ROUND), RuleVariants.PLAUSIBLE_PITY_APPLICATIONS),
+			meters, SelectionPolicy.highestTier(), KismetPolicy.never());
+		assertEquals(1 + 3 + 11 + 2, settled.size(), "a settled S-run rule drops out of the alternatives");
+	}
+
+	@Test
+	void knownPityDropsTheRefutedNoPityRule() {
+		ModifierPreset pityTen = new ModifierPreset(BossLuck.IV, TreasureAccessory.ARTIFACT, 10, 10, 0, 10);
+		List<Configuration> configurations = pityConfigurations(pityTen, RuleEvidence.RECORDED);
+		assertTrue(configurations.stream().noneMatch(c -> c.rules().pityApplication() == RuleVariants.PityApplication.NOT_APPLIED));
+		assertTrue(configurations.stream().allMatch(c -> c.modifiers().pityLevel() == 10));
+		assertEquals(1 + 12, configurations.size());
+
+		List<Configuration> diagnostic = pityConfigurations(pityTen, RuleEvidence.UNFILTERED);
+		assertTrue(diagnostic.stream().anyMatch(c -> c.rules().pityApplication() == RuleVariants.PityApplication.NOT_APPLIED),
+			"the no-Pity rule stays available for diagnostics");
+	}
+
+	@Test
+	void absentPityKeepsTheNoPityRule() {
+		List<Configuration> configurations = pityConfigurations(new ModifierPreset(BossLuck.IV, TreasureAccessory.ARTIFACT, 10, 10, 0, 0), RuleEvidence.RECORDED);
+		assertTrue(configurations.stream().anyMatch(c -> c.rules().pityApplication() == RuleVariants.PityApplication.NOT_APPLIED));
+		assertTrue(configurations.stream().allMatch(c -> c.modifiers().pityLevel() == 0));
+		assertEquals(1 + 13, configurations.size());
+	}
+
+	@Test
+	void unknownPitySpansItsModifierExtremesWithoutAssumingPityTen() {
+		List<Configuration> configurations = pityConfigurations(new ModifierPreset(BossLuck.IV, TreasureAccessory.ARTIFACT, 10, 10, 0, null), RuleEvidence.RECORDED);
+		assertEquals(Set.of(0, 10), configurations.stream().map(c -> c.modifiers().pityLevel()).collect(Collectors.toSet()));
+		assertEquals(0, configurations.get(0).modifiers().pityLevel(), "the baseline takes the lowest Pity, not the observed level");
+		assertTrue(configurations.stream().anyMatch(c -> c.rules().pityApplication() == RuleVariants.PityApplication.NOT_APPLIED));
+		assertEquals(2 + 13, configurations.size());
+	}
+
+	@Test
+	void conflictingReadingsBringTheNoPityRuleBack() {
+		List<MeterGainObservation> readings = new ArrayList<>(SRunMeterGainEvidence.RECORDED);
+		readings.add(new MeterGainObservation("test", FloorId.F5, 302, 10, 3_785L, 4_087L));
+		RuleEvidence conflicted = MeterRuleEvidence.from(readings, RuleVariants.defaults());
+		assertEquals(EnumSet.allOf(RuleVariants.PityApplication.class), conflicted.pityApplications());
+		ModifierPreset pityTen = new ModifierPreset(BossLuck.IV, TreasureAccessory.ARTIFACT, 10, 10, 0, 10);
+		assertTrue(pityConfigurations(pityTen, conflicted).stream().anyMatch(c -> c.rules().pityApplication() == RuleVariants.PityApplication.NOT_APPLIED));
+		assertEquals(RuleEvidence.RECORDED, MeterRuleEvidence.from(SRunMeterGainEvidence.RECORDED, RuleVariants.defaults()));
+	}
+
+	private static List<Configuration> pityConfigurations(ModifierPreset preset, RuleEvidence evidence) {
+		return LuckEvaluator.plausibleConfigurations(preset, RuleVariants.defaults(), evidence,
+			List.of(Map.of(FloorId.F5, RngMeterState.empty(FloorId.F5))), SelectionPolicy.highestTier(), KismetPolicy.never());
 	}
 
 	@Test

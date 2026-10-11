@@ -10,6 +10,7 @@ import dev.vy.drt.luck.data.LootEntry;
 import dev.vy.drt.luck.meter.RngMeterState;
 import dev.vy.drt.luck.rules.ModifierPreset;
 import dev.vy.drt.luck.rules.ResolvedModifiers;
+import dev.vy.drt.luck.rules.RuleEvidence;
 import dev.vy.drt.luck.rules.RuleVariants;
 import dev.vy.drt.luck.sim.KismetPolicy;
 import dev.vy.drt.luck.sim.RunContext;
@@ -155,14 +156,18 @@ public final class LuckEvaluator {
 		SelectionPolicy selection,
 		KismetPolicy kismet
 	) {
-		return plausibleConfigurations(preset, rules, RuleVariants.PLAUSIBLE_S_RUN_METER_GAINS, meterScenarios, selection, kismet);
+		return plausibleConfigurations(preset, rules, RuleEvidence.RECORDED, meterScenarios, selection, kismet);
 	}
 
-	/** As above, with the S-run gain rules left plausible by the caller's meter readings ({@code SRunMeterGainEvidence}). */
+	/**
+	 * As above, with the meter rules left plausible by the caller's readings ({@code MeterRuleEvidence}).
+	 * A refuted Pity rule only drops out when the preset's Pity level is known and nonzero; unknown
+	 * Pity still spans its modifier extremes and keeps every Pity rule.
+	 */
 	public static List<Configuration> plausibleConfigurations(
 		ModifierPreset preset,
 		RuleVariants rules,
-		Set<RuleVariants.SRunMeterGain> plausibleSRunGains,
+		RuleEvidence evidence,
 		List<Map<FloorId, RngMeterState>> meterScenarios,
 		SelectionPolicy selection,
 		KismetPolicy kismet
@@ -176,7 +181,7 @@ public final class LuckEvaluator {
 		for (int i = 1; i < extremes.size(); i++) {
 			out.add(new Configuration("modifiers " + extremes.get(i), extremes.get(i), rules, firstMeter, selection, kismet));
 		}
-		for (RuleVariants variant : rules.oneAtATimeAlternatives(plausibleSRunGains)) {
+		for (RuleVariants variant : evidence.alternatives(rules, preset.pityLevel())) {
 			out.add(new Configuration("rules " + variant, lowest, variant, firstMeter, selection, kismet));
 		}
 		for (int i = 1; i < meterScenarios.size(); i++) {

@@ -29,15 +29,6 @@ public final class SRunMeterGainEvidence {
 	private SRunMeterGainEvidence() {
 	}
 
-	public enum Status {
-		/** Exactly one rule reproduces every reading. */
-		CONFIRMED,
-		/** Several rules reproduce every reading; the default is a choice, not a finding. */
-		PROVISIONAL,
-		/** No rule reproduces every reading: a reading is wrong (an uncaptured run, a misread score) or the model is. */
-		CONFLICT
-	}
-
 	/** Each rule's predicted gain for one reading. */
 	public record Check(MeterGainObservation observation, Map<SRunMeterGain, Long> predictions, Set<SRunMeterGain> matching) {
 		public Check {
@@ -55,7 +46,7 @@ public final class SRunMeterGainEvidence {
 	 * @param consistent  rules that reproduce every reading
 	 * @param recommended rule to use: the baseline's when still consistent, otherwise the first consistent one
 	 */
-	public record Assessment(List<Check> checks, Set<SRunMeterGain> consistent, Status status, SRunMeterGain recommended) {
+	public record Assessment(List<Check> checks, Set<SRunMeterGain> consistent, MeterRuleStatus status, SRunMeterGain recommended) {
 		public Assessment {
 			checks = List.copyOf(checks);
 			consistent = consistent.isEmpty() ? Collections.emptySet() : Collections.unmodifiableSet(EnumSet.copyOf(consistent));
@@ -82,13 +73,9 @@ public final class SRunMeterGainEvidence {
 
 	/** Duplicate readings (the same run recorded here and captured live) count once. */
 	public static Assessment assess(List<MeterGainObservation> observations, RuleVariants baseline) {
-		List<MeterGainObservation> unique = new ArrayList<>();
-		for (MeterGainObservation observation : observations) {
-			if (unique.stream().noneMatch(observation::sameReadings)) unique.add(observation);
-		}
 		Set<SRunMeterGain> consistent = EnumSet.allOf(SRunMeterGain.class);
 		List<Check> checks = new ArrayList<>();
-		for (MeterGainObservation observation : unique) {
+		for (MeterGainObservation observation : MeterGainObservation.distinct(observations)) {
 			Map<SRunMeterGain, Long> predictions = predictions(observation.score(), observation.pityLevel(), baseline);
 			Set<SRunMeterGain> matching = EnumSet.noneOf(SRunMeterGain.class);
 			predictions.forEach((rule, gain) -> {
@@ -97,7 +84,7 @@ public final class SRunMeterGainEvidence {
 			checks.add(new Check(observation, predictions, matching));
 			consistent.retainAll(matching);
 		}
-		Status status = consistent.isEmpty() ? Status.CONFLICT : consistent.size() == 1 ? Status.CONFIRMED : Status.PROVISIONAL;
+		MeterRuleStatus status = MeterRuleStatus.of(consistent.size());
 		SRunMeterGain recommended = consistent.isEmpty() || consistent.contains(baseline.sRunMeterGain())
 			? baseline.sRunMeterGain()
 			: consistent.iterator().next();

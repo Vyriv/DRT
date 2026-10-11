@@ -14,8 +14,11 @@ import dev.vy.drt.luck.capture.RngMeterParser;
 import dev.vy.drt.luck.capture.StableScreenGate;
 import dev.vy.drt.luck.data.CatacombsLootDatabase;
 import dev.vy.drt.luck.meter.MeterGainObservation;
+import dev.vy.drt.luck.meter.MeterRuleStatus;
+import dev.vy.drt.luck.meter.PityApplicationEvidence;
 import dev.vy.drt.luck.meter.SRunMeterGainEvidence;
 import dev.vy.drt.luck.rules.RuleVariants;
+import dev.vy.drt.luck.rules.RuleVariants.PityApplication;
 import dev.vy.drt.luck.rules.RuleVariants.SRunMeterGain;
 import dev.vy.drt.mixin.AbstractContainerScreenAccessor;
 import java.util.ArrayList;
@@ -121,13 +124,16 @@ public final class LuckScreenCapture {
 		List<MeterGainObservation> all = new ArrayList<>(SRunMeterGainEvidence.RECORDED);
 		all.addAll(LuckMeterGains.all(store.runs()));
 		SRunMeterGainEvidence.Assessment assessment = SRunMeterGainEvidence.assess(all, RuleVariants.defaults());
+		PityApplicationEvidence.Assessment pity = PityApplicationEvidence.assess(all, RuleVariants.defaults());
+		Map<PityApplication, Long> pityPredicted = PityApplicationEvidence.predictions(observation.score(), observation.pityLevel(), RuleVariants.defaults());
 		boolean discriminating = observation.tier() == ScoreTier.S && SRunMeterGainEvidence.discriminates(observation.score(), observation.pityLevel());
-		String message = String.format("[DRT] Luck meter gain check %s %s %d, Pity %d: observed +%d; rounding-first %d, combined %d, truncate %d. S-run rule %s %s (%s)%s",
+		String message = String.format("[DRT] Luck meter gain check %s %s %d, Pity %d: observed +%d; rounding-first %d, combined %d, truncate %d, no Pity %d. S-run rule %s %s (%s); Pity rule %s (%s)%s",
 			observation.floor(), observation.tier(), observation.score(), observation.pityLevel(), observation.gain(),
 			predicted.get(SRunMeterGain.ROUND), predicted.get(SRunMeterGain.COMBINED_MULTIPLIER), predicted.get(SRunMeterGain.TRUNCATE),
-			assessment.recommended(), assessment.status(), assessment.consistent(),
+			pityPredicted.get(PityApplication.NOT_APPLIED),
+			assessment.recommended(), assessment.status(), assessment.consistent(), pity.status(), pity.consistent(),
 			discriminating ? ". DISCRIMINATING reading: update SRunMeterGainEvidence.RECORDED and the default" : "");
-		if (discriminating || assessment.status() == SRunMeterGainEvidence.Status.CONFLICT) {
+		if (discriminating || assessment.status() == MeterRuleStatus.CONFLICT || pity.status() == MeterRuleStatus.CONFLICT) {
 			DungeonRunTracker.LOGGER.warn(message);
 		} else {
 			DungeonRunTracker.LOGGER.info(message);
