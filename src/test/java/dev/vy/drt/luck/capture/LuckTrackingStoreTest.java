@@ -12,6 +12,7 @@ import dev.vy.drt.luck.rules.ModifierPreset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -158,6 +159,90 @@ class LuckTrackingStoreTest {
 		assertNull(profile.catacombsBoxLevel);
 		assertEquals(3, profile.pityLevel);
 		assertNull(store.runs().get(0).score);
+	}
+
+	private static LuckMeterReading reading(String floor, long at, long stored) {
+		LuckMeterReading reading = new LuckMeterReading();
+		reading.floor = floor;
+		reading.observedAtEpochMillis = at;
+		reading.source = LuckMeterReading.SOURCE_OVERVIEW;
+		reading.storedScore = stored;
+		reading.storedText = Long.toString(stored);
+		return reading;
+	}
+
+	private static LuckRunRecord f5Run(String fingerprint, long completedAt) {
+		return LuckRunRecord.forCompletion("session", fingerprint, completedAt, "F5", "S", new DungeonScoreReading(298, "S"));
+	}
+
+	private static String phases(LuckRunRecord run) {
+		return run.meterSnapshots.stream().map(s -> s.phase + "=" + s.storedScore).toList().toString();
+	}
+
+	@Test
+	void readingsOnlyAttachToTheRunsTheyBracket() {
+		LuckTrackingStore store = new LuckTrackingStore(file());
+		store.load();
+		store.recordMeterReading(reading("F5", 100L, 1_000L));
+		store.addRun(f5Run("r1", 200L));
+		LuckRunRecord other = LuckRunRecord.forCompletion("session", "f6", 250L, "F6", "S", new DungeonScoreReading(298, "S"));
+		store.addRun(other);
+		store.addRun(f5Run("r2", 300L));
+		List<LuckTrackingStore.MeterAttachment> attached = store.recordMeterReading(reading("F5", 400L, 1_500L));
+		assertEquals(1, attached.size());
+		assertNull(attached.get(0).before(), "a reading from before the first run is not the second run's start");
+		assertEquals(1_500L, attached.get(0).after().storedScore);
+
+		LuckTrackingStore restarted = new LuckTrackingStore(file());
+		restarted.load();
+		LuckRunRecord r1 = restarted.runs().get(0);
+		LuckRunRecord f6 = restarted.runs().get(1);
+		LuckRunRecord r2 = restarted.runs().get(2);
+		assertEquals("[BEFORE_RUN=1000]", phases(r1), "the later reading spans two runs, so it is no one's exact after-state but the last");
+		assertEquals("[]", phases(f6));
+		assertEquals("[AFTER_RUN=1500]", phases(r2));
+		assertNull(LuckMeterGains.of(r1));
+		assertNull(LuckMeterGains.of(r2));
+		assertEquals("OBSERVED", r1.coverage.meterStatus);
+		assertEquals("UNKNOWN", r2.coverage.meterStatus);
+
+		store.recordMeterReading(reading("F5", 500L, 1_500L));
+		assertEquals(2, store.meterReadings().size(), "an unchanged reading with no run in between only moves the last-seen time");
+		store.addRun(f5Run("r3", 600L));
+		assertEquals("[BEFORE_RUN=1500]", phases(store.run(store.runs().get(3).luckRunId)), "the merged reading still counts as seen before r3");
+	}
+
+	@Test
+	void olderSchemaKeepsObservationsAndReassessesCoverage() throws Exception {
+		Files.createDirectories(file().getParent());
+		String v1 = "{\"schema\":\"drt-luck\",\"schemaVersion\":1,"
+			+ "\"profile\":{\"bossLuck\":\"IV\",\"treasureAccessory\":\"ARTIFACT\",\"catacombsBoxLevel\":10,\"echoOfBoxesLevel\":10,\"echoOfEchoesLevel\":10,\"pityLevel\":10,\"revision\":3},"
+			+ "\"runs\":[{\"luckRunId\":\"luck-v1\",\"drtCompletionFingerprint\":\"fp-v1\",\"completedAtEpochMillis\":5000,\"floor\":\"F5\",\"grade\":\"S\",\"score\":298,"
+			+ "\"modifiers\":{\"bossLuck\":\"III\",\"pityLevel\":4,\"revision\":2},"
+			+ "\"chests\":[{\"tier\":\"WOOD\",\"source\":\"CROESUS_RUN_VIEW\",\"offers\":[{\"index\":0,\"contents\":[{\"text\":\"Mystery\",\"kind\":\"ITEM\"}]}]}],"
+			+ "\"meterSnapshots\":[{\"floor\":\"F5\",\"phase\":\"BEFORE_RUN\",\"state\":\"OBSERVED\",\"storedScore\":3556}],"
+			+ "\"coverage\":{\"version\":1,\"qualifiesForScore\":true,\"blockers\":[]}}]}";
+		Files.writeString(file(), v1, StandardCharsets.UTF_8);
+		LuckTrackingStore store = new LuckTrackingStore(file());
+		assertEquals(LuckTrackingStore.LoadState.LOADED, store.load());
+		assertEquals(3, store.profile().revision);
+
+		LuckRunRecord run = store.run("luck-v1");
+		assertEquals("III", run.modifiers.bossLuck, "the run keeps its own snapshot, not the current profile");
+		assertEquals(4, run.modifiers.pityLevel);
+		assertEquals(4, run.modifiers.unknownFieldCount());
+		assertEquals("Mystery", run.chests.get(0).offers.get(0).contents.get(0).text);
+		assertEquals(3_556L, run.meterSnapshots.get(0).storedScore);
+		assertEquals(LuckCoverage.VERSION, run.coverage.version);
+		assertFalse(run.coverage.qualifiesForScore, "a stale stored verdict is never trusted");
+		assertTrue(run.coverage.blockers.containsAll(List.of("OFFERS_PARTIAL", "OFFER_CONTENT_UNRESOLVED")), run.coverage.blockers.toString());
+
+		store.addRun(completion("fp-new", 306));
+		LuckTrackingStore restarted = new LuckTrackingStore(file());
+		restarted.load();
+		assertEquals(LuckTrackingStore.SCHEMA_VERSION, JsonParser.parseString(Files.readString(file(), StandardCharsets.UTF_8)).getAsJsonObject().get("schemaVersion").getAsInt());
+		assertEquals("III", restarted.run("luck-v1").modifiers.bossLuck);
+		assertEquals("Mystery", restarted.run("luck-v1").chests.get(0).offers.get(0).contents.get(0).text);
 	}
 
 	@Test

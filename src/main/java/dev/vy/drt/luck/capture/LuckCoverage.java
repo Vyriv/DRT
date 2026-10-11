@@ -15,7 +15,7 @@ import java.util.Set;
  * {@code caveats} are gaps the scoring engine handles by widening its range instead.
  */
 public final class LuckCoverage {
-	public static final int VERSION = 2;
+	public static final int VERSION = 3;
 
 	public enum ScoreStatus { OBSERVED, GRADE_ONLY, MISSING }
 
@@ -51,8 +51,9 @@ public final class LuckCoverage {
 		if (run.score != null) {
 			coverage.scoreStatus = ScoreStatus.OBSERVED.name();
 		} else if (tier != null) {
+			// The grade fixes eligibility and quality, but meter gain needs the exact score.
 			coverage.scoreStatus = ScoreStatus.GRADE_ONLY.name();
-			coverage.caveats.add("NUMERIC_SCORE_MISSING");
+			coverage.blockers.add("NUMERIC_SCORE_MISSING");
 		} else {
 			coverage.scoreStatus = ScoreStatus.MISSING.name();
 		}
@@ -76,10 +77,18 @@ public final class LuckCoverage {
 		boolean rerollWithOriginal = false;
 		boolean anyOfferSeen = false;
 		boolean unverifiedChange = false;
+		boolean unresolvedContent = false;
+		boolean unexpectedChest = false;
 		for (LuckRunRecord.LuckChestRecord chest : run.chests) {
 			ChestTier chestTier = parseTier(chest.tier);
+			boolean seenOrOpened = !chest.offers.isEmpty() || Boolean.TRUE.equals(chest.purchased);
+			if (seenOrOpened && chestTier == null) unexpectedChest = true;
+			if (chestTier != null && seenOrOpened && !expected.isEmpty() && !expected.contains(chestTier)) unexpectedChest = true;
 			if (chestTier == null || chest.offers.isEmpty()) continue;
 			anyOfferSeen = true;
+			for (LuckRunRecord.LuckOfferSnapshot offer : chest.offers) {
+				if (offer.contents.isEmpty() || offer.contents.stream().anyMatch(line -> line.key == null)) unresolvedContent = true;
+			}
 			if (chest.offers.stream().anyMatch(offer -> offer.changedFromPrevious && !offer.afterKismetReroll)) unverifiedChange = true;
 			boolean hasOriginal = chest.offers.stream().anyMatch(offer -> !offer.afterKismetReroll);
 			boolean hasReroll = chest.offers.stream().anyMatch(offer -> offer.afterKismetReroll);
@@ -99,6 +108,10 @@ public final class LuckCoverage {
 			coverage.offerStatus = OfferStatus.PARTIAL.name();
 			coverage.blockers.add("OFFERS_PARTIAL");
 		}
+		// An unnamed chest, or one the grade does not allow, means the grade, the score or the eligibility rule is wrong.
+		if (unexpectedChest) coverage.blockers.add("UNEXPECTED_CHEST");
+		// An unnamed line could be a rare drop; scoring without it would bias the run towards unlucky.
+		if (unresolvedContent) coverage.blockers.add("OFFER_CONTENT_UNRESOLVED");
 
 		if (unverifiedChange) {
 			coverage.kismetStatus = KismetStatus.CONTENTS_CHANGED_UNVERIFIED.name();
@@ -117,6 +130,7 @@ public final class LuckCoverage {
 		if (!MeterStatus.OBSERVED.name().equals(coverage.meterStatus)) {
 			coverage.caveats.add(MeterStatus.DERIVED.name().equals(coverage.meterStatus) ? "METER_DERIVED" : "METER_UNKNOWN");
 		}
+		if (selectionUnresolved(run, floor)) coverage.caveats.add("METER_SELECTION_UNRESOLVED");
 
 		coverage.qualifiesForScore = coverage.blockers.isEmpty();
 		return coverage;
@@ -149,10 +163,23 @@ public final class LuckCoverage {
 		MeterStatus best = MeterStatus.UNKNOWN;
 		for (LuckRunRecord.LuckMeterSnapshot snapshot : run.meterSnapshots) {
 			if (!floor.name().equalsIgnoreCase(snapshot.floor) || !LuckRunRecord.PHASE_BEFORE_RUN.equals(snapshot.phase)) continue;
+			// A selected drop DRT could not name is not an exact state: its weight boost is unknown.
+			if (snapshot.selectedItem != null && snapshot.selectedKey == null) continue;
 			if (MeterStatus.OBSERVED.name().equals(snapshot.state)) return MeterStatus.OBSERVED;
 			if (MeterStatus.DERIVED.name().equals(snapshot.state)) best = MeterStatus.DERIVED;
 		}
 		return best;
+	}
+
+	private static boolean selectionUnresolved(LuckRunRecord run, FloorId floor) {
+		if (floor == null) return false;
+		for (LuckRunRecord.LuckMeterSnapshot snapshot : run.meterSnapshots) {
+			if (floor.name().equalsIgnoreCase(snapshot.floor) && LuckRunRecord.PHASE_BEFORE_RUN.equals(snapshot.phase)
+				&& snapshot.selectedItem != null && snapshot.selectedKey == null) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private static ChestTier parseTier(String value) {

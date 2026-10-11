@@ -173,6 +173,10 @@ class LiveCaptureF5Test {
 		assertEquals(3_556L, afterS.get(0).before().storedScore);
 		assertEquals(3_785L, afterS.get(0).after().storedScore);
 
+		LuckCoverage stored = liveS.coverage;
+		liveS.coverage = LuckCoverage.evaluate(liveS);
+		stored.version = liveS.coverage.version;
+		assertEquals(GSON.toJsonTree(stored), GSON.toJsonTree(liveS.coverage), "the live assessment still holds under the current coverage rules");
 		assertEquals(GSON.toJsonTree(liveS), GSON.toJsonTree(store.run(S_RUN)), "replay must reproduce the live record field for field");
 
 		List<MeterGainObservation> gains = LuckMeterGains.all(store.runs());

@@ -32,6 +32,11 @@ class LuckCoverageTest {
 			LuckRunRecord.LuckOfferSnapshot offer = new LuckRunRecord.LuckOfferSnapshot();
 			offer.index = i;
 			offer.afterKismetReroll = rerollFlags[i];
+			LuckRunRecord.LuckContentLine essence = new LuckRunRecord.LuckContentLine();
+			essence.text = "Wither Essence x10";
+			essence.kind = "ESSENCE";
+			essence.key = "ESSENCE_WITHER_10";
+			offer.contents.add(essence);
 			chest.offers.add(offer);
 		}
 		run.chests.add(chest);
@@ -63,14 +68,68 @@ class LuckCoverageTest {
 	}
 
 	@Test
-	void gradeOnlyRunKeepsScoreUnknownAsACaveat() {
+	void gradeOnlyRunIsBlockedBecauseMeterGainNeedsTheScore() {
 		LuckRunRecord run = run("M5", "S+", null);
 		assertNull(run.score);
 		addAllChests(run, FloorId.M5, ScoreTier.S_PLUS);
 		LuckCoverage coverage = LuckCoverage.evaluate(run);
 		assertEquals("GRADE_ONLY", coverage.scoreStatus);
-		assertTrue(coverage.caveats.contains("NUMERIC_SCORE_MISSING"));
-		assertTrue(coverage.qualifiesForScore);
+		assertEquals("COMPLETE", coverage.offerStatus);
+		assertEquals(List.of("NUMERIC_SCORE_MISSING"), coverage.blockers);
+		assertFalse(coverage.qualifiesForScore);
+	}
+
+	@Test
+	void chestTheGradeDoesNotAllowIsAContradiction() {
+		LuckRunRecord offered = run("F5", "S", new DungeonScoreReading(298, "S"));
+		addAllChests(offered, FloorId.F5, ScoreTier.S);
+		addChest(offered, ChestTier.BEDROCK, false);
+		LuckCoverage coverage = LuckCoverage.evaluate(offered);
+		assertEquals("COMPLETE", coverage.offerStatus);
+		assertTrue(coverage.blockers.contains("UNEXPECTED_CHEST"), "an S run cannot offer Bedrock");
+		assertFalse(coverage.qualifiesForScore);
+
+		LuckRunRecord opened = run("F5", "S", new DungeonScoreReading(298, "S"));
+		addAllChests(opened, FloorId.F5, ScoreTier.S);
+		LuckRunRecord.LuckChestRecord bedrock = new LuckRunRecord.LuckChestRecord();
+		bedrock.tier = "BEDROCK";
+		bedrock.source = LuckRunRecord.SOURCE_CROESUS_MENU;
+		bedrock.purchased = true;
+		opened.chests.add(bedrock);
+		assertTrue(LuckCoverage.evaluate(opened).blockers.contains("UNEXPECTED_CHEST"), "nor can one open it");
+	}
+
+	@Test
+	void unnamedOrEmptyOfferContentsBlockScoring() {
+		LuckRunRecord unnamed = run("F5", "S", new DungeonScoreReading(298, "S"));
+		addAllChests(unnamed, FloorId.F5, ScoreTier.S);
+		LuckRunRecord.LuckContentLine mystery = new LuckRunRecord.LuckContentLine();
+		mystery.text = "Mystery Item";
+		mystery.kind = "ITEM";
+		unnamed.chests.get(4).offers.get(0).contents.add(mystery);
+		assertEquals(List.of("OFFER_CONTENT_UNRESOLVED"), LuckCoverage.evaluate(unnamed).blockers);
+
+		LuckRunRecord empty = run("F5", "S", new DungeonScoreReading(298, "S"));
+		addAllChests(empty, FloorId.F5, ScoreTier.S);
+		empty.chests.get(0).offers.get(0).contents.clear();
+		assertEquals(List.of("OFFER_CONTENT_UNRESOLVED"), LuckCoverage.evaluate(empty).blockers);
+	}
+
+	@Test
+	void unnamedMeterSelectionIsNotAnExactReading() {
+		LuckRunRecord run = run("F5", "S", new DungeonScoreReading(298, "S"));
+		addAllChests(run, FloorId.F5, ScoreTier.S);
+		LuckRunRecord.LuckMeterSnapshot snapshot = new LuckRunRecord.LuckMeterSnapshot();
+		snapshot.floor = "F5";
+		snapshot.phase = "BEFORE_RUN";
+		snapshot.state = "OBSERVED";
+		snapshot.selectedItem = "Some New Drop";
+		snapshot.storedScore = 1_000L;
+		run.meterSnapshots.add(snapshot);
+		LuckCoverage coverage = LuckCoverage.evaluate(run);
+		assertEquals("UNKNOWN", coverage.meterStatus);
+		assertTrue(coverage.caveats.contains("METER_SELECTION_UNRESOLVED"));
+		assertTrue(coverage.caveats.contains("METER_UNKNOWN"));
 	}
 
 	@Test
@@ -160,5 +219,6 @@ class LuckCoverageTest {
 		snapshot.state = "OBSERVED";
 		run.meterSnapshots.add(snapshot);
 		assertEquals("OBSERVED", LuckCoverage.evaluate(run).meterStatus);
+		assertFalse(LuckCoverage.evaluate(run).caveats.contains("METER_SELECTION_UNRESOLVED"));
 	}
 }
