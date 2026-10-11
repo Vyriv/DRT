@@ -1,5 +1,6 @@
 package dev.vy.drt.client.screen;
 
+import dev.vy.drt.client.luck.LuckRunCapture;
 import dev.vy.drt.client.tracker.DungeonRunTrackerFeature;
 import dev.vy.drt.config.DrtConfig;
 import dev.vy.drt.config.DrtConfigManager;
@@ -140,6 +141,8 @@ public final class DrtOnboardingScreen extends Screen {
 		y += ROW_H + GAP;
 		drawIncludeEssenceRow(g, mouseX, mouseY, y);
 		y += ROW_H + GAP;
+		drawLuckModifiersRow(g, mouseX, mouseY, y);
+		y += ROW_H + GAP;
 
 		drawSection(g, "Kuudra", y + 2);
 		y += 16;
@@ -241,7 +244,7 @@ public final class DrtOnboardingScreen extends Screen {
 		winW = Math.max(PANEL_MIN_W, Math.min(PANEL_MAX_W, width - 24));
 		int kuudraRows = 5 + (kuudraPetEnabled ? 1 : 0);
 		int desiredH = 34
-			+ 13 + (ROW_H + GAP) * 5
+			+ 13 + (ROW_H + GAP) * 6
 			+ 16 + kuudraRows * (ROW_H + GAP) - GAP
 			+ 44;
 		winH = Math.max(252, Math.min(Math.max(1, height - 24), desiredH));
@@ -313,6 +316,23 @@ public final class DrtOnboardingScreen extends Screen {
 		String essenceTip = "Toggling this on/off will enable/disable including essence in the profit tracker";
 		clickTargets.add(new ClickTarget(ox + 12, y, winW - 24, ROW_H, -2, () -> {}, essenceTip, null));
 		drawToggle(g, controlX(46), y + 3, includeEssence, () -> includeEssence = !includeEssence, essenceTip);
+	}
+
+	private void drawLuckModifiersRow(GuiGraphicsExtractor g, int mouseX, int mouseY, int y) {
+		drawRowBase(g, mouseX, mouseY, y);
+		g.text(font, "Luck modifiers", ox + 18, y + 7, TEXT);
+		int unknown = LuckRunCapture.profile().unknownFieldCount();
+		String value = unknown == 0 ? "All set" : unknown + " unknown";
+		int buttonX = controlX(58);
+		int valueX = buttonX - CONTROL_GAP - font.width(value);
+		if (valueX > ox + 18 + font.width("Luck modifiers") + CONTROL_GAP) {
+			g.text(font, value, valueX, y + 7, unknown == 0 ? GREEN : MUTED);
+		}
+		drawSmallButton(g, buttonX, y + 3, 58, 16, "Edit", false, () -> {
+			saveSettings(false);
+			Minecraft client = Minecraft.getInstance();
+			client.setScreen(new DrtLuckModifiersScreen(this));
+		}, "Set the global modifier preset used by Luck Rating");
 	}
 
 	private void drawFactionRow(GuiGraphicsExtractor g, int mouseX, int mouseY, int y) {

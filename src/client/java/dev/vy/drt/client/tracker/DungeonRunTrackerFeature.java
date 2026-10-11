@@ -2,6 +2,7 @@ package dev.vy.drt.client.tracker;
 
 import dev.vy.drt.DungeonRunTracker;
 import dev.vy.drt.config.ChestCostBreakdown;
+import dev.vy.drt.client.luck.LuckRunCapture;
 import dev.vy.drt.client.overlay.OverlayColors;
 import dev.vy.drt.client.overlay.OverlayFormat;
 import dev.vy.drt.client.overlay.OverlayLayout;
@@ -22,6 +23,7 @@ import dev.vy.drt.config.DungeonRunRecord;
 import dev.vy.drt.config.KuudraKeyShopCost;
 import dev.vy.drt.config.RunRecordCommitDecision;
 import dev.vy.drt.config.RunRecordDeduplicator;
+import dev.vy.drt.luck.capture.DungeonScoreReading;
 import dev.vy.drt.mixin.AbstractContainerScreenAccessor;
 import dev.vy.drt.price.DungeonProfitPricing;
 import dev.vy.drt.price.LootFloorGuards;
@@ -392,6 +394,7 @@ public final class DungeonRunTrackerFeature {
 	private boolean awaitingExtraStatsScore;
 	private DungeonFloor awaitingExtraStatsFloor = DungeonFloor.UNKNOWN;
 	private String pendingScoreGrade = null;
+	private DungeonScoreReading pendingScoreReading = null;
 	private String lastRecordedGrade = "?";
 	private DungeonFloor pendingSPlusFloor = DungeonFloor.UNKNOWN;
 	private long pendingSPlusUntilMillis;
@@ -1712,8 +1715,10 @@ public final class DungeonRunTrackerFeature {
 		}
 
 		String preGrade = extractScoreGrade(cleaned);
+		DungeonScoreReading lineScore = preGrade == null ? null : DungeonScoreReading.parse(cleaned).orElse(null);
 		if (preGrade != null && pendingScoreGrade == null) {
 			pendingScoreGrade = preGrade;
+			pendingScoreReading = lineScore;
 			trackingSession.updateActiveRunGrade(preGrade, EvidenceStrength.STRUCTURED_CHAT, DetectionSource.STRUCTURED_CHAT);
 			pendingSPlusFloor = lineFloor != DungeonFloor.UNKNOWN ? lineFloor : currentFloor;
 			pendingSPlusUntilMillis = now + EXTRA_STATS_TIMEOUT_MS;
@@ -1721,7 +1726,7 @@ public final class DungeonRunTrackerFeature {
 
 		if (pendingScoreGrade != null && currentRunBossTimeMs > 0L && !runCountedThisDungeon) {
 			DungeonFloor scoreFloor = bestCompletionFloor(lineFloor);
-			recordCompletedRun(now, scoreFloor, pendingScoreGrade);
+			recordCompletedRun(now, scoreFloor, pendingScoreGrade, pendingScoreReading);
 			clearPendingCompletionScore();
 			return;
 		}
@@ -1729,7 +1734,7 @@ public final class DungeonRunTrackerFeature {
 		if (isExtraStatsHeader(cleaned)) {
 			if (pendingScoreGrade != null && !runCountedThisDungeon) {
 				DungeonFloor f = bestCompletionFloor(lineFloor);
-				recordCompletedRun(now, f, pendingScoreGrade);
+				recordCompletedRun(now, f, pendingScoreGrade, pendingScoreReading);
 				clearPendingCompletionScore();
 			} else {
 				DungeonFloor projectedFloor = activeRunFloorProjection();
@@ -1750,7 +1755,7 @@ public final class DungeonRunTrackerFeature {
 			if (postGrade != null) {
 				if (!runCountedThisDungeon) {
 					DungeonFloor scoreFloor = awaitingExtraStatsFloor != DungeonFloor.UNKNOWN ? awaitingExtraStatsFloor : activeRunFloorProjection();
-					recordCompletedRun(now, scoreFloor, postGrade);
+					recordCompletedRun(now, scoreFloor, postGrade, lineScore);
 				}
 				awaitingExtraStatsScore = false;
 				awaitingExtraStatsFloor = DungeonFloor.UNKNOWN;
@@ -3370,6 +3375,7 @@ public final class DungeonRunTrackerFeature {
 
 	private void clearPendingCompletionScore() {
 		pendingScoreGrade = null;
+		pendingScoreReading = null;
 		pendingSPlusFloor = DungeonFloor.UNKNOWN;
 		pendingSPlusUntilMillis = 0L;
 	}
@@ -5064,6 +5070,10 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private synchronized void recordCompletedRun(long now, DungeonFloor floor, String grade) {
+		recordCompletedRun(now, floor, grade, null);
+	}
+
+	private synchronized void recordCompletedRun(long now, DungeonFloor floor, String grade, DungeonScoreReading scoreReading) {
 		String key = floor != null && floor != DungeonFloor.UNKNOWN ? floor.name() : "UNKNOWN";
 		String g = grade == null || grade.isBlank() ? "?" : grade;
 		long bossTimeMs = Math.max(0L, currentRunBossTimeMs);
@@ -5136,6 +5146,7 @@ public final class DungeonRunTrackerFeature {
 			runCountedThisDungeon = true;
 			return;
 		}
+		LuckRunCapture.onCompletionRecorded(completionRecord, scoreReading);
 		resyncLifetimeFromConfig();
 		int newCount = floorRunCounts.getOrDefault(key, 0);
 		gradeRunCounts.merge(g, 1, Integer::sum);
