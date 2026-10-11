@@ -10,9 +10,23 @@ Pure Java under `dev.vy.drt.luck` (no Minecraft imports). Tests: `.\gradlew.bat 
 | `luck.data` | `CatacombsLootDatabase` (hash-verified base data plus overrides), `ChestTable`, `FloorTable`, `LootEntry`, `DataDispute`, `KnownGap`, `FloorStatus` |
 | `luck.rules` | `RuleVariants` (13 named rule choices), `ModifierPreset` (nullable = unknown), `ResolvedModifiers`, `QualityCalculator`, `SensitivityAnalysis` |
 | `luck.engine` | `ChestRoller` (Monte Carlo), `ExactChestDistribution` (exact DP), `MeterBoost`, `ChestRoll` |
-| `luck.meter` | `RngMeterModel`, `RngMeterState` |
-| `luck.sim` | `RunSimulator`, `HistorySimulator`, `SelectionPolicy`, `KismetPolicy`, `RunOutcome`, `RunRarity`, `AppearanceEstimator`, `ChestEligibility` |
-| `luck.stats` | `SurprisalStatistic`, `NullDistribution`, `MidPPercentile`, `RareOutcomeGate` |
+| `luck.meter` | `RngMeterModel`, `RngMeterState`, `MeterAssumptions` (plausible starts for unknown meters) |
+| `luck.sim` | `RunSimulator`, `HistorySimulator` (one meter per floor), `SelectionPolicy`, `KismetPolicy`, `RunOutcome`, `RunRarity`, `AppearanceEstimator`, `ChestEligibility` |
+| `luck.stats` | `SurprisalStatistic`, `NullDistribution`, `MidPPercentile`, `RareOutcomeGate`, `ObservedRun`, `LuckEvaluator` |
+
+## Evaluation flow
+
+`LuckEvaluator` takes observed runs and a set of plausible configurations (modifier extremes for unknown fields, every one-at-a-time rule variant, every meter scenario, the buying and Kismet policies).
+
+1. Any run without complete chest offers: `INCOMPLETE_RECORDS`. Incomplete runs are never silently dropped, because which runs got recorded may itself depend on luck.
+2. Fewer than 1 expected rare drop (per-run probability 1% or less): `INSUFFICIENT_DATA`.
+3. Otherwise each configuration gets its own observed statistic and null distribution (common random numbers across configurations). If every percentile, widened by 2 Monte Carlo standard errors, lands in one band (very unlucky under 5%, unlucky under 25%, typical, lucky above 75%, very lucky above 95%), the verdict is `PROVISIONAL`; otherwise `UNRESOLVED`.
+
+Reasons always list non-verified floors, known gaps on the floors played and items outside the loot tables.
+
+## Buying policy and selection bias
+
+The appearance statistic and its null do not depend on which chests are bought, unless Kismet is used (rerolls add opportunities) or the meter resets on purchase. Tests pin both: identical null samples for different buying policies without Kismet, and different nulls once either applies. Purchased-reward statistics always depend on the policy.
 
 Data: `assets/drt/luck/catacombs-data-v1.json` (manifest, provenance, per-file SHA-256, floor status), `pigicial-6938191/` (vendored, unmodified), `catacombs-overrides-v1.json` (disputes with evidence and selectable options, plus known gaps).
 
@@ -56,6 +70,8 @@ Defaults first. One-at-a-time alternatives come from `RuleVariants.oneAtATimeAlt
 - Run simulator: eligibility, Chest Key, Kismet as an extra opportunity (matches 1 - (1 - p)^2), purchases always a subset of appearances, highest-tier purchase rate equals top-chest appearance.
 - Meter: gap between appearances never exceeds the fill time; meter carries between runs.
 - Percentile: ties count half, Monte Carlo error reported, mid-p mean 0.5 under the null with the meter active, rare-outcome gate withholds scores with under 1 expected rare appearance.
+- Evaluator: implausibly lucky and empty histories give very lucky and very unlucky under all 14 configurations; incomplete and short histories are refused; band stability accounts for simulation error.
+- Mixed-floor histories keep an independent meter per floor.
 
 ## Sensitivity
 
