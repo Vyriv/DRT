@@ -54,8 +54,10 @@ Defaults first. One-at-a-time alternatives come from `RuleVariants.oneAtATimeAlt
 | Guarantee placement | lowest tier containing | highest eligible tier |
 | Meter reset trigger | on appearance | on purchase |
 | Meter overflow | subtract required | reset to zero |
-| S run gain (70%) | truncate | round |
+| S run gain (70%) | round, then Pity (provisional) | one combined floor of score x 0.7 x Pity |
 | Pity | multiply gain, truncate | not applied |
+
+S run gain: in-game F5 readings at Pity 10 (S+ 302 gave +332, S 298 gave +229) refute truncating 70% before Pity (228) and fit both remaining rules. Truncation is kept as a variant but left out of sensitivity analysis. `SRunMeterGainEvidence` checks every rule against recorded and captured readings. The default stays provisional until an S score separates the two rules: 285 (round 220, combined 219) or 299 (round 229, combined 230) at Pity 10. The client logs a warning when a captured reading does.
 | Kismet and meter | applies | ignored |
 | Required score rounding | floor | half up |
 | Selection carry-over | cap at required | uncapped |

@@ -1,0 +1,611 @@
+{
+  "note": "Live DRT luck store from Minecraft 26.2 on 2026-10-11, F5 runs only, player names anonymized. The S run (score 298) is the first complete live capture: tab roster, unique Croesus match, five chest offers and observed meter snapshots before and after. The S+ run (score 302) was captured by an earlier build: no party, no offers.",
+  "schemaVersion": 2,
+  "profile": {
+    "bossLuck": "IV",
+    "treasureAccessory": "ARTIFACT",
+    "catacombsBoxLevel": 10,
+    "echoOfBoxesLevel": 10,
+    "echoOfEchoesLevel": 0,
+    "pityLevel": 10,
+    "revision": 3,
+    "updatedAtEpochMillis": 1791738743023
+  },
+  "croesusMenuObservedAtEpochMillis": 1791743456192,
+  "runViewObservedAtEpochMillis": 1791743459197,
+  "runs": [
+    {
+      "luckRunId": "luck-5ff1bf45-ca65-4dd6-adc1-576f5fefea20",
+      "drtRunSessionId": "live-6256dfc8-run-1",
+      "drtCompletionFingerprint": "live-6256dfc8-run-1|F5|S+|394000",
+      "completedAtEpochMillis": 1791739572348,
+      "floor": "F5",
+      "grade": "S+",
+      "score": 302,
+      "scoreSource": "COMPLETION_CHAT",
+      "modifiers": {
+        "bossLuck": "IV",
+        "treasureAccessory": "ARTIFACT",
+        "catacombsBoxLevel": 10,
+        "echoOfBoxesLevel": 10,
+        "echoOfEchoesLevel": 0,
+        "pityLevel": 10,
+        "revision": 3,
+        "updatedAtEpochMillis": 1791738743023
+      },
+      "party": null,
+      "partySource": null,
+      "croesus": {
+        "firstMatchedAtEpochMillis": 1791743456192,
+        "lastSeenAtEpochMillis": 1791743456192,
+        "method": "UNIQUE",
+        "entryName": "The Catacombs",
+        "players": [
+          "LocalPlayer"
+        ],
+        "completedText": "1 hour ago",
+        "expiresText": "2d 22h",
+        "noChestsOpened": false,
+        "openedChests": [
+          "Wood"
+        ],
+        "availableModifiers": [
+          "Kismet Feather",
+          "Dungeon Chest Key"
+        ],
+        "modifierHistory": [
+          {
+            "observedAtEpochMillis": 1791743456192,
+            "source": "CROESUS_MENU",
+            "modifiers": [
+              "Kismet Feather",
+              "Dungeon Chest Key"
+            ]
+          }
+        ]
+      },
+      "chests": [
+        {
+          "tier": "WOOD",
+          "source": "CROESUS_MENU",
+          "offers": [],
+          "purchased": true,
+          "purchasedOfferIndex": null,
+          "costCoins": null,
+          "costText": null
+        }
+      ],
+      "meterSnapshots": [
+        {
+          "floor": "F5",
+          "phase": "AFTER_RUN",
+          "state": "OBSERVED",
+          "selectedItem": null,
+          "selectedKey": null,
+          "storedScore": 3556,
+          "storedText": "3,556",
+          "requiredScore": null,
+          "requiredText": null,
+          "guaranteeChest": null,
+          "source": "RNG_METER_OVERVIEW",
+          "observedAtEpochMillis": 1791743179741
+        }
+      ],
+      "coverage": {
+        "version": 2,
+        "scoreStatus": "OBSERVED",
+        "modifierStatus": "COMPLETE",
+        "offerStatus": "NOT_OBSERVED",
+        "meterStatus": "UNKNOWN",
+        "kismetStatus": "NOT_OBSERVED",
+        "expectedChests": [
+          "WOOD",
+          "GOLD",
+          "DIAMOND",
+          "EMERALD",
+          "OBSIDIAN",
+          "BEDROCK"
+        ],
+        "observedChests": [],
+        "qualifiesForScore": false,
+        "blockers": [
+          "OFFERS_NOT_OBSERVED"
+        ],
+        "caveats": [
+          "METER_UNKNOWN"
+        ]
+      }
+    },
+    {
+      "luckRunId": "luck-26478f2d-e379-4adb-8f58-96b04733526c",
+      "drtRunSessionId": "live-54d11cd9-run-1",
+      "drtCompletionFingerprint": "live-54d11cd9-run-1|F5|S|220000",
+      "completedAtEpochMillis": 1791743444389,
+      "floor": "F5",
+      "grade": "S",
+      "score": 298,
+      "scoreSource": "COMPLETION_CHAT",
+      "modifiers": {
+        "bossLuck": "IV",
+        "treasureAccessory": "ARTIFACT",
+        "catacombsBoxLevel": 10,
+        "echoOfBoxesLevel": 10,
+        "echoOfEchoesLevel": 0,
+        "pityLevel": 10,
+        "revision": 3,
+        "updatedAtEpochMillis": 1791738743023
+      },
+      "party": [
+        "LocalPlayer",
+        "Teammate_I",
+        "Teammate_J",
+        "Teammate_K",
+        "Teammate_L"
+      ],
+      "partySource": "TAB_LIST",
+      "croesus": {
+        "firstMatchedAtEpochMillis": 1791743456192,
+        "lastSeenAtEpochMillis": 1791743456192,
+        "method": "UNIQUE",
+        "entryName": "The Catacombs",
+        "players": [
+          "Teammate_L",
+          "Teammate_I",
+          "Teammate_K",
+          "LocalPlayer",
+          "Teammate_J"
+        ],
+        "completedText": "11 secs ago",
+        "expiresText": "2d 23h",
+        "noChestsOpened": true,
+        "openedChests": [],
+        "availableModifiers": [
+          "Kismet Feather",
+          "Dungeon Chest Key"
+        ],
+        "modifierHistory": [
+          {
+            "observedAtEpochMillis": 1791743456192,
+            "source": "CROESUS_MENU",
+            "modifiers": [
+              "Kismet Feather",
+              "Dungeon Chest Key"
+            ]
+          }
+        ]
+      },
+      "chests": [
+        {
+          "tier": "WOOD",
+          "source": "CROESUS_RUN_VIEW",
+          "offers": [
+            {
+              "index": 0,
+              "observedAtEpochMillis": 1791743459197,
+              "afterKismetReroll": false,
+              "changedFromPrevious": false,
+              "source": "CROESUS_RUN_VIEW",
+              "itemKeys": [
+                "ENCHANTMENT_FEATHER_FALLING_6",
+                "ENCHANTMENT_INFINITE_QUIVER_6",
+                "ESSENCE_UNDEAD_19",
+                "ESSENCE_WITHER_10"
+              ],
+              "contents": [
+                {
+                  "text": "Enchanted Book (Feather Falling VI)",
+                  "name": "Enchanted Book (Feather Falling VI)",
+                  "quantity": 1,
+                  "kind": "ENCHANTMENT",
+                  "key": "ENCHANTMENT_FEATHER_FALLING_6"
+                },
+                {
+                  "text": "Enchanted Book (Infinite Quiver VI)",
+                  "name": "Enchanted Book (Infinite Quiver VI)",
+                  "quantity": 1,
+                  "kind": "ENCHANTMENT",
+                  "key": "ENCHANTMENT_INFINITE_QUIVER_6"
+                },
+                {
+                  "text": "Undead Essence x19",
+                  "name": "Undead Essence",
+                  "quantity": 19,
+                  "kind": "ESSENCE",
+                  "key": "ESSENCE_UNDEAD_19"
+                },
+                {
+                  "text": "Wither Essence x10",
+                  "name": "Wither Essence",
+                  "quantity": 10,
+                  "kind": "ESSENCE",
+                  "key": "ESSENCE_WITHER_10"
+                }
+              ],
+              "rawLines": [
+                "Contents",
+                "Enchanted Book (Feather Falling VI)",
+                "Enchanted Book (Infinite Quiver VI)",
+                "Undead Essence x19",
+                "Wither Essence x10",
+                "",
+                "Cost",
+                "FREE",
+                "",
+                "Click to open!"
+              ]
+            }
+          ],
+          "purchased": false,
+          "purchasedOfferIndex": null,
+          "costCoins": 0,
+          "costText": "FREE"
+        },
+        {
+          "tier": "GOLD",
+          "source": "CROESUS_RUN_VIEW",
+          "offers": [
+            {
+              "index": 0,
+              "observedAtEpochMillis": 1791743459197,
+              "afterKismetReroll": false,
+              "changedFromPrevious": false,
+              "source": "CROESUS_RUN_VIEW",
+              "itemKeys": [
+                "ENCHANTMENT_ULTIMATE_WISDOM_1",
+                "ENCHANTMENT_ULTIMATE_WISE_1",
+                "ESSENCE_UNDEAD_22",
+                "ESSENCE_WITHER_14"
+              ],
+              "contents": [
+                {
+                  "text": "Enchanted Book (Wisdom I)",
+                  "name": "Enchanted Book (Wisdom I)",
+                  "quantity": 1,
+                  "kind": "ENCHANTMENT",
+                  "key": "ENCHANTMENT_ULTIMATE_WISDOM_1"
+                },
+                {
+                  "text": "Enchanted Book (Ultimate Wise I)",
+                  "name": "Enchanted Book (Ultimate Wise I)",
+                  "quantity": 1,
+                  "kind": "ENCHANTMENT",
+                  "key": "ENCHANTMENT_ULTIMATE_WISE_1"
+                },
+                {
+                  "text": "Undead Essence x22",
+                  "name": "Undead Essence",
+                  "quantity": 22,
+                  "kind": "ESSENCE",
+                  "key": "ESSENCE_UNDEAD_22"
+                },
+                {
+                  "text": "Wither Essence x14",
+                  "name": "Wither Essence",
+                  "quantity": 14,
+                  "kind": "ESSENCE",
+                  "key": "ESSENCE_WITHER_14"
+                }
+              ],
+              "rawLines": [
+                "Contents",
+                "Enchanted Book (Wisdom I)",
+                "Enchanted Book (Ultimate Wise I)",
+                "Undead Essence x22",
+                "Wither Essence x14",
+                "",
+                "Cost",
+                "80,000 Coins",
+                "",
+                "NOTE: Coins are withdrawn from your",
+                "bank if you don't have enough in",
+                "your purse.",
+                "",
+                "Click to open!"
+              ]
+            }
+          ],
+          "purchased": false,
+          "purchasedOfferIndex": null,
+          "costCoins": 80000,
+          "costText": "80,000 Coins"
+        },
+        {
+          "tier": "DIAMOND",
+          "source": "CROESUS_RUN_VIEW",
+          "offers": [
+            {
+              "index": 0,
+              "observedAtEpochMillis": 1791743459197,
+              "afterKismetReroll": false,
+              "changedFromPrevious": false,
+              "source": "CROESUS_RUN_VIEW",
+              "itemKeys": [
+                "HOT_POTATO_BOOK",
+                "ENCHANTMENT_ULTIMATE_WISE_1",
+                "ESSENCE_UNDEAD_20",
+                "ESSENCE_WITHER_15"
+              ],
+              "contents": [
+                {
+                  "text": "Hot Potato Book",
+                  "name": "Hot Potato Book",
+                  "quantity": 1,
+                  "kind": "ITEM",
+                  "key": "HOT_POTATO_BOOK"
+                },
+                {
+                  "text": "Enchanted Book (Ultimate Wise I)",
+                  "name": "Enchanted Book (Ultimate Wise I)",
+                  "quantity": 1,
+                  "kind": "ENCHANTMENT",
+                  "key": "ENCHANTMENT_ULTIMATE_WISE_1"
+                },
+                {
+                  "text": "Undead Essence x20",
+                  "name": "Undead Essence",
+                  "quantity": 20,
+                  "kind": "ESSENCE",
+                  "key": "ESSENCE_UNDEAD_20"
+                },
+                {
+                  "text": "Wither Essence x15",
+                  "name": "Wither Essence",
+                  "quantity": 15,
+                  "kind": "ESSENCE",
+                  "key": "ESSENCE_WITHER_15"
+                }
+              ],
+              "rawLines": [
+                "Contents",
+                "Hot Potato Book",
+                "Enchanted Book (Ultimate Wise I)",
+                "Undead Essence x20",
+                "Wither Essence x15",
+                "",
+                "Cost",
+                "200,000 Coins",
+                "",
+                "NOTE: Coins are withdrawn from your",
+                "bank if you don't have enough in",
+                "your purse.",
+                "",
+                "Click to open!"
+              ]
+            }
+          ],
+          "purchased": false,
+          "purchasedOfferIndex": null,
+          "costCoins": 200000,
+          "costText": "200,000 Coins"
+        },
+        {
+          "tier": "EMERALD",
+          "source": "CROESUS_RUN_VIEW",
+          "offers": [
+            {
+              "index": 0,
+              "observedAtEpochMillis": 1791743459197,
+              "afterKismetReroll": false,
+              "changedFromPrevious": false,
+              "source": "CROESUS_RUN_VIEW",
+              "itemKeys": [
+                "ENCHANTMENT_REJUVENATE_2",
+                "ENCHANTMENT_ULTIMATE_LEGION_1",
+                "ESSENCE_UNDEAD_28",
+                "ESSENCE_WITHER_19"
+              ],
+              "contents": [
+                {
+                  "text": "Enchanted Book (Rejuvenate II)",
+                  "name": "Enchanted Book (Rejuvenate II)",
+                  "quantity": 1,
+                  "kind": "ENCHANTMENT",
+                  "key": "ENCHANTMENT_REJUVENATE_2"
+                },
+                {
+                  "text": "Enchanted Book (Legion I)",
+                  "name": "Enchanted Book (Legion I)",
+                  "quantity": 1,
+                  "kind": "ENCHANTMENT",
+                  "key": "ENCHANTMENT_ULTIMATE_LEGION_1"
+                },
+                {
+                  "text": "Undead Essence x28",
+                  "name": "Undead Essence",
+                  "quantity": 28,
+                  "kind": "ESSENCE",
+                  "key": "ESSENCE_UNDEAD_28"
+                },
+                {
+                  "text": "Wither Essence x19",
+                  "name": "Wither Essence",
+                  "quantity": 19,
+                  "kind": "ESSENCE",
+                  "key": "ESSENCE_WITHER_19"
+                }
+              ],
+              "rawLines": [
+                "Contents",
+                "Enchanted Book (Rejuvenate II)",
+                "Enchanted Book (Legion I)",
+                "Undead Essence x28",
+                "Wither Essence x19",
+                "",
+                "Cost",
+                "800,000 Coins",
+                "",
+                "NOTE: Coins are withdrawn from your",
+                "bank if you don't have enough in",
+                "your purse.",
+                "",
+                "Click to open!"
+              ]
+            }
+          ],
+          "purchased": false,
+          "purchasedOfferIndex": null,
+          "costCoins": 800000,
+          "costText": "800,000 Coins"
+        },
+        {
+          "tier": "OBSIDIAN",
+          "source": "CROESUS_RUN_VIEW",
+          "offers": [
+            {
+              "index": 0,
+              "observedAtEpochMillis": 1791743459197,
+              "afterKismetReroll": false,
+              "changedFromPrevious": false,
+              "source": "CROESUS_RUN_VIEW",
+              "itemKeys": [
+                "ENCHANTMENT_ULTIMATE_LEGION_1",
+                "HOT_POTATO_BOOK",
+                "ESSENCE_UNDEAD_42",
+                "ESSENCE_WITHER_29"
+              ],
+              "contents": [
+                {
+                  "text": "Enchanted Book (Legion I)",
+                  "name": "Enchanted Book (Legion I)",
+                  "quantity": 1,
+                  "kind": "ENCHANTMENT",
+                  "key": "ENCHANTMENT_ULTIMATE_LEGION_1"
+                },
+                {
+                  "text": "Hot Potato Book",
+                  "name": "Hot Potato Book",
+                  "quantity": 1,
+                  "kind": "ITEM",
+                  "key": "HOT_POTATO_BOOK"
+                },
+                {
+                  "text": "Undead Essence x42",
+                  "name": "Undead Essence",
+                  "quantity": 42,
+                  "kind": "ESSENCE",
+                  "key": "ESSENCE_UNDEAD_42"
+                },
+                {
+                  "text": "Wither Essence x29",
+                  "name": "Wither Essence",
+                  "quantity": 29,
+                  "kind": "ESSENCE",
+                  "key": "ESSENCE_WITHER_29"
+                }
+              ],
+              "rawLines": [
+                "Contents",
+                "Enchanted Book (Legion I)",
+                "Hot Potato Book",
+                "Undead Essence x42",
+                "Wither Essence x29",
+                "",
+                "Cost",
+                "800,000 Coins",
+                "",
+                "NOTE: Coins are withdrawn from your",
+                "bank if you don't have enough in",
+                "your purse.",
+                "",
+                "Click to open!"
+              ]
+            }
+          ],
+          "purchased": false,
+          "purchasedOfferIndex": null,
+          "costCoins": 800000,
+          "costText": "800,000 Coins"
+        }
+      ],
+      "meterSnapshots": [
+        {
+          "floor": "F5",
+          "phase": "BEFORE_RUN",
+          "state": "OBSERVED",
+          "selectedItem": null,
+          "selectedKey": null,
+          "storedScore": 3556,
+          "storedText": "3,556",
+          "requiredScore": null,
+          "requiredText": null,
+          "guaranteeChest": null,
+          "source": "RNG_METER_OVERVIEW",
+          "observedAtEpochMillis": 1791743179741
+        },
+        {
+          "floor": "F5",
+          "phase": "AFTER_RUN",
+          "state": "OBSERVED",
+          "selectedItem": null,
+          "selectedKey": null,
+          "storedScore": 3785,
+          "storedText": "3,785",
+          "requiredScore": null,
+          "requiredText": null,
+          "guaranteeChest": null,
+          "source": "RNG_METER_OVERVIEW",
+          "observedAtEpochMillis": 1791743466890
+        }
+      ],
+      "coverage": {
+        "version": 2,
+        "scoreStatus": "OBSERVED",
+        "modifierStatus": "COMPLETE",
+        "offerStatus": "COMPLETE",
+        "meterStatus": "OBSERVED",
+        "kismetStatus": "NO_REROLL",
+        "expectedChests": [
+          "WOOD",
+          "GOLD",
+          "DIAMOND",
+          "EMERALD",
+          "OBSIDIAN"
+        ],
+        "observedChests": [
+          "WOOD",
+          "GOLD",
+          "DIAMOND",
+          "EMERALD",
+          "OBSIDIAN"
+        ],
+        "qualifiesForScore": true,
+        "blockers": [],
+        "caveats": [
+          "KISMET_PROVISIONAL"
+        ]
+      }
+    }
+  ],
+  "meterReadings": [
+    {
+      "floor": "F5",
+      "observedAtEpochMillis": 1791743179741,
+      "lastObservedAtEpochMillis": 1791743180990,
+      "source": "RNG_METER_OVERVIEW",
+      "selectedItem": null,
+      "selectedKey": null,
+      "storedScore": 3556,
+      "storedText": "3,556",
+      "requiredScore": null,
+      "requiredText": null,
+      "requiredSource": null,
+      "progressPercent": null,
+      "guaranteeChest": null
+    },
+    {
+      "floor": "F5",
+      "observedAtEpochMillis": 1791743466890,
+      "lastObservedAtEpochMillis": 1791743467990,
+      "source": "RNG_METER_OVERVIEW",
+      "selectedItem": null,
+      "selectedKey": null,
+      "storedScore": 3785,
+      "storedText": "3,785",
+      "requiredScore": null,
+      "requiredText": null,
+      "requiredSource": null,
+      "progressPercent": null,
+      "guaranteeChest": null
+    }
+  ]
+}

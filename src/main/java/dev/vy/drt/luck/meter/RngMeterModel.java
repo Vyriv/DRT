@@ -84,17 +84,18 @@ public final class RngMeterModel {
 		return best;
 	}
 
-	/** Meter score added by a completed run. */
+	/** Meter score added by a completed run. Integer arithmetic: 0.7 and Pity percentages are not exact doubles. */
 	public static long scoreGain(ScoreTier tier, int score, ResolvedModifiers modifiers, RuleVariants rules) {
-		double base = switch (tier) {
-			case S_PLUS -> score;
-			case S -> rules.sRunMeterGain() == RuleVariants.SRunMeterGain.TRUNCATE ? Math.floor(score * 0.7) : Math.floor(score * 0.7 + 0.5);
-			default -> 0.0;
+		long pityPercent = rules.pityApplication() == RuleVariants.PityApplication.MULTIPLY_GAIN_TRUNCATE ? 100L + modifiers.pityLevel() : 100L;
+		return switch (tier) {
+			case S_PLUS -> score * pityPercent / 100L;
+			case S -> switch (rules.sRunMeterGain()) {
+				case TRUNCATE -> (score * 7L / 10L) * pityPercent / 100L;
+				case ROUND -> ((score * 7L + 5L) / 10L) * pityPercent / 100L;
+				case COMBINED_MULTIPLIER -> score * 7L * pityPercent / 1000L;
+			};
+			default -> 0L;
 		};
-		if (rules.pityApplication() == RuleVariants.PityApplication.MULTIPLY_GAIN_TRUNCATE && modifiers.pityLevel() > 0) {
-			base = Math.floor(base * (1.0 + modifiers.pityLevel() / 100.0) + 1e-9);
-		}
-		return (long) base;
 	}
 
 	/**

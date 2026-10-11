@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vy.drt.luck.data.ChestTable;
+import dev.vy.drt.luck.meter.RngMeterModel;
 import dev.vy.drt.luck.rules.ModifierPreset;
 import dev.vy.drt.luck.rules.ModifierPreset.BossLuck;
 import dev.vy.drt.luck.rules.ModifierPreset.TreasureAccessory;
@@ -14,6 +15,7 @@ import dev.vy.drt.luck.rules.ResolvedModifiers;
 import dev.vy.drt.luck.rules.RuleVariants;
 import dev.vy.drt.luck.rules.SensitivityAnalysis;
 import dev.vy.drt.luck.sim.RunSimulator;
+import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -53,6 +55,22 @@ class RulesTest {
 		List<RuleVariants> alternatives = RuleVariants.defaults().oneAtATimeAlternatives();
 		assertEquals(13, alternatives.size());
 		assertEquals(13, new HashSet<>(alternatives).size());
+	}
+
+	@Test
+	void sensitivityCoversTheCombinedMultiplierButNotTheRefutedTruncation() {
+		List<RuleVariants.SRunMeterGain> sRunRules = RuleVariants.defaults().oneAtATimeAlternatives().stream()
+			.map(RuleVariants::sRunMeterGain)
+			.filter(rule -> rule != RuleVariants.defaults().sRunMeterGain())
+			.toList();
+		assertEquals(List.of(RuleVariants.SRunMeterGain.COMBINED_MULTIPLIER), sRunRules);
+		assertEquals(14, RuleVariants.defaults().oneAtATimeAlternatives(EnumSet.allOf(RuleVariants.SRunMeterGain.class)).size());
+		assertEquals(12, RuleVariants.defaults().oneAtATimeAlternatives(EnumSet.of(RuleVariants.SRunMeterGain.ROUND)).size());
+
+		SensitivityAnalysis.Result gain = SensitivityAnalysis.oneAtATime(RuleVariants.defaults(),
+			rules -> RngMeterModel.scoreGain(ScoreTier.S, 299, new ResolvedModifiers(BossLuck.NONE, TreasureAccessory.NONE, 0, 0, 0, 10), rules));
+		assertEquals(229.0, gain.baseline());
+		assertEquals(230.0, gain.max(), "the combined multiplier moves an S 299 gain by one point");
 	}
 
 	@Test

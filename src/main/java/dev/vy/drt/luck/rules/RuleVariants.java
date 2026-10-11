@@ -1,7 +1,10 @@
 package dev.vy.drt.luck.rules;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Named choices for mechanics that public sources do not settle. Defaults follow the best
@@ -43,8 +46,17 @@ public record RuleVariants(
 	/** Meter score left after a full-meter drop: overflow kept (community wiki) or cleared (Pigicial). */
 	public enum MeterOverflow { SUBTRACT_REQUIRED, RESET_TO_ZERO }
 
-	/** S runs add 70% of the score. */
-	public enum SRunMeterGain { TRUNCATE, ROUND }
+	/**
+	 * S runs add 70% of the score. TRUNCATE floors 70% then applies Pity; ROUND rounds 70% half up
+	 * then applies Pity; COMBINED_MULTIPLIER floors score x 0.7 x Pity once. TRUNCATE is refuted by
+	 * an observed F5 run; ROUND is the provisional default until an observed S score separates it
+	 * from COMBINED_MULTIPLIER (see {@code SRunMeterGainEvidence}).
+	 */
+	public enum SRunMeterGain { TRUNCATE, ROUND, COMBINED_MULTIPLIER }
+
+	/** S-run gain rules not refuted by recorded meter readings; only these enter sensitivity analysis. */
+	public static final Set<SRunMeterGain> PLAUSIBLE_S_RUN_METER_GAINS =
+		Collections.unmodifiableSet(EnumSet.of(SRunMeterGain.ROUND, SRunMeterGain.COMBINED_MULTIPLIER));
 
 	/** RNG Meter Pity: +1% gain per level (single source) or not applied. */
 	public enum PityApplication { MULTIPLY_GAIN_TRUNCATE, NOT_APPLIED }
@@ -69,7 +81,7 @@ public record RuleVariants(
 			GuaranteePlacement.LOWEST_TIER_CONTAINING,
 			MeterResetTrigger.ON_APPEARANCE,
 			MeterOverflow.SUBTRACT_REQUIRED,
-			SRunMeterGain.TRUNCATE,
+			SRunMeterGain.ROUND,
 			PityApplication.MULTIPLY_GAIN_TRUNCATE,
 			KismetMeter.APPLIES,
 			RequiredScoreRounding.FLOOR,
@@ -78,8 +90,13 @@ public record RuleVariants(
 		);
 	}
 
-	/** Every variant that differs from {@code this} in exactly one rule. */
+	/** Every plausible variant that differs from {@code this} in exactly one rule. */
 	public List<RuleVariants> oneAtATimeAlternatives() {
+		return oneAtATimeAlternatives(PLAUSIBLE_S_RUN_METER_GAINS);
+	}
+
+	/** As {@link #oneAtATimeAlternatives()}, with the S-run gain rules still consistent with the caller's meter readings. */
+	public List<RuleVariants> oneAtATimeAlternatives(Set<SRunMeterGain> plausibleSRunGains) {
 		List<RuleVariants> out = new ArrayList<>();
 		for (SPlusQualityRounding v : SPlusQualityRounding.values()) if (v != sPlusRounding) out.add(withSPlusRounding(v));
 		for (QualityRounding v : QualityRounding.values()) if (v != qualityRounding) out.add(withQualityRounding(v));
@@ -88,7 +105,7 @@ public record RuleVariants(
 		for (GuaranteePlacement v : GuaranteePlacement.values()) if (v != guaranteePlacement) out.add(withGuaranteePlacement(v));
 		for (MeterResetTrigger v : MeterResetTrigger.values()) if (v != meterResetTrigger) out.add(withMeterResetTrigger(v));
 		for (MeterOverflow v : MeterOverflow.values()) if (v != meterOverflow) out.add(withMeterOverflow(v));
-		for (SRunMeterGain v : SRunMeterGain.values()) if (v != sRunMeterGain) out.add(withSRunMeterGain(v));
+		for (SRunMeterGain v : SRunMeterGain.values()) if (v != sRunMeterGain && plausibleSRunGains.contains(v)) out.add(withSRunMeterGain(v));
 		for (PityApplication v : PityApplication.values()) if (v != pityApplication) out.add(withPityApplication(v));
 		for (KismetMeter v : KismetMeter.values()) if (v != kismetMeter) out.add(withKismetMeter(v));
 		for (RequiredScoreRounding v : RequiredScoreRounding.values()) if (v != requiredScoreRounding) out.add(withRequiredScoreRounding(v));

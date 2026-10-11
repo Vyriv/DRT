@@ -1,18 +1,26 @@
 package dev.vy.drt.client.luck;
 
 import dev.vy.drt.DungeonRunTracker;
+import dev.vy.drt.luck.ScoreTier;
 import dev.vy.drt.luck.capture.CroesusMenuParser;
 import dev.vy.drt.luck.capture.CroesusRunMatcher;
 import dev.vy.drt.luck.capture.CroesusRunViewParser;
 import dev.vy.drt.luck.capture.LuckCaptureCoordinator;
+import dev.vy.drt.luck.capture.LuckMeterGains;
 import dev.vy.drt.luck.capture.LuckProbeRecorder;
 import dev.vy.drt.luck.capture.LuckRunRecord;
 import dev.vy.drt.luck.capture.LuckTrackingStore;
 import dev.vy.drt.luck.capture.RngMeterParser;
 import dev.vy.drt.luck.capture.StableScreenGate;
 import dev.vy.drt.luck.data.CatacombsLootDatabase;
+import dev.vy.drt.luck.meter.MeterGainObservation;
+import dev.vy.drt.luck.meter.SRunMeterGainEvidence;
+import dev.vy.drt.luck.rules.RuleVariants;
+import dev.vy.drt.luck.rules.RuleVariants.SRunMeterGain;
 import dev.vy.drt.mixin.AbstractContainerScreenAccessor;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.Screen;
@@ -100,6 +108,29 @@ public final class LuckScreenCapture {
 				: "unknown";
 			DungeonRunTracker.LOGGER.info("[DRT] Luck meter {} after run: stored {} (before {}), gain {}",
 				attachment.floor(), after.storedText, before == null ? "unread" : before.storedText, gain);
+			logGainCheck(attachment.luckRunId());
+		}
+	}
+
+	/** Compares a captured gain with every S-run rule, so a discriminating score is never absorbed silently. */
+	private static void logGainCheck(String luckRunId) {
+		LuckTrackingStore store = LuckRunCapture.store();
+		MeterGainObservation observation = LuckMeterGains.of(store.run(luckRunId));
+		if (observation == null) return;
+		Map<SRunMeterGain, Long> predicted = SRunMeterGainEvidence.predictions(observation.score(), observation.pityLevel(), RuleVariants.defaults());
+		List<MeterGainObservation> all = new ArrayList<>(SRunMeterGainEvidence.RECORDED);
+		all.addAll(LuckMeterGains.all(store.runs()));
+		SRunMeterGainEvidence.Assessment assessment = SRunMeterGainEvidence.assess(all, RuleVariants.defaults());
+		boolean discriminating = observation.tier() == ScoreTier.S && SRunMeterGainEvidence.discriminates(observation.score(), observation.pityLevel());
+		String message = String.format("[DRT] Luck meter gain check %s %s %d, Pity %d: observed +%d; rounding-first %d, combined %d, truncate %d. S-run rule %s %s (%s)%s",
+			observation.floor(), observation.tier(), observation.score(), observation.pityLevel(), observation.gain(),
+			predicted.get(SRunMeterGain.ROUND), predicted.get(SRunMeterGain.COMBINED_MULTIPLIER), predicted.get(SRunMeterGain.TRUNCATE),
+			assessment.recommended(), assessment.status(), assessment.consistent(),
+			discriminating ? ". DISCRIMINATING reading: update SRunMeterGainEvidence.RECORDED and the default" : "");
+		if (discriminating || assessment.status() == SRunMeterGainEvidence.Status.CONFLICT) {
+			DungeonRunTracker.LOGGER.warn(message);
+		} else {
+			DungeonRunTracker.LOGGER.info(message);
 		}
 	}
 

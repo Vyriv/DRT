@@ -21,6 +21,7 @@ import dev.vy.drt.luck.stats.LuckEvaluator.Verdict;
 import dev.vy.drt.luck.stats.MidPPercentile;
 import dev.vy.drt.luck.stats.ObservedRun;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -99,6 +100,20 @@ class LuckEvaluatorTest {
 		List<Configuration> configurations = LuckEvaluator.plausibleConfigurations(echoesUnknown, RuleVariants.defaults(), meters,
 			SelectionPolicy.highestTier(), KismetPolicy.never());
 		assertEquals(1 + 3 + 13 + 2, configurations.size());
+		assertTrue(configurations.stream().anyMatch(c -> c.rules().sRunMeterGain() == RuleVariants.SRunMeterGain.COMBINED_MULTIPLIER));
+		assertTrue(configurations.stream().noneMatch(c -> c.rules().sRunMeterGain() == RuleVariants.SRunMeterGain.TRUNCATE));
+
+		List<Configuration> settled = LuckEvaluator.plausibleConfigurations(echoesUnknown, RuleVariants.defaults(),
+			EnumSet.of(RuleVariants.SRunMeterGain.ROUND), meters, SelectionPolicy.highestTier(), KismetPolicy.never());
+		assertEquals(1 + 3 + 12 + 2, settled.size(), "a settled S-run rule drops out of the alternatives");
+	}
+
+	@Test
+	void sRunsCarryTheProvisionalGainRuleCaveat() {
+		Evaluation sRun = evaluate(List.of(new ObservedRun(RunContext.of(FloorId.F5, 298), Set.of(), Set.of(), true)), FloorId.F5);
+		assertTrue(sRun.reasons().stream().anyMatch(r -> r.startsWith("S-run meter gain rule is PROVISIONAL: ROUND by default")), sRun.reasons().toString());
+		Evaluation sPlusRun = evaluate(List.of(new ObservedRun(RunContext.of(FloorId.F5, 302), Set.of(), Set.of(), true)), FloorId.F5);
+		assertTrue(sPlusRun.reasons().stream().noneMatch(r -> r.startsWith("S-run meter gain rule")), sPlusRun.reasons().toString());
 	}
 
 	@Test

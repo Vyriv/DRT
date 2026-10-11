@@ -1,6 +1,7 @@
 package dev.vy.drt.luck.stats;
 
 import dev.vy.drt.luck.FloorId;
+import dev.vy.drt.luck.ScoreTier;
 import dev.vy.drt.luck.data.CatacombsLootDatabase;
 import dev.vy.drt.luck.data.ChestTable;
 import dev.vy.drt.luck.data.FloorStatus;
@@ -101,6 +102,8 @@ public final class LuckEvaluator {
 		long seed
 	) {
 		List<String> reasons = new ArrayList<>(dataCaveats(database, observed));
+		String sRunCaveat = sRunGainCaveat(observed, baseline, alternatives);
+		if (sRunCaveat != null) reasons.add(sRunCaveat);
 		long incomplete = observed.stream().filter(run -> !run.offersComplete()).count();
 		if (incomplete > 0) {
 			reasons.add(incomplete + " of " + observed.size() + " runs lack complete chest offers");
@@ -152,6 +155,18 @@ public final class LuckEvaluator {
 		SelectionPolicy selection,
 		KismetPolicy kismet
 	) {
+		return plausibleConfigurations(preset, rules, RuleVariants.PLAUSIBLE_S_RUN_METER_GAINS, meterScenarios, selection, kismet);
+	}
+
+	/** As above, with the S-run gain rules left plausible by the caller's meter readings ({@code SRunMeterGainEvidence}). */
+	public static List<Configuration> plausibleConfigurations(
+		ModifierPreset preset,
+		RuleVariants rules,
+		Set<RuleVariants.SRunMeterGain> plausibleSRunGains,
+		List<Map<FloorId, RngMeterState>> meterScenarios,
+		SelectionPolicy selection,
+		KismetPolicy kismet
+	) {
 		if (meterScenarios.isEmpty()) throw new IllegalArgumentException("At least one meter scenario required");
 		List<ResolvedModifiers> extremes = preset.plausibleExtremes();
 		ResolvedModifiers lowest = extremes.get(0);
@@ -161,7 +176,7 @@ public final class LuckEvaluator {
 		for (int i = 1; i < extremes.size(); i++) {
 			out.add(new Configuration("modifiers " + extremes.get(i), extremes.get(i), rules, firstMeter, selection, kismet));
 		}
-		for (RuleVariants variant : rules.oneAtATimeAlternatives()) {
+		for (RuleVariants variant : rules.oneAtATimeAlternatives(plausibleSRunGains)) {
 			out.add(new Configuration("rules " + variant, lowest, variant, firstMeter, selection, kismet));
 		}
 		for (int i = 1; i < meterScenarios.size(); i++) {
@@ -217,6 +232,15 @@ public final class LuckEvaluator {
 		}
 		if (!unmodelled.isEmpty()) out.add("ignored items outside the loot tables: " + unmodelled);
 		return out;
+	}
+
+	/** Names the unsettled S-run meter gain rule whenever S runs are scored under more than one candidate. */
+	private static String sRunGainCaveat(List<ObservedRun> observed, Configuration baseline, List<Configuration> alternatives) {
+		if (observed.stream().noneMatch(run -> run.run().scoreTier() == ScoreTier.S)) return null;
+		Set<RuleVariants.SRunMeterGain> rules = EnumSet.of(baseline.rules().sRunMeterGain());
+		alternatives.forEach(configuration -> rules.add(configuration.rules().sRunMeterGain()));
+		if (rules.size() < 2) return null;
+		return "S-run meter gain rule is PROVISIONAL: " + baseline.rules().sRunMeterGain() + " by default, scored against " + rules;
 	}
 
 	private static boolean rolledOnFloor(CatacombsLootDatabase database, FloorId floor, String key) {

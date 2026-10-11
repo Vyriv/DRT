@@ -119,11 +119,22 @@ class RngMeterModelTest {
 	void scoreGainByTierAndPity() {
 		ResolvedModifiers none = ResolvedModifiers.NONE;
 		ResolvedModifiers pity = new ResolvedModifiers(BossLuck.NONE, TreasureAccessory.NONE, 0, 0, 0, 10);
+		RuleVariants truncate = RULES.withSRunMeterGain(RuleVariants.SRunMeterGain.TRUNCATE);
+		RuleVariants combined = RULES.withSRunMeterGain(RuleVariants.SRunMeterGain.COMBINED_MULTIPLIER);
+		assertEquals(RuleVariants.SRunMeterGain.ROUND, RULES.sRunMeterGain());
 		assertEquals(317, RngMeterModel.scoreGain(ScoreTier.S_PLUS, 317, none, RULES));
 		assertEquals(196, RngMeterModel.scoreGain(ScoreTier.S, 280, none, RULES));
-		assertEquals(197, RngMeterModel.scoreGain(ScoreTier.S, 281, none, RULES.withSRunMeterGain(RuleVariants.SRunMeterGain.ROUND)));
-		assertEquals(196, RngMeterModel.scoreGain(ScoreTier.S, 281, none, RULES));
+		assertEquals(197, RngMeterModel.scoreGain(ScoreTier.S, 281, none, RULES));
+		assertEquals(196, RngMeterModel.scoreGain(ScoreTier.S, 281, none, truncate));
+		assertEquals(196, RngMeterModel.scoreGain(ScoreTier.S, 281, none, combined));
+		// 275 x 0.7 is 192.49999999999997 as a double; half up must still give 193.
+		assertEquals(193, RngMeterModel.scoreGain(ScoreTier.S, 275, none, RULES));
+		assertEquals(192, RngMeterModel.scoreGain(ScoreTier.S, 275, none, truncate));
 		assertEquals(0, RngMeterModel.scoreGain(ScoreTier.A, 250, none, RULES));
+		assertEquals(229, RngMeterModel.scoreGain(ScoreTier.S, 298, pity, RULES));
+		assertEquals(229, RngMeterModel.scoreGain(ScoreTier.S, 298, pity, combined));
+		assertEquals(228, RngMeterModel.scoreGain(ScoreTier.S, 298, pity, truncate));
+		assertEquals(208, RngMeterModel.scoreGain(ScoreTier.S, 298, pity, combined.withPityApplication(RuleVariants.PityApplication.NOT_APPLIED)));
 		assertEquals(348, RngMeterModel.scoreGain(ScoreTier.S_PLUS, 317, pity, RULES));
 		assertEquals(317, RngMeterModel.scoreGain(ScoreTier.S_PLUS, 317, pity, RULES.withPityApplication(RuleVariants.PityApplication.NOT_APPLIED)));
 	}
