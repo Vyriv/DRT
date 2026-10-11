@@ -12,7 +12,7 @@ Pure Java under `dev.vy.drt.luck` (no Minecraft imports). Tests: `.\gradlew.bat 
 | `luck.engine` | `ChestRoller` (Monte Carlo), `ExactChestDistribution` (exact DP), `MeterBoost`, `ChestRoll` |
 | `luck.meter` | `RngMeterModel`, `RngMeterState`, `MeterAssumptions` (plausible starts for unknown meters; live histories use `MeterScenarioPlanner`, see Stage C) |
 | `luck.sim` | `RunSimulator`, `HistorySimulator` (one meter per floor), `SelectionPolicy`, `KismetPolicy`, `RunOutcome`, `RunRarity`, `AppearanceEstimator`, `ChestEligibility` |
-| `luck.stats` | `SurprisalStatistic`, `NullDistribution`, `MidPPercentile`, `RareOutcomeGate`, `ObservedRun`, `LuckEvaluator`, `HistoryConfigurations` and `MeterScenarioPlanner` (live histories, per-run modifiers) |
+| `luck.stats` | `SurprisalStatistic`, `NullDistribution`, `MidPPercentile`, `RareOutcomeGate`, `ObservedRun`, `LuckEvaluator` (including the missing-run bounds), `HistoryConfigurations` and `MeterScenarioPlanner` (live histories, per-run modifiers) |
 
 ## Evaluation flow
 

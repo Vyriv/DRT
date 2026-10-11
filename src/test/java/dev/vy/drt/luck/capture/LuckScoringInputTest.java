@@ -132,20 +132,39 @@ class LuckScoringInputTest {
 	}
 
 	@Test
-	void aScorableRunIsNotASufficientHistory() throws Exception {
+	void theTwoLiveRunsAreBelowTheCoverageGateAndKeptForDisplay() throws Exception {
 		LuckHistoryEvaluation result = evaluate(loadedLiveRuns(), 50);
-		assertEquals(LuckHistoryEvaluation.Status.INSUFFICIENT_DATA, result.status());
+		assertEquals(LuckHistoryEvaluation.Status.WITHHELD, result.status());
+		assertEquals(List.of(LuckHistoryEvaluation.WithholdCause.NO_ELIGIBLE_FLOOR), result.withheldCauses());
+		assertEquals(List.of(new LuckHistoryEvaluation.FloorCoverage("F5", 2, 1, 1, 0, false)), result.floorCoverage());
 		assertEquals(2, result.recordedRuns());
 		assertEquals(1, result.scorableRuns());
 		assertEquals(1, result.rejectedRuns());
 		assertEquals(0, result.excludedRuns());
-		assertFalse(result.statisticallySufficient());
 		assertEquals(Map.of("OFFERS_NOT_OBSERVED", 1), result.rejectionReasonCounts());
 		assertEquals(Map.of("KISMET_PROVISIONAL", 1), result.runCaveatCounts());
 		assertEquals(List.of(S_PLUS_RUN), result.rejected().stream().map(LuckScoringInput.Rejected::luckRunId).toList());
+		assertEquals(List.of(S_RUN), result.scored().stream().map(LuckScoringInput.Converted::luckRunId).toList());
 		assertTrue(result.historyCaveats().stream().anyMatch(c -> c.startsWith("RUNS_NOT_SCORED:1")), result.historyCaveats().toString());
+		assertTrue(result.historyCaveats().contains("FLOOR_NOT_RATED:F5 1/2 (needs 90% captured)"), result.historyCaveats().toString());
+		assertTrue(result.withheldReasons().get(0).endsWith("F5 1/2"), result.withheldReasons().toString());
+		assertNull(result.evaluation());
+		assertNull(result.headlineBand());
+	}
+
+	@Test
+	void aScorableRunIsNotASufficientHistory() throws Exception {
+		LuckHistoryEvaluation result = evaluate(List.of(find(loadedLiveRuns(), S_RUN)), 50);
+		assertEquals(LuckHistoryEvaluation.Status.INSUFFICIENT_DATA, result.status());
+		assertEquals(1, result.recordedRuns());
+		assertEquals(1, result.scorableRuns());
+		assertFalse(result.statisticallySufficient());
+		assertTrue(result.expectedRareDrops() < 1.0, String.valueOf(result.expectedRareDrops()));
+		assertEquals(List.of("F5"), result.ratedFloors());
 		assertEquals(List.of(), result.meterWindows(), "the S run's start was read");
+		assertEquals(List.of(), result.withheldCauses());
 		assertEquals(List.of(), result.withheldReasons());
+		assertNull(result.missingRunBounds());
 		assertEquals(1, result.modifierSnapshots());
 
 		LuckEvaluator.Evaluation evaluation = result.evaluation();
@@ -175,6 +194,12 @@ class LuckScoringInputTest {
 		assertEquals(150, result.scorableRuns());
 		assertEquals(1, result.rejectedRuns());
 		assertEquals(List.of(), result.meterWindows(), "later runs carry the meter forward from the live reading");
+		LuckEvaluator.MissingRunBounds bounds = result.missingRunBounds();
+		assertNotNull(bounds, "the rejected S+ run is on the rated floor, so its possible outcomes were checked");
+		assertEquals(1, bounds.missingRuns());
+		assertEquals(1, bounds.unknownOutcomes());
+		assertFalse(bounds.material(), "one unseen run among 151 cannot move the band: " + bounds);
+		assertTrue(bounds.low().percentile() <= bounds.high().percentile());
 		assertNotNull(result.evaluation().baseline());
 		assertEquals(12, result.evaluation().alternatives().size(), "known Pity 10: twelve rule alternatives, no modifier extremes");
 	}
@@ -257,7 +282,15 @@ class LuckScoringInputTest {
 		assertEquals(Set.of(1), history.gapsBefore());
 		assertEquals(List.of("METER_GAP:later"), history.caveats());
 
-		LuckHistoryEvaluation evaluation = evaluate(List.of(live, rerolled, later), 10);
+		List<LuckRunRecord> enough = new ArrayList<>(List.of(live, rerolled, later));
+		for (int i = 1; i < 9; i++) {
+			LuckRunRecord next = copy(live, "later-" + i, later.completedAtEpochMillis + i * 600_000L);
+			next.meterSnapshots.clear();
+			enough.add(next);
+		}
+		LuckHistoryEvaluation evaluation = evaluate(enough, 10);
+		assertEquals(LuckHistoryEvaluation.Status.WITHHELD, evaluation.status());
+		assertEquals(List.of(LuckHistoryEvaluation.WithholdCause.KISMET_REROLLS), evaluation.withheldCauses(), "10 of 11 captured passes the gate");
 		assertEquals(1, evaluation.meterWindows().size());
 		MeterScenarioPlanner.Window window = evaluation.meterWindows().get(0);
 		assertEquals(MeterScenarioPlanner.WindowKind.GAP, window.kind());

@@ -9,6 +9,7 @@ import dev.vy.drt.luck.meter.RngMeterModel;
 import dev.vy.drt.luck.meter.RngMeterState;
 import dev.vy.drt.luck.rules.ModifierPreset;
 import dev.vy.drt.luck.sim.RunContext;
+import dev.vy.drt.luck.stats.LuckEvaluator;
 import dev.vy.drt.luck.stats.ObservedRun;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -171,6 +172,36 @@ public final class LuckScoringInput {
 			brokenSince.remove(floor);
 		}
 		return new History(converted, rejected, excluded, gapsBefore, caveats);
+	}
+
+	/**
+	 * A rejected run as the evaluator's missing-run bounds see it, or null when its floor is unknown.
+	 * Its context comes from the score, else the grade; without either, or when an unexpected chest
+	 * shows the grade is wrong, it is an S+ stand-in. Its outcome is exact only when the score alone
+	 * blocked it and every eligible chest's original offer was seen.
+	 */
+	public static LuckEvaluator.MissingRun missingRun(LuckRunRecord run, CatacombsLootDatabase database) {
+		FloorId floor = FloorId.parse(run.floor);
+		if (floor == null) return null;
+		LuckCoverage coverage = LuckCoverage.evaluate(run);
+		ScoreTier grade = run.score != null ? ScoreTier.fromScore(run.score) : LuckCoverage.scoreTier(run);
+		boolean assumed = grade == null || coverage.blockers.contains("UNEXPECTED_CHEST");
+		int score = assumed ? ScoreTier.S_PLUS.minimumScore() : run.score != null ? run.score : grade.minimumScore();
+
+		Set<ChestTier> expected = LuckCoverage.expectedChests(floor, ScoreTier.fromScore(score));
+		Set<String> seen = new LinkedHashSet<>();
+		Set<ChestTier> seenChests = EnumSet.noneOf(ChestTier.class);
+		for (LuckRunRecord.LuckChestRecord chest : run.chests) {
+			if (chest.offers.isEmpty() || chest.offers.get(0).afterKismetReroll) continue;
+			ChestTier tier = expected.stream().filter(t -> t.name().equalsIgnoreCase(chest.tier.trim())).findFirst().orElse(null);
+			if (tier == null) continue;
+			seen.addAll(luckKeys(chest.offers.get(0)));
+			seenChests.add(tier);
+		}
+		boolean known = !assumed && seenChests.containsAll(expected) && Set.of("NUMERIC_SCORE_MISSING").containsAll(coverage.blockers);
+		ModifierPreset preset = run.modifiers == null ? ModifierPreset.UNKNOWN : run.modifiers.toPreset();
+		RunContext context = RunContext.of(floor, score);
+		return new LuckEvaluator.MissingRun(run.luckRunId, context, preset.plausibleExtremes().get(0), seen, known, assumed);
 	}
 
 	/** Rolled-item keys of one offer; essence totals are not single table entries and are left out. */

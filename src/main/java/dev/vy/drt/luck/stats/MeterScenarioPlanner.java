@@ -30,6 +30,8 @@ import java.util.function.IntFunction;
 public final class MeterScenarioPlanner {
 	/** Fractions of the required score tried when a start cannot be derived from a reading. */
 	static final double[] FILLS = {0.0, 0.5, 1.0};
+	/** Note prefix for progress no captured run explains and no window could place. */
+	public static final String UNEXPLAINED_GAIN_NOTE = "METER_UNEXPLAINED_GAIN:";
 
 	private MeterScenarioPlanner() {
 	}
@@ -259,7 +261,7 @@ public final class MeterScenarioPlanner {
 				return;
 			}
 			if (sinceAnchor.isEmpty()) {
-				notes.add("METER_UNEXPLAINED_GAIN:" + floor + " " + where + " +" + difference + " with no captured run in between");
+				notes.add(UNEXPLAINED_GAIN_NOTE + floor + " " + where + " +" + difference + " with no captured run in between");
 				return;
 			}
 			int start = sinceAnchor.get(0);
@@ -267,7 +269,7 @@ public final class MeterScenarioPlanner {
 			for (int index : sinceAnchor) gains += gain(index);
 			RngMeterState early = new RngMeterState(floor, reading.selectedKey(), reading.storedScore() - gains);
 			if (!reproduces(early, sinceAnchor, reading)) {
-				notes.add("METER_UNEXPLAINED_GAIN:" + floor + " " + where + " +" + difference + " cannot precede the runs without an unseen guarantee");
+				notes.add(UNEXPLAINED_GAIN_NOTE + floor + " " + where + " +" + difference + " cannot precede the runs without an unseen guarantee");
 				return;
 			}
 			windows.add(new Window(WindowKind.UNEXPLAINED_GAIN, floor, start, true, List.of(

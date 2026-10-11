@@ -13,12 +13,16 @@ import dev.vy.drt.luck.rules.ModifierPreset;
 import dev.vy.drt.luck.rules.ResolvedModifiers;
 import dev.vy.drt.luck.rules.RuleEvidence;
 import dev.vy.drt.luck.rules.RuleVariants;
+import dev.vy.drt.luck.sim.HistorySimulator;
 import dev.vy.drt.luck.sim.KismetPolicy;
 import dev.vy.drt.luck.sim.RunContext;
+import dev.vy.drt.luck.sim.RunOutcome;
 import dev.vy.drt.luck.sim.RunSimulator;
 import dev.vy.drt.luck.sim.SelectionPolicy;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
+import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
@@ -36,6 +40,8 @@ import java.util.function.IntFunction;
 public final class LuckEvaluator {
 	/** Percentile standard errors either side used when checking band stability. */
 	public static final double BAND_ERROR_MULTIPLIER = 2.0;
+	/** Share of the extreme-selection distribution left outside each missing-run limit. */
+	public static final double MISSING_RUN_TAIL = 0.05;
 	private static final double TIE_TOLERANCE = 1e-9;
 
 	private LuckEvaluator() {
@@ -110,6 +116,51 @@ public final class LuckEvaluator {
 	}
 
 	public record ConfigurationResult(Configuration configuration, double observedStatistic, MidPPercentile.Result percentile) {
+	}
+
+	/**
+	 * A run on a scored floor whose chests were not fully captured.
+	 *
+	 * @param seenKeys       rolled items seen in its original offers, a lower limit on what it dropped
+	 * @param outcomeKnown   every eligible chest's original offer was seen, so {@code seenKeys} is exact
+	 * @param contextAssumed grade or score unknown or contradicted: {@code run} is an S+ stand-in and the seen items set no lower limit
+	 */
+	public record MissingRun(String id, RunContext run, ResolvedModifiers modifiers, Set<String> seenKeys, boolean outcomeKnown, boolean contextAssumed) {
+		public MissingRun {
+			seenKeys = Set.copyOf(seenKeys);
+		}
+	}
+
+	/**
+	 * How far runs left out of the score could move the verdict. Unknown outcomes are bounded by the
+	 * worst selection a capture pattern could make: on each floor, the missing runs being the luckiest
+	 * (or unluckiest) of all that floor's runs, at the {@link #MISSING_RUN_TAIL} extreme of what that
+	 * selection gives when nothing is lucky. Runs whose loot was fully seen count exactly.
+	 *
+	 * @param low           percentile of the whole history with the missing runs at their low limit
+	 * @param high          percentile with them at their high limit
+	 * @param bands         every band the two limits reach, including simulation error
+	 * @param headlineBands every band the evaluation itself reaches
+	 */
+	public record MissingRunBounds(
+		int missingRuns,
+		int unknownOutcomes,
+		double lowStatistic,
+		double highStatistic,
+		MidPPercentile.Result low,
+		MidPPercentile.Result high,
+		Set<Band> bands,
+		Set<Band> headlineBands
+	) {
+		public MissingRunBounds {
+			bands = Set.copyOf(bands);
+			headlineBands = Set.copyOf(headlineBands);
+		}
+
+		/** True when the missing runs could put the history in a band the verdict does not already allow. */
+		public boolean material() {
+			return !headlineBands.containsAll(bands);
+		}
 	}
 
 	public record Evaluation(
@@ -235,12 +286,111 @@ public final class LuckEvaluator {
 	) {
 		IntFunction<RunSimulator> simulators = configuration.simulators(database, runs.size());
 		double statistic = SurprisalStatistic.ofObserved(observed, simulators);
+		double[] nullSamples = NullDistribution.sample(simulators, runs, configuration.meterStart(), events(observed, configuration),
+			configuration.selection(), configuration.kismet(), samples, seed);
+		return new ConfigurationResult(configuration, statistic, MidPPercentile.compute(statistic, nullSamples, TIE_TOLERANCE));
+	}
+
+	/** Readings first, then the configuration's assumptions, which replace a simulated meter at the same run. */
+	private static List<MeterEvent> events(List<ObservedRun> observed, Configuration configuration) {
 		List<MeterEvent> events = new ArrayList<>(NullDistribution.observedMeterEvents(observed));
 		events.addAll(configuration.meterAssumptions());
 		events.sort(Comparator.comparingInt(MeterEvent::beforeRun));
-		double[] nullSamples = NullDistribution.sample(simulators, runs, configuration.meterStart(), events,
-			configuration.selection(), configuration.kismet(), samples, seed);
-		return new ConfigurationResult(configuration, statistic, MidPPercentile.compute(statistic, nullSamples, TIE_TOLERANCE));
+		return events;
+	}
+
+	/**
+	 * Bounds the whole history, scored runs plus {@code missing}, under the evaluation's baseline
+	 * configuration. Missing runs are simulated without meter boost and independently of the scored
+	 * runs' meter, whose gaps the configuration already covers with meter scenarios.
+	 */
+	public static MissingRunBounds missingRunBounds(
+		CatacombsLootDatabase database,
+		List<ObservedRun> observed,
+		Evaluation evaluation,
+		List<MissingRun> missing,
+		int samples,
+		long seed
+	) {
+		if (evaluation.baseline() == null) throw new IllegalArgumentException("Missing-run bounds need a scored evaluation");
+		Configuration configuration = evaluation.baseline().configuration();
+		List<RunContext> runs = observed.stream().map(ObservedRun::run).toList();
+		IntFunction<RunSimulator> simulators = configuration.simulators(database, runs.size());
+		List<MeterEvent> events = events(observed, configuration);
+
+		Map<ResolvedModifiers, RunSimulator> missingSimulators = new HashMap<>();
+		Map<FloorId, Integer> unknownByFloor = new EnumMap<>(FloorId.class);
+		double exact = 0.0;
+		double seenLower = 0.0;
+		for (MissingRun run : missing) {
+			RunSimulator simulator = missingSimulators.computeIfAbsent(run.modifiers(), modifiers -> new RunSimulator(database, modifiers, configuration.rules()));
+			double seen = SurprisalStatistic.ofObserved(List.of(new ObservedRun(run.run(), run.seenKeys(), Set.of(), true)), simulator);
+			if (run.outcomeKnown()) {
+				exact += seen;
+			} else {
+				if (!run.contextAssumed()) seenLower += seen;
+				unknownByFloor.merge(run.run().floor(), 1, Integer::sum);
+			}
+		}
+
+		SplittableRandom seeds = new SplittableRandom(seed);
+		double[] whole = new double[samples];
+		double[] luckiest = new double[samples];
+		double[] unluckiest = new double[samples];
+		for (int i = 0; i < samples; i++) {
+			List<RunOutcome> history = HistorySimulator.simulate(runs, simulators, configuration.meterStart(), events,
+				configuration.selection(), configuration.kismet(), seeds.nextLong());
+			SplittableRandom random = new SplittableRandom(seeds.nextLong());
+			Map<FloorId, List<Double>> byFloor = new EnumMap<>(FloorId.class);
+			double total = 0.0;
+			for (int j = 0; j < history.size(); j++) {
+				double value = SurprisalStatistic.of(List.of(history.get(j)), simulators.apply(j));
+				total += value;
+				if (unknownByFloor.containsKey(runs.get(j).floor())) byFloor.computeIfAbsent(runs.get(j).floor(), floor -> new ArrayList<>()).add(value);
+			}
+			for (MissingRun run : missing) {
+				RunSimulator simulator = missingSimulators.get(run.modifiers());
+				RunOutcome outcome = simulator.simulate(run.run(), RngMeterState.empty(run.run().floor()), configuration.selection(), KismetPolicy.never(), random);
+				double value = SurprisalStatistic.of(List.of(outcome), simulator);
+				total += value;
+				if (unknownByFloor.containsKey(run.run().floor())) byFloor.computeIfAbsent(run.run().floor(), floor -> new ArrayList<>()).add(value);
+			}
+			whole[i] = total;
+			for (Map.Entry<FloorId, List<Double>> floor : byFloor.entrySet()) {
+				List<Double> values = floor.getValue();
+				values.sort(null);
+				int k = unknownByFloor.get(floor.getKey());
+				for (int m = 0; m < k; m++) {
+					unluckiest[i] += values.get(m);
+					luckiest[i] += values.get(values.size() - 1 - m);
+				}
+			}
+		}
+
+		double observedStatistic = evaluation.baseline().observedStatistic() + exact;
+		double low = observedStatistic + Math.max(quantile(unluckiest, MISSING_RUN_TAIL), seenLower);
+		double high = observedStatistic + Math.max(quantile(luckiest, 1.0 - MISSING_RUN_TAIL), seenLower);
+		MidPPercentile.Result lowResult = MidPPercentile.compute(low, whole, TIE_TOLERANCE);
+		MidPPercentile.Result highResult = MidPPercentile.compute(high, whole, TIE_TOLERANCE);
+
+		List<MidPPercentile.Result> headline = new ArrayList<>();
+		headline.add(evaluation.baseline().percentile());
+		evaluation.alternatives().forEach(result -> headline.add(result.percentile()));
+		Band from = Band.of(Math.max(0.0, lowResult.percentile() - BAND_ERROR_MULTIPLIER * lowResult.monteCarloStandardError()));
+		Band to = Band.of(Math.min(1.0, highResult.percentile() + BAND_ERROR_MULTIPLIER * highResult.monteCarloStandardError()));
+		Set<Band> bands = EnumSet.noneOf(Band.class);
+		for (Band band : Band.values()) {
+			if (band.ordinal() >= from.ordinal() && band.ordinal() <= to.ordinal()) bands.add(band);
+		}
+		int unknown = unknownByFloor.values().stream().mapToInt(Integer::intValue).sum();
+		return new MissingRunBounds(missing.size(), unknown, low, high, lowResult, highResult, bands, bandsCovered(headline));
+	}
+
+	private static double quantile(double[] values, double q) {
+		double[] sorted = values.clone();
+		Arrays.sort(sorted);
+		int index = (int) Math.round(q * (sorted.length - 1));
+		return sorted[Math.max(0, Math.min(sorted.length - 1, index))];
 	}
 
 	private static Set<Band> bandsCovered(List<MidPPercentile.Result> results) {

@@ -197,6 +197,20 @@ class LuckCaptureCoordinatorTest {
 	}
 
 	@Test
+	void oneSetupOverviewStartsEachFloorsMeterAtItsNextRunHoweverLate() {
+		coordinator.onMeterOverview(ProbeFixtures.screen(ProbeFixtures.RNG_OVERVIEW), NOW - 10L * 86_400_000L);
+		assertEquals(14, store.meterReadings().size(), "F1 to F7 and M1 to M7 from a single screen");
+
+		LuckRunRecord first = addF5Run(NOW - 2L * 86_400_000L);
+		LuckRunRecord second = addF5Run(NOW - 86_400_000L);
+		assertEquals(1, first.meterSnapshots.size());
+		assertEquals(LuckRunRecord.PHASE_BEFORE_RUN, first.meterSnapshots.get(0).phase);
+		assertEquals(3_224L, first.meterSnapshots.get(0).storedScore, "eight days after the reading");
+		assertEquals("OBSERVED", first.coverage.meterStatus);
+		assertEquals(List.of(), second.meterSnapshots, "the reading is used once; later runs are replayed from it");
+	}
+
+	@Test
 	void repeatedIdenticalReadingsWithoutARunAreMerged() {
 		coordinator.onMeterOverview(ProbeFixtures.screen(ProbeFixtures.RNG_OVERVIEW), NOW);
 		int first = store.meterReadings().size();
