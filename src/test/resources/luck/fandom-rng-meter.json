@@ -1,0 +1,2122 @@
+{
+ "source": "Hypixel SkyBlock Fandom wiki, \"RNG Meter/UI/Catacombs\" (copied from the in-game RNG Meter)",
+ "url": "https://hypixel-skyblock.fandom.com/wiki/RNG_Meter/UI/Catacombs",
+ "retrieved": "2026-10-11",
+ "note": "Page last edited 2026-04-15. odds_pct is item weight / top chest total weight.",
+ "floors": {
+  "F1": [
+   {
+    "item": "Enchanted Book (Rejuvenate I)",
+    "chest": "Wood Chest",
+    "odds_pct": 23.5849,
+    "rarity": "Occasional",
+    "score": "1272"
+   },
+   {
+    "item": "Enchanted Book (Combo I)",
+    "chest": "Gold Chest",
+    "odds_pct": 14.1509,
+    "rarity": "Occasional",
+    "score": "2120"
+   },
+   {
+    "item": "Enchanted Book (No Pain No Gain I)",
+    "chest": "Gold Chest",
+    "odds_pct": 14.1509,
+    "rarity": "Occasional",
+    "score": "2120"
+   },
+   {
+    "item": "Necromancer's Brooch",
+    "chest": "Wood Chest",
+    "odds_pct": 9.434,
+    "rarity": "Rare",
+    "score": "3180"
+   },
+   {
+    "item": "Enchanted Book (Infinite Quiver VI)",
+    "chest": "Wood Chest",
+    "odds_pct": 7.5472,
+    "rarity": "Rare",
+    "score": "3975"
+   },
+   {
+    "item": "Enchanted Book (Feather Falling VI)",
+    "chest": "Wood Chest",
+    "odds_pct": 7.5472,
+    "rarity": "Rare",
+    "score": "3975"
+   },
+   {
+    "item": "Hot Potato Book",
+    "chest": "Gold Chest",
+    "odds_pct": 4.717,
+    "rarity": "Rare",
+    "score": "6360"
+   },
+   {
+    "item": "Balloon Snake",
+    "chest": "Diamond Chest",
+    "odds_pct": 3.7736,
+    "rarity": "Rare",
+    "score": "7950"
+   },
+   {
+    "item": "Recombobulator 3000",
+    "chest": "Obsidian Chest",
+    "odds_pct": 2.8302,
+    "rarity": "Extraordinary",
+    "score": "10.6k"
+   },
+   {
+    "item": "Bonzo's Mask",
+    "chest": "Diamond Chest",
+    "odds_pct": 2.8302,
+    "rarity": "Extraordinary",
+    "score": "10599"
+   },
+   {
+    "item": "Red Nose",
+    "chest": "Diamond Chest",
+    "odds_pct": 2.8302,
+    "rarity": "Extraordinary",
+    "score": "10599"
+   },
+   {
+    "item": "Fuming Potato Book",
+    "chest": "Emerald Chest",
+    "odds_pct": 1.8868,
+    "rarity": "Extraordinary",
+    "score": "15900"
+   },
+   {
+    "item": "Enchanted Book (Bank I)",
+    "chest": "Wood Chest",
+    "odds_pct": 1.8868,
+    "rarity": "Extraordinary",
+    "score": "15900"
+   },
+   {
+    "item": "Bonzo's Staff",
+    "chest": "Emerald Chest",
+    "odds_pct": 0.9434,
+    "rarity": "Extraordinary",
+    "score": "31800"
+   },
+   {
+    "item": "Enchanted Book (Ultimate Jerry I)",
+    "chest": "Wood Chest",
+    "odds_pct": 0.9434,
+    "rarity": "Extraordinary",
+    "score": "31800"
+   }
+  ],
+  "F2": [
+   {
+    "item": "Enchanted Book (Rejuvenate I)",
+    "chest": "Wood Chest",
+    "odds_pct": 23.8095,
+    "rarity": "Occasional",
+    "score": "1260"
+   },
+   {
+    "item": "Enchanted Book (Ultimate Wise I)",
+    "chest": "Gold Chest",
+    "odds_pct": 15.873,
+    "rarity": "Occasional",
+    "score": "1890"
+   },
+   {
+    "item": "Hot Potato Book",
+    "chest": "Gold Chest",
+    "odds_pct": 7.9365,
+    "rarity": "Rare",
+    "score": "3780"
+   },
+   {
+    "item": "Enchanted Book (Combo I)",
+    "chest": "Gold Chest",
+    "odds_pct": 7.9365,
+    "rarity": "Rare",
+    "score": "3780"
+   },
+   {
+    "item": "Enchanted Book (No Pain No Gain I)",
+    "chest": "Gold Chest",
+    "odds_pct": 7.9365,
+    "rarity": "Rare",
+    "score": "3780"
+   },
+   {
+    "item": "Necromancer's Brooch",
+    "chest": "Wood Chest",
+    "odds_pct": 7.9365,
+    "rarity": "Rare",
+    "score": "3780"
+   },
+   {
+    "item": "Scarf's Studies",
+    "chest": "Gold Chest",
+    "odds_pct": 6.3492,
+    "rarity": "Rare",
+    "score": "4725"
+   },
+   {
+    "item": "Adaptive Belt",
+    "chest": "Obsidian Chest",
+    "odds_pct": 4.7619,
+    "rarity": "Rare",
+    "score": "6300"
+   },
+   {
+    "item": "Fuming Potato Book",
+    "chest": "Emerald Chest",
+    "odds_pct": 4.7619,
+    "rarity": "Rare",
+    "score": "6300"
+   },
+   {
+    "item": "Recombobulator 3000",
+    "chest": "Obsidian Chest",
+    "odds_pct": 3.1746,
+    "rarity": "Rare",
+    "score": "9.4k"
+   },
+   {
+    "item": "Adaptive Blade",
+    "chest": "Emerald Chest",
+    "odds_pct": 3.1746,
+    "rarity": "Rare",
+    "score": "9450"
+   },
+   {
+    "item": "Enchanted Book (Bank I)",
+    "chest": "Wood Chest",
+    "odds_pct": 3.1746,
+    "rarity": "Rare",
+    "score": "9450"
+   },
+   {
+    "item": "Red Scarf",
+    "chest": "Diamond Chest",
+    "odds_pct": 1.5873,
+    "rarity": "Extraordinary",
+    "score": "18900"
+   }
+  ],
+  "F3": [
+   {
+    "item": "Enchanted Book (Last Stand I)",
+    "chest": "Emerald Chest",
+    "odds_pct": 13.7931,
+    "rarity": "Occasional",
+    "score": "2175"
+   },
+   {
+    "item": "Enchanted Book (Rejuvenate II)",
+    "chest": "Emerald Chest",
+    "odds_pct": 13.7931,
+    "rarity": "Occasional",
+    "score": "2175"
+   },
+   {
+    "item": "Enchanted Book (Ultimate Wise I)",
+    "chest": "Gold Chest",
+    "odds_pct": 9.1954,
+    "rarity": "Rare",
+    "score": "3262"
+   },
+   {
+    "item": "Enchanted Book (Bank II)",
+    "chest": "Obsidian Chest",
+    "odds_pct": 9.1954,
+    "rarity": "Rare",
+    "score": "3262"
+   },
+   {
+    "item": "Enchanted Book (Wisdom I)",
+    "chest": "Gold Chest",
+    "odds_pct": 9.1954,
+    "rarity": "Rare",
+    "score": "3262"
+   },
+   {
+    "item": "Hot Potato Book",
+    "chest": "Gold Chest",
+    "odds_pct": 5.7471,
+    "rarity": "Rare",
+    "score": "5220"
+   },
+   {
+    "item": "Suspicious Vial",
+    "chest": "Diamond Chest",
+    "odds_pct": 5.7471,
+    "rarity": "Rare",
+    "score": "5220"
+   },
+   {
+    "item": "Enchanted Book (Combo I)",
+    "chest": "Gold Chest",
+    "odds_pct": 5.7471,
+    "rarity": "Rare",
+    "score": "5220"
+   },
+   {
+    "item": "Enchanted Book (No Pain No Gain I)",
+    "chest": "Gold Chest",
+    "odds_pct": 5.7471,
+    "rarity": "Rare",
+    "score": "5220"
+   },
+   {
+    "item": "Recombobulator 3000",
+    "chest": "Obsidian Chest",
+    "odds_pct": 4.5977,
+    "rarity": "Rare",
+    "score": "6.5k"
+   },
+   {
+    "item": "Necromancer's Brooch",
+    "chest": "Wood Chest",
+    "odds_pct": 4.5977,
+    "rarity": "Rare",
+    "score": "6525"
+   },
+   {
+    "item": "Fuming Potato Book",
+    "chest": "Emerald Chest",
+    "odds_pct": 3.4483,
+    "rarity": "Rare",
+    "score": "8700"
+   },
+   {
+    "item": "Adaptive Helmet",
+    "chest": "Diamond Chest",
+    "odds_pct": 2.2989,
+    "rarity": "Extraordinary",
+    "score": "13050"
+   },
+   {
+    "item": "Adaptive Boots",
+    "chest": "Gold Chest",
+    "odds_pct": 2.2989,
+    "rarity": "Extraordinary",
+    "score": "13050"
+   },
+   {
+    "item": "Adaptive Chestplate",
+    "chest": "Emerald Chest",
+    "odds_pct": 1.1494,
+    "rarity": "Extraordinary",
+    "score": "26100"
+   },
+   {
+    "item": "Adaptive Leggings",
+    "chest": "Emerald Chest",
+    "odds_pct": 1.1494,
+    "rarity": "Extraordinary",
+    "score": "26100"
+   },
+   {
+    "item": "Enchanted Book (Ultimate Jerry II)",
+    "chest": "Emerald Chest",
+    "odds_pct": 1.1494,
+    "rarity": "Extraordinary",
+    "score": "26100"
+   }
+  ],
+  "F4": [
+   {
+    "item": "Enchanted Book (Last Stand I)",
+    "chest": "Emerald Chest",
+    "odds_pct": 14.4578,
+    "rarity": "Occasional",
+    "score": "2075"
+   },
+   {
+    "item": "Enchanted Book (Rejuvenate II)",
+    "chest": "Emerald Chest",
+    "odds_pct": 14.4578,
+    "rarity": "Occasional",
+    "score": "2075"
+   },
+   {
+    "item": "Enchanted Book (Ultimate Wise I)",
+    "chest": "Gold Chest",
+    "odds_pct": 9.6386,
+    "rarity": "Rare",
+    "score": "3112"
+   },
+   {
+    "item": "Enchanted Book (Bank II)",
+    "chest": "Obsidian Chest",
+    "odds_pct": 9.6386,
+    "rarity": "Rare",
+    "score": "3112"
+   },
+   {
+    "item": "Enchanted Book (Wisdom I)",
+    "chest": "Gold Chest",
+    "odds_pct": 9.6386,
+    "rarity": "Rare",
+    "score": "3112"
+   },
+   {
+    "item": "Hot Potato Book",
+    "chest": "Gold Chest",
+    "odds_pct": 6.0241,
+    "rarity": "Rare",
+    "score": "4979"
+   },
+   {
+    "item": "Enchanted Book (Combo I)",
+    "chest": "Gold Chest",
+    "odds_pct": 6.0241,
+    "rarity": "Rare",
+    "score": "4979"
+   },
+   {
+    "item": "Enchanted Book (No Pain No Gain I)",
+    "chest": "Gold Chest",
+    "odds_pct": 6.0241,
+    "rarity": "Rare",
+    "score": "4979"
+   },
+   {
+    "item": "Recombobulator 3000",
+    "chest": "Obsidian Chest",
+    "odds_pct": 3.6145,
+    "rarity": "Rare",
+    "score": "8300"
+   },
+   {
+    "item": "Fuming Potato Book",
+    "chest": "Emerald Chest",
+    "odds_pct": 3.6145,
+    "rarity": "Rare",
+    "score": "8300"
+   },
+   {
+    "item": "Spirit Wing",
+    "chest": "Obsidian Chest",
+    "odds_pct": 2.4096,
+    "rarity": "Extraordinary",
+    "score": "12449"
+   },
+   {
+    "item": "Spirit Bone",
+    "chest": "Emerald Chest",
+    "odds_pct": 2.4096,
+    "rarity": "Extraordinary",
+    "score": "12449"
+   },
+   {
+    "item": "Spirit Stone",
+    "chest": "Diamond Chest",
+    "odds_pct": 2.4096,
+    "rarity": "Extraordinary",
+    "score": "12449"
+   },
+   {
+    "item": "Enchanted Book (Rend II)",
+    "chest": "Gold Chest",
+    "odds_pct": 2.4096,
+    "rarity": "Extraordinary",
+    "score": "12449"
+   },
+   {
+    "item": "Spirit Sword",
+    "chest": "Obsidian Chest",
+    "odds_pct": 1.2048,
+    "rarity": "Extraordinary",
+    "score": "24899"
+   },
+   {
+    "item": "Spirit Shortbow",
+    "chest": "Obsidian Chest",
+    "odds_pct": 1.2048,
+    "rarity": "Extraordinary",
+    "score": "24899"
+   },
+   {
+    "item": "Spirit Boots",
+    "chest": "Emerald Chest",
+    "odds_pct": 1.2048,
+    "rarity": "Extraordinary",
+    "score": "24899"
+   },
+   {
+    "item": "[Lvl 1] Spirit",
+    "chest": "Emerald Chest",
+    "odds_pct": 1.2048,
+    "rarity": "Extraordinary",
+    "score": "24.9k"
+   },
+   {
+    "item": "Enchanted Book (Ultimate Jerry II)",
+    "chest": "Emerald Chest",
+    "odds_pct": 1.2048,
+    "rarity": "Extraordinary",
+    "score": "24899"
+   }
+  ],
+  "F5": [
+   {
+    "item": "Enchanted Book (Rejuvenate III)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 11.811,
+    "rarity": "Occasional",
+    "score": "2540"
+   },
+   {
+    "item": "Enchanted Book (Last Stand II)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 11.811,
+    "rarity": "Occasional",
+    "score": "2540"
+   },
+   {
+    "item": "Enchanted Book (Ultimate Wise II)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 10.4987,
+    "rarity": "Rare",
+    "score": "2857"
+   },
+   {
+    "item": "Dark Orb",
+    "chest": "Gold Chest",
+    "odds_pct": 7.874,
+    "rarity": "Rare",
+    "score": "3810"
+   },
+   {
+    "item": "Enchanted Book (Wisdom II)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 6.5617,
+    "rarity": "Rare",
+    "score": "4572"
+   },
+   {
+    "item": "Fuming Potato Book",
+    "chest": "Emerald Chest",
+    "odds_pct": 5.2493,
+    "rarity": "Rare",
+    "score": "5715"
+   },
+   {
+    "item": "Enchanted Book (Overload I)",
+    "chest": "Gold Chest",
+    "odds_pct": 5.2493,
+    "rarity": "Rare",
+    "score": "5715"
+   },
+   {
+    "item": "Enchanted Book (Legion I)",
+    "chest": "Diamond Chest",
+    "odds_pct": 5.2493,
+    "rarity": "Rare",
+    "score": "5715"
+   },
+   {
+    "item": "Enchanted Book (Lethality VI)",
+    "chest": "Gold Chest",
+    "odds_pct": 5.2493,
+    "rarity": "Rare",
+    "score": "5715"
+   },
+   {
+    "item": "Enchanted Book (Combo II)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 5.2493,
+    "rarity": "Rare",
+    "score": "5715"
+   },
+   {
+    "item": "Enchanted Book (No Pain No Gain II)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 5.2493,
+    "rarity": "Rare",
+    "score": "5715"
+   },
+   {
+    "item": "Enchanted Book (Bank III)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 5.2493,
+    "rarity": "Rare",
+    "score": "5715"
+   },
+   {
+    "item": "Shadow Assassin Boots",
+    "chest": "Diamond Chest",
+    "odds_pct": 3.937,
+    "rarity": "Rare",
+    "score": "7620"
+   },
+   {
+    "item": "Shadow Assassin Helmet",
+    "chest": "Emerald Chest",
+    "odds_pct": 2.6247,
+    "rarity": "Extraordinary",
+    "score": "11430"
+   },
+   {
+    "item": "Recombobulator 3000",
+    "chest": "Obsidian Chest",
+    "odds_pct": 1.5748,
+    "rarity": "Extraordinary",
+    "score": "19050"
+   },
+   {
+    "item": "Shadow Assassin Leggings",
+    "chest": "Obsidian Chest",
+    "odds_pct": 1.3123,
+    "rarity": "Extraordinary",
+    "score": "22860"
+   },
+   {
+    "item": "Shadow Assassin Cloak",
+    "chest": "Obsidian Chest",
+    "odds_pct": 1.3123,
+    "rarity": "Extraordinary",
+    "score": "22860"
+   },
+   {
+    "item": "Livid Dagger",
+    "chest": "Obsidian Chest",
+    "odds_pct": 1.0499,
+    "rarity": "Extraordinary",
+    "score": "28575"
+   },
+   {
+    "item": "Enchanted Book (Ultimate Jerry III)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 1.0499,
+    "rarity": "Extraordinary",
+    "score": "28575"
+   },
+   {
+    "item": "Shadow Assassin Chestplate",
+    "chest": "Bedrock Chest",
+    "odds_pct": 0.5249,
+    "rarity": "Pray RNGesus",
+    "score": "57150"
+   },
+   {
+    "item": "Warped Stone",
+    "chest": "Emerald Chest",
+    "odds_pct": 0.5249,
+    "rarity": "Pray RNGesus",
+    "score": "57150"
+   },
+   {
+    "item": "Shadow Fury",
+    "chest": "Bedrock Chest",
+    "odds_pct": 0.2625,
+    "rarity": "Pray RNGesus",
+    "score": "114.3k"
+   },
+   {
+    "item": "Last Breath",
+    "chest": "Bedrock Chest",
+    "odds_pct": 0.2625,
+    "rarity": "Pray RNGesus",
+    "score": "114300"
+   }
+  ],
+  "F6": [
+   {
+    "item": "Enchanted Book (Rejuvenate III)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 14.2482,
+    "rarity": "Occasional",
+    "score": "2105"
+   },
+   {
+    "item": "Enchanted Book (Last Stand II)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 14.2482,
+    "rarity": "Occasional",
+    "score": "2105"
+   },
+   {
+    "item": "Enchanted Book (Ultimate Wise II)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 12.3735,
+    "rarity": "Occasional",
+    "score": "2424"
+   },
+   {
+    "item": "Enchanted Book (Wisdom II)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 8.4364,
+    "rarity": "Rare",
+    "score": "3556"
+   },
+   {
+    "item": "Fuming Potato Book",
+    "chest": "Obsidian Chest",
+    "odds_pct": 7.4991,
+    "rarity": "Rare",
+    "score": "4000"
+   },
+   {
+    "item": "Enchanted Book (Combo II)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 7.4991,
+    "rarity": "Rare",
+    "score": "4000"
+   },
+   {
+    "item": "Enchanted Book (No Pain No Gain II)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 6.5617,
+    "rarity": "Rare",
+    "score": "4572"
+   },
+   {
+    "item": "Enchanted Book (Bank III)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 6.5617,
+    "rarity": "Rare",
+    "score": "4572"
+   },
+   {
+    "item": "Enchanted Book (Swarm I)",
+    "chest": "Gold Chest",
+    "odds_pct": 5.6243,
+    "rarity": "Rare",
+    "score": "5334"
+   },
+   {
+    "item": "Recombobulator 3000",
+    "chest": "Obsidian Chest",
+    "odds_pct": 3.7495,
+    "rarity": "Rare",
+    "score": "8000"
+   },
+   {
+    "item": "Necromancer Lord Boots",
+    "chest": "Diamond Chest",
+    "odds_pct": 2.2497,
+    "rarity": "Extraordinary",
+    "score": "13334"
+   },
+   {
+    "item": "Giant Tooth",
+    "chest": "Gold Chest",
+    "odds_pct": 1.8748,
+    "rarity": "Extraordinary",
+    "score": "16001"
+   },
+   {
+    "item": "Necromancer Lord Helmet",
+    "chest": "Emerald Chest",
+    "odds_pct": 1.4998,
+    "rarity": "Extraordinary",
+    "score": "20002"
+   },
+   {
+    "item": "Sadan's Brooch",
+    "chest": "Emerald Chest",
+    "odds_pct": 1.4998,
+    "rarity": "Extraordinary",
+    "score": "20002"
+   },
+   {
+    "item": "Enchanted Book (Ultimate Jerry III)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 1.4998,
+    "rarity": "Extraordinary",
+    "score": "20002"
+   },
+   {
+    "item": "Necromancer Lord Leggings",
+    "chest": "Obsidian Chest",
+    "odds_pct": 1.1249,
+    "rarity": "Extraordinary",
+    "score": "26669"
+   },
+   {
+    "item": "Soulweaver Gloves",
+    "chest": "Obsidian Chest",
+    "odds_pct": 1.1249,
+    "rarity": "Extraordinary",
+    "score": "26669"
+   },
+   {
+    "item": "Necromancer Sword",
+    "chest": "Obsidian Chest",
+    "odds_pct": 0.7499,
+    "rarity": "Extraordinary",
+    "score": "40005"
+   },
+   {
+    "item": "Fel Skull",
+    "chest": "Bedrock Chest",
+    "odds_pct": 0.5624,
+    "rarity": "Pray RNGesus",
+    "score": "53339"
+   },
+   {
+    "item": "Summoning Ring",
+    "chest": "Obsidian Chest",
+    "odds_pct": 0.375,
+    "rarity": "Pray RNGesus",
+    "score": "80010"
+   },
+   {
+    "item": "Necromancer Lord Chestplate",
+    "chest": "Bedrock Chest",
+    "odds_pct": 0.3,
+    "rarity": "Pray RNGesus",
+    "score": "100012"
+   },
+   {
+    "item": "Giant's Sword",
+    "chest": "Bedrock Chest",
+    "odds_pct": 0.1875,
+    "rarity": "Pray RNGesus",
+    "score": "160k"
+   },
+   {
+    "item": "Precursor Eye",
+    "chest": "Bedrock Chest",
+    "odds_pct": 0.1125,
+    "rarity": "Pray RNGesus",
+    "score": "266699"
+   }
+  ],
+  "F7": [
+   {
+    "item": "Precursor Gear",
+    "chest": "Gold Chest",
+    "odds_pct": 8.5373,
+    "rarity": "Rare",
+    "score": "3514"
+   },
+   {
+    "item": "Enchanted Book (Combo II)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 7.1144,
+    "rarity": "Rare",
+    "score": "4216"
+   },
+   {
+    "item": "Enchanted Book (Rejuvenate III)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 7.1144,
+    "rarity": "Rare",
+    "score": "4216"
+   },
+   {
+    "item": "Enchanted Book (Last Stand II)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 7.1144,
+    "rarity": "Rare",
+    "score": "4216"
+   },
+   {
+    "item": "Enchanted Book (Infinite Quiver VII)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 7.1144,
+    "rarity": "Rare",
+    "score": "4216"
+   },
+   {
+    "item": "Enchanted Book (Soul Eater I)",
+    "chest": "Diamond Chest",
+    "odds_pct": 5.6915,
+    "rarity": "Rare",
+    "score": "5271"
+   },
+   {
+    "item": "Hot Potato Book",
+    "chest": "Gold Chest",
+    "odds_pct": 5.6915,
+    "rarity": "Rare",
+    "score": "5271"
+   },
+   {
+    "item": "Enchanted Book (Ultimate Wise II)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 5.6915,
+    "rarity": "Rare",
+    "score": "5271"
+   },
+   {
+    "item": "Enchanted Book (Ultimate Jerry III)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 4.2686,
+    "rarity": "Rare",
+    "score": "7028"
+   },
+   {
+    "item": "Enchanted Book (Bank III)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 3.5572,
+    "rarity": "Rare",
+    "score": "8433"
+   },
+   {
+    "item": "Enchanted Book (Wisdom II)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 3.5572,
+    "rarity": "Rare",
+    "score": "8433"
+   },
+   {
+    "item": "Wither Cloak Sword",
+    "chest": "Emerald Chest",
+    "odds_pct": 3.4149,
+    "rarity": "Rare",
+    "score": "8785"
+   },
+   {
+    "item": "Wither Helmet",
+    "chest": "Diamond Chest",
+    "odds_pct": 3.4149,
+    "rarity": "Rare",
+    "score": "8785"
+   },
+   {
+    "item": "Wither Blood",
+    "chest": "Emerald Chest",
+    "odds_pct": 3.4149,
+    "rarity": "Rare",
+    "score": "8785"
+   },
+   {
+    "item": "Wither Boots",
+    "chest": "Gold Chest",
+    "odds_pct": 3.4149,
+    "rarity": "Rare",
+    "score": "8785"
+   },
+   {
+    "item": "Recombobulator 3000",
+    "chest": "Obsidian Chest",
+    "odds_pct": 2.8458,
+    "rarity": "Extraordinary",
+    "score": "10542"
+   },
+   {
+    "item": "Fuming Potato Book",
+    "chest": "Obsidian Chest",
+    "odds_pct": 2.8458,
+    "rarity": "Extraordinary",
+    "score": "10542"
+   },
+   {
+    "item": "Wither Catalyst",
+    "chest": "Gold Chest",
+    "odds_pct": 2.8458,
+    "rarity": "Extraordinary",
+    "score": "10542"
+   },
+   {
+    "item": "Enchanted Book (No Pain No Gain II)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 2.8458,
+    "rarity": "Extraordinary",
+    "score": "10542"
+   },
+   {
+    "item": "Wither Leggings",
+    "chest": "Emerald Chest",
+    "odds_pct": 2.2766,
+    "rarity": "Extraordinary",
+    "score": "13177"
+   },
+   {
+    "item": "Enchanted Book (Feather Falling VII)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 2.2766,
+    "rarity": "Extraordinary",
+    "score": "13177"
+   },
+   {
+    "item": "Auto Recombobulator",
+    "chest": "Bedrock Chest",
+    "odds_pct": 0.5692,
+    "rarity": "Pray RNGesus",
+    "score": "52710"
+   },
+   {
+    "item": "Wither Chestplate",
+    "chest": "Obsidian Chest",
+    "odds_pct": 0.5692,
+    "rarity": "Pray RNGesus",
+    "score": "52710"
+   },
+   {
+    "item": "Enchanted Book (One For All I)",
+    "chest": "Obsidian Chest",
+    "odds_pct": 0.5692,
+    "rarity": "Pray RNGesus",
+    "score": "52710"
+   },
+   {
+    "item": "Shadow Warp",
+    "chest": "Bedrock Chest",
+    "odds_pct": 0.1423,
+    "rarity": "Pray RNGesus",
+    "score": "210840"
+   },
+   {
+    "item": "Wither Shield",
+    "chest": "Bedrock Chest",
+    "odds_pct": 0.1423,
+    "rarity": "Pray RNGesus",
+    "score": "210840"
+   },
+   {
+    "item": "Implosion",
+    "chest": "Bedrock Chest",
+    "odds_pct": 0.1423,
+    "rarity": "Pray RNGesus",
+    "score": "210840"
+   },
+   {
+    "item": "Necron's Handle",
+    "chest": "Bedrock Chest",
+    "odds_pct": 0.1067,
+    "rarity": "Pray RNGesus",
+    "score": "281.1k"
+   },
+   {
+    "item": "Storm the Fish",
+    "chest": "Bedrock Chest",
+    "odds_pct": 0.0711,
+    "rarity": "Pray RNGesus",
+    "score": "421680"
+   },
+   {
+    "item": "Maxor the Fish",
+    "chest": "Bedrock Chest",
+    "odds_pct": 0.0711,
+    "rarity": "Pray RNGesus",
+    "score": "421680"
+   },
+   {
+    "item": "Goldor the Fish",
+    "chest": "Bedrock Chest",
+    "odds_pct": 0.0711,
+    "rarity": "Pray RNGesus",
+    "score": "421680"
+   }
+  ],
+  "M1": [
+   {
+    "item": "Enchanted Book (Rejuvenate I)",
+    "chest": "Wood Chest",
+    "odds_pct": 17.4419,
+    "rarity": "Occasional",
+    "score": "1720"
+   },
+   {
+    "item": "Enchanted Book (Combo I)",
+    "chest": "Gold Chest",
+    "odds_pct": 11.6279,
+    "rarity": "Occasional",
+    "score": "2580"
+   },
+   {
+    "item": "Enchanted Book (No Pain No Gain I)",
+    "chest": "Gold Chest",
+    "odds_pct": 11.6279,
+    "rarity": "Occasional",
+    "score": "2580"
+   },
+   {
+    "item": "Necromancer's Brooch",
+    "chest": "Wood Chest",
+    "odds_pct": 11.6279,
+    "rarity": "Occasional",
+    "score": "2580"
+   },
+   {
+    "item": "Enchanted Book (Infinite Quiver VI)",
+    "chest": "Wood Chest",
+    "odds_pct": 6.9767,
+    "rarity": "Rare",
+    "score": "4300"
+   },
+   {
+    "item": "Enchanted Book (Feather Falling VI)",
+    "chest": "Wood Chest",
+    "odds_pct": 6.9767,
+    "rarity": "Rare",
+    "score": "4300"
+   },
+   {
+    "item": "Hot Potato Book",
+    "chest": "Gold Chest",
+    "odds_pct": 5.814,
+    "rarity": "Rare",
+    "score": "5160"
+   },
+   {
+    "item": "Recombobulator 3000",
+    "chest": "Obsidian Chest",
+    "odds_pct": 4.6512,
+    "rarity": "Rare",
+    "score": "6450"
+   },
+   {
+    "item": "Red Nose",
+    "chest": "Diamond Chest",
+    "odds_pct": 4.6512,
+    "rarity": "Rare",
+    "score": "6450"
+   },
+   {
+    "item": "Master Skull - Tier 1",
+    "chest": "Obsidian Chest",
+    "odds_pct": 3.4884,
+    "rarity": "Rare",
+    "score": "8600"
+   },
+   {
+    "item": "Bonzo's Mask",
+    "chest": "Diamond Chest",
+    "odds_pct": 3.4884,
+    "rarity": "Rare",
+    "score": "8600"
+   },
+   {
+    "item": "Balloon Snake",
+    "chest": "Diamond Chest",
+    "odds_pct": 3.4884,
+    "rarity": "Rare",
+    "score": "8600"
+   },
+   {
+    "item": "Fuming Potato Book",
+    "chest": "Emerald Chest",
+    "odds_pct": 2.3256,
+    "rarity": "Extraordinary",
+    "score": "12900"
+   },
+   {
+    "item": "Enchanted Book (Bank I)",
+    "chest": "Wood Chest",
+    "odds_pct": 2.3256,
+    "rarity": "Extraordinary",
+    "score": "12900"
+   },
+   {
+    "item": "Bonzo's Staff",
+    "chest": "Emerald Chest",
+    "odds_pct": 1.1628,
+    "rarity": "Extraordinary",
+    "score": "25800"
+   },
+   {
+    "item": "Enchanted Book (Ultimate Jerry I)",
+    "chest": "Wood Chest",
+    "odds_pct": 1.1628,
+    "rarity": "Extraordinary",
+    "score": "25800"
+   }
+  ],
+  "M2": [
+   {
+    "item": "Enchanted Book (Ultimate Wise I)",
+    "chest": "Gold Chest",
+    "odds_pct": 16.129,
+    "rarity": "Occasional",
+    "score": "1860"
+   },
+   {
+    "item": "Enchanted Book (Rejuvenate I)",
+    "chest": "Wood Chest",
+    "odds_pct": 16.129,
+    "rarity": "Occasional",
+    "score": "1860"
+   },
+   {
+    "item": "Hot Potato Book",
+    "chest": "Gold Chest",
+    "odds_pct": 8.0645,
+    "rarity": "Rare",
+    "score": "3720"
+   },
+   {
+    "item": "Enchanted Book (Combo I)",
+    "chest": "Gold Chest",
+    "odds_pct": 8.0645,
+    "rarity": "Rare",
+    "score": "3720"
+   },
+   {
+    "item": "Enchanted Book (No Pain No Gain I)",
+    "chest": "Gold Chest",
+    "odds_pct": 8.0645,
+    "rarity": "Rare",
+    "score": "3720"
+   },
+   {
+    "item": "Necromancer's Brooch",
+    "chest": "Wood Chest",
+    "odds_pct": 8.0645,
+    "rarity": "Rare",
+    "score": "3720"
+   },
+   {
+    "item": "Scarf's Studies",
+    "chest": "Gold Chest",
+    "odds_pct": 6.4516,
+    "rarity": "Rare",
+    "score": "4650"
+   },
+   {
+    "item": "Recombobulator 3000",
+    "chest": "Obsidian Chest",
+    "odds_pct": 4.8387,
+    "rarity": "Rare",
+    "score": "6199"
+   },
+   {
+    "item": "Master Skull - Tier 2",
+    "chest": "Obsidian Chest",
+    "odds_pct": 4.8387,
+    "rarity": "Rare",
+    "score": "6199"
+   },
+   {
+    "item": "Adaptive Belt",
+    "chest": "Obsidian Chest",
+    "odds_pct": 4.8387,
+    "rarity": "Rare",
+    "score": "6199"
+   },
+   {
+    "item": "Fuming Potato Book",
+    "chest": "Emerald Chest",
+    "odds_pct": 4.8387,
+    "rarity": "Rare",
+    "score": "6199"
+   },
+   {
+    "item": "Adaptive Blade",
+    "chest": "Emerald Chest",
+    "odds_pct": 3.2258,
+    "rarity": "Rare",
+    "score": "9300"
+   },
+   {
+    "item": "Enchanted Book (Bank I)",
+    "chest": "Wood Chest",
+    "odds_pct": 3.2258,
+    "rarity": "Rare",
+    "score": "9300"
+   },
+   {
+    "item": "Red Scarf",
+    "chest": "Diamond Chest",
+    "odds_pct": 1.6129,
+    "rarity": "Extraordinary",
+    "score": "18600"
+   }
+  ],
+  "M3": [
+   {
+    "item": "Enchanted Book (Last Stand I)",
+    "chest": "Emerald Chest",
+    "odds_pct": 10.1266,
+    "rarity": "Rare",
+    "score": "2962"
+   },
+   {
+    "item": "Enchanted Book (Rejuvenate II)",
+    "chest": "Emerald Chest",
+    "odds_pct": 10.1266,
+    "rarity": "Rare",
+    "score": "2962"
+   },
+   {
+    "item": "Enchanted Book (Ultimate Wise I)",
+    "chest": "Gold Chest",
+    "odds_pct": 7.5949,
+    "rarity": "Rare",
+    "score": "3950"
+   },
+   {
+    "item": "Enchanted Book (Bank II)",
+    "chest": "Obsidian Chest",
+    "odds_pct": 7.5949,
+    "rarity": "Rare",
+    "score": "3950"
+   },
+   {
+    "item": "Enchanted Book (Wisdom I)",
+    "chest": "Gold Chest",
+    "odds_pct": 7.5949,
+    "rarity": "Rare",
+    "score": "3950"
+   },
+   {
+    "item": "Hot Potato Book",
+    "chest": "Gold Chest",
+    "odds_pct": 6.3291,
+    "rarity": "Rare",
+    "score": "4740"
+   },
+   {
+    "item": "Suspicious Vial",
+    "chest": "Diamond Chest",
+    "odds_pct": 6.3291,
+    "rarity": "Rare",
+    "score": "4740"
+   },
+   {
+    "item": "Enchanted Book (Combo I)",
+    "chest": "Gold Chest",
+    "odds_pct": 6.3291,
+    "rarity": "Rare",
+    "score": "4740"
+   },
+   {
+    "item": "Enchanted Book (No Pain No Gain I)",
+    "chest": "Gold Chest",
+    "odds_pct": 6.3291,
+    "rarity": "Rare",
+    "score": "4740"
+   },
+   {
+    "item": "Recombobulator 3000",
+    "chest": "Obsidian Chest",
+    "odds_pct": 5.0633,
+    "rarity": "Rare",
+    "score": "5925"
+   },
+   {
+    "item": "Master Skull - Tier 3",
+    "chest": "Obsidian Chest",
+    "odds_pct": 5.0633,
+    "rarity": "Rare",
+    "score": "5925"
+   },
+   {
+    "item": "Necromancer's Brooch",
+    "chest": "Wood Chest",
+    "odds_pct": 5.0633,
+    "rarity": "Rare",
+    "score": "5925"
+   },
+   {
+    "item": "Fuming Potato Book",
+    "chest": "Emerald Chest",
+    "odds_pct": 3.7975,
+    "rarity": "Rare",
+    "score": "7900"
+   },
+   {
+    "item": "First Master Star",
+    "chest": "Obsidian Chest",
+    "odds_pct": 2.5316,
+    "rarity": "Extraordinary",
+    "score": "11.8k"
+   },
+   {
+    "item": "Adaptive Helmet",
+    "chest": "Diamond Chest",
+    "odds_pct": 2.5316,
+    "rarity": "Extraordinary",
+    "score": "11850"
+   },
+   {
+    "item": "Adaptive Boots",
+    "chest": "Gold Chest",
+    "odds_pct": 2.5316,
+    "rarity": "Extraordinary",
+    "score": "11850"
+   },
+   {
+    "item": "Adaptive Chestplate",
+    "chest": "Emerald Chest",
+    "odds_pct": 1.2658,
+    "rarity": "Extraordinary",
+    "score": "23700"
+   },
+   {
+    "item": "Adaptive Leggings",
+    "chest": "Emerald Chest",
+    "odds_pct": 1.2658,
+    "rarity": "Extraordinary",
+    "score": "23700"
+   },
+   {
+    "item": "Enchanted Book (Ultimate Jerry II)",
+    "chest": "Emerald Chest",
+    "odds_pct": 1.2658,
+    "rarity": "Extraordinary",
+    "score": "23700"
+   }
+  ],
+  "M4": [
+   {
+    "item": "Enchanted Book (Last Stand I)",
+    "chest": "Emerald Chest",
+    "odds_pct": 10.9589,
+    "rarity": "Rare",
+    "score": "2737"
+   },
+   {
+    "item": "Enchanted Book (Rejuvenate II)",
+    "chest": "Emerald Chest",
+    "odds_pct": 10.9589,
+    "rarity": "Rare",
+    "score": "2737"
+   },
+   {
+    "item": "Enchanted Book (Ultimate Wise I)",
+    "chest": "Gold Chest",
+    "odds_pct": 8.2192,
+    "rarity": "Rare",
+    "score": "3650"
+   },
+   {
+    "item": "Enchanted Book (Bank II)",
+    "chest": "Obsidian Chest",
+    "odds_pct": 8.2192,
+    "rarity": "Rare",
+    "score": "3650"
+   },
+   {
+    "item": "Enchanted Book (Wisdom I)",
+    "chest": "Gold Chest",
+    "odds_pct": 8.2192,
+    "rarity": "Rare",
+    "score": "3650"
+   },
+   {
+    "item": "Hot Potato Book",
+    "chest": "Gold Chest",
+    "odds_pct": 6.8493,
+    "rarity": "Rare",
+    "score": "4380"
+   },
+   {
+    "item": "Enchanted Book (Combo I)",
+    "chest": "Gold Chest",
+    "odds_pct": 6.8493,
+    "rarity": "Rare",
+    "score": "4380"
+   },
+   {
+    "item": "Enchanted Book (No Pain No Gain I)",
+    "chest": "Gold Chest",
+    "odds_pct": 5.4795,
+    "rarity": "Rare",
+    "score": "5475"
+   },
+   {
+    "item": "Recombobulator 3000",
+    "chest": "Obsidian Chest",
+    "odds_pct": 4.1096,
+    "rarity": "Rare",
+    "score": "7300"
+   },
+   {
+    "item": "Master Skull - Tier 3",
+    "chest": "Obsidian Chest",
+    "odds_pct": 4.1096,
+    "rarity": "Rare",
+    "score": "7300"
+   },
+   {
+    "item": "Fuming Potato Book",
+    "chest": "Emerald Chest",
+    "odds_pct": 4.1096,
+    "rarity": "Rare",
+    "score": "7300"
+   },
+   {
+    "item": "Second Master Star",
+    "chest": "Obsidian Chest",
+    "odds_pct": 2.7397,
+    "rarity": "Extraordinary",
+    "score": "10.9k"
+   },
+   {
+    "item": "Spirit Wing",
+    "chest": "Obsidian Chest",
+    "odds_pct": 2.7397,
+    "rarity": "Extraordinary",
+    "score": "10950"
+   },
+   {
+    "item": "Spirit Bone",
+    "chest": "Emerald Chest",
+    "odds_pct": 2.7397,
+    "rarity": "Extraordinary",
+    "score": "10950"
+   },
+   {
+    "item": "Spirit Stone",
+    "chest": "Diamond Chest",
+    "odds_pct": 2.7397,
+    "rarity": "Extraordinary",
+    "score": "10950"
+   },
+   {
+    "item": "Enchanted Book (Rend II)",
+    "chest": "Gold Chest",
+    "odds_pct": 2.7397,
+    "rarity": "Extraordinary",
+    "score": "10950"
+   },
+   {
+    "item": "Spirit Sword",
+    "chest": "Obsidian Chest",
+    "odds_pct": 1.3699,
+    "rarity": "Extraordinary",
+    "score": "21900"
+   },
+   {
+    "item": "Spirit Shortbow",
+    "chest": "Obsidian Chest",
+    "odds_pct": 1.3699,
+    "rarity": "Extraordinary",
+    "score": "21900"
+   },
+   {
+    "item": "Spirit Boots",
+    "chest": "Emerald Chest",
+    "odds_pct": 1.3699,
+    "rarity": "Extraordinary",
+    "score": "21900"
+   },
+   {
+    "item": "[Lvl 1] Spirit",
+    "chest": "Emerald Chest",
+    "odds_pct": 1.3699,
+    "rarity": "Extraordinary",
+    "score": "21900"
+   },
+   {
+    "item": "Enchanted Book (Ultimate Jerry II)",
+    "chest": "Emerald Chest",
+    "odds_pct": 1.3699,
+    "rarity": "Extraordinary",
+    "score": "21900"
+   }
+  ],
+  "M5": [
+   {
+    "item": "Enchanted Book (Rejuvenate III)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 10.7362,
+    "rarity": "Rare",
+    "score": "2794"
+   },
+   {
+    "item": "Enchanted Book (Last Stand II)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 10.7362,
+    "rarity": "Rare",
+    "score": "2794"
+   },
+   {
+    "item": "Dark Orb",
+    "chest": "Gold Chest",
+    "odds_pct": 9.2025,
+    "rarity": "Rare",
+    "score": "3260"
+   },
+   {
+    "item": "Enchanted Book (Ultimate Wise II)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 9.2025,
+    "rarity": "Rare",
+    "score": "3260"
+   },
+   {
+    "item": "Fuming Potato Book",
+    "chest": "Emerald Chest",
+    "odds_pct": 6.135,
+    "rarity": "Rare",
+    "score": "4890"
+   },
+   {
+    "item": "Enchanted Book (Overload I)",
+    "chest": "Gold Chest",
+    "odds_pct": 6.135,
+    "rarity": "Rare",
+    "score": "4890"
+   },
+   {
+    "item": "Enchanted Book (Legion I)",
+    "chest": "Diamond Chest",
+    "odds_pct": 6.135,
+    "rarity": "Rare",
+    "score": "4890"
+   },
+   {
+    "item": "Enchanted Book (Lethality VI)",
+    "chest": "Gold Chest",
+    "odds_pct": 6.135,
+    "rarity": "Rare",
+    "score": "4890"
+   },
+   {
+    "item": "Shadow Assassin Boots",
+    "chest": "Diamond Chest",
+    "odds_pct": 4.6012,
+    "rarity": "Rare",
+    "score": "6520"
+   },
+   {
+    "item": "Enchanted Book (Combo II)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 4.6012,
+    "rarity": "Rare",
+    "score": "6520"
+   },
+   {
+    "item": "Enchanted Book (No Pain No Gain II)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 4.6012,
+    "rarity": "Rare",
+    "score": "6520"
+   },
+   {
+    "item": "Enchanted Book (Wisdom II)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 3.681,
+    "rarity": "Rare",
+    "score": "8150"
+   },
+   {
+    "item": "Shadow Assassin Helmet",
+    "chest": "Emerald Chest",
+    "odds_pct": 3.0675,
+    "rarity": "Rare",
+    "score": "9780"
+   },
+   {
+    "item": "Enchanted Book (Bank III)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 3.0675,
+    "rarity": "Rare",
+    "score": "9780"
+   },
+   {
+    "item": "Recombobulator 3000",
+    "chest": "Obsidian Chest",
+    "odds_pct": 1.8405,
+    "rarity": "Extraordinary",
+    "score": "16300"
+   },
+   {
+    "item": "Shadow Assassin Leggings",
+    "chest": "Obsidian Chest",
+    "odds_pct": 1.5337,
+    "rarity": "Extraordinary",
+    "score": "19560"
+   },
+   {
+    "item": "Shadow Assassin Cloak",
+    "chest": "Obsidian Chest",
+    "odds_pct": 1.5337,
+    "rarity": "Extraordinary",
+    "score": "19560"
+   },
+   {
+    "item": "Master Skull - Tier 4",
+    "chest": "Bedrock Chest",
+    "odds_pct": 1.5337,
+    "rarity": "Extraordinary",
+    "score": "19560"
+   },
+   {
+    "item": "Livid Dagger",
+    "chest": "Obsidian Chest",
+    "odds_pct": 1.227,
+    "rarity": "Extraordinary",
+    "score": "24450"
+   },
+   {
+    "item": "Enchanted Book (Ultimate Jerry III)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 1.227,
+    "rarity": "Extraordinary",
+    "score": "24450"
+   },
+   {
+    "item": "Shadow Assassin Chestplate",
+    "chest": "Bedrock Chest",
+    "odds_pct": 0.6135,
+    "rarity": "Extraordinary",
+    "score": "48900"
+   },
+   {
+    "item": "Third Master Star",
+    "chest": "Obsidian Chest",
+    "odds_pct": 0.6135,
+    "rarity": "Extraordinary",
+    "score": "48.9k"
+   },
+   {
+    "item": "Warped Stone",
+    "chest": "Emerald Chest",
+    "odds_pct": 0.6135,
+    "rarity": "Extraordinary",
+    "score": "48900"
+   },
+   {
+    "item": "Shadow Fury",
+    "chest": "Bedrock Chest",
+    "odds_pct": 0.3067,
+    "rarity": "Pray RNGesus",
+    "score": "97800"
+   },
+   {
+    "item": "Last Breath",
+    "chest": "Bedrock Chest",
+    "odds_pct": 0.3067,
+    "rarity": "Pray RNGesus",
+    "score": "97800"
+   },
+   {
+    "item": "Livid Dye",
+    "chest": "Bedrock Chest",
+    "odds_pct": 0.02,
+    "rarity": "RNGesus Incarnate",
+    "score": "1000000"
+   }
+  ],
+  "M6": [
+   {
+    "item": "Enchanted Book (Rejuvenate III)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 14.0325,
+    "rarity": "Occasional",
+    "score": "2137"
+   },
+   {
+    "item": "Enchanted Book (Last Stand II)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 14.0325,
+    "rarity": "Occasional",
+    "score": "2137"
+   },
+   {
+    "item": "Enchanted Book (Ultimate Wise II)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 12.1861,
+    "rarity": "Occasional",
+    "score": "2461"
+   },
+   {
+    "item": "Enchanted Book (Wisdom II)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 8.3087,
+    "rarity": "Rare",
+    "score": "3610"
+   },
+   {
+    "item": "Fuming Potato Book",
+    "chest": "Obsidian Chest",
+    "odds_pct": 7.3855,
+    "rarity": "Rare",
+    "score": "4061"
+   },
+   {
+    "item": "Enchanted Book (Combo II)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 7.3855,
+    "rarity": "Rare",
+    "score": "4061"
+   },
+   {
+    "item": "Enchanted Book (No Pain No Gain II)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 6.4623,
+    "rarity": "Rare",
+    "score": "4642"
+   },
+   {
+    "item": "Enchanted Book (Bank III)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 6.4623,
+    "rarity": "Rare",
+    "score": "4642"
+   },
+   {
+    "item": "Enchanted Book (Swarm I)",
+    "chest": "Gold Chest",
+    "odds_pct": 5.5391,
+    "rarity": "Rare",
+    "score": "5415"
+   },
+   {
+    "item": "Recombobulator 3000",
+    "chest": "Obsidian Chest",
+    "odds_pct": 4.4313,
+    "rarity": "Rare",
+    "score": "6770"
+   },
+   {
+    "item": "Necromancer Lord Boots",
+    "chest": "Diamond Chest",
+    "odds_pct": 2.2157,
+    "rarity": "Extraordinary",
+    "score": "13540"
+   },
+   {
+    "item": "Giant Tooth",
+    "chest": "Gold Chest",
+    "odds_pct": 1.8464,
+    "rarity": "Extraordinary",
+    "score": "16247"
+   },
+   {
+    "item": "Necromancer Lord Helmet",
+    "chest": "Emerald Chest",
+    "odds_pct": 1.4771,
+    "rarity": "Extraordinary",
+    "score": "20310"
+   },
+   {
+    "item": "Sadan's Brooch",
+    "chest": "Emerald Chest",
+    "odds_pct": 1.4771,
+    "rarity": "Extraordinary",
+    "score": "20310"
+   },
+   {
+    "item": "Enchanted Book (Ultimate Jerry III)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 1.4771,
+    "rarity": "Extraordinary",
+    "score": "20310"
+   },
+   {
+    "item": "Necromancer Lord Leggings",
+    "chest": "Obsidian Chest",
+    "odds_pct": 1.1078,
+    "rarity": "Extraordinary",
+    "score": "27080"
+   },
+   {
+    "item": "Soulweaver Gloves",
+    "chest": "Obsidian Chest",
+    "odds_pct": 1.1078,
+    "rarity": "Extraordinary",
+    "score": "27080"
+   },
+   {
+    "item": "Necromancer Sword",
+    "chest": "Obsidian Chest",
+    "odds_pct": 0.7386,
+    "rarity": "Extraordinary",
+    "score": "40620"
+   },
+   {
+    "item": "Fel Skull",
+    "chest": "Bedrock Chest",
+    "odds_pct": 0.5539,
+    "rarity": "Pray RNGesus",
+    "score": "54160"
+   },
+   {
+    "item": "Fourth Master Star",
+    "chest": "Bedrock Chest",
+    "odds_pct": 0.3693,
+    "rarity": "Pray RNGesus",
+    "score": "81.2k"
+   },
+   {
+    "item": "Summoning Ring",
+    "chest": "Obsidian Chest",
+    "odds_pct": 0.3693,
+    "rarity": "Pray RNGesus",
+    "score": "81240"
+   },
+   {
+    "item": "Master Skull - Tier 4",
+    "chest": "Bedrock Chest",
+    "odds_pct": 0.3693,
+    "rarity": "Pray RNGesus",
+    "score": "81240"
+   },
+   {
+    "item": "Necromancer Lord Chestplate",
+    "chest": "Bedrock Chest",
+    "odds_pct": 0.2954,
+    "rarity": "Pray RNGesus",
+    "score": "101550"
+   },
+   {
+    "item": "Giant's Sword",
+    "chest": "Bedrock Chest",
+    "odds_pct": 0.2216,
+    "rarity": "Pray RNGesus",
+    "score": "135400"
+   },
+   {
+    "item": "Precursor Eye",
+    "chest": "Bedrock Chest",
+    "odds_pct": 0.1108,
+    "rarity": "Pray RNGesus",
+    "score": "270800"
+   }
+  ],
+  "M7": [
+   {
+    "item": "Precursor Gear",
+    "chest": "Gold Chest",
+    "odds_pct": 8.6368,
+    "rarity": "Rare",
+    "score": "3473"
+   },
+   {
+    "item": "Enchanted Book (Combo II)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 7.1974,
+    "rarity": "Rare",
+    "score": "4168"
+   },
+   {
+    "item": "Enchanted Book (Rejuvenate III)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 7.1974,
+    "rarity": "Rare",
+    "score": "4168"
+   },
+   {
+    "item": "Enchanted Book (Last Stand II)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 7.1974,
+    "rarity": "Rare",
+    "score": "4168"
+   },
+   {
+    "item": "Enchanted Book (Infinite Quiver VII)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 7.1974,
+    "rarity": "Rare",
+    "score": "4168"
+   },
+   {
+    "item": "Enchanted Book (Soul Eater I)",
+    "chest": "Diamond Chest",
+    "odds_pct": 5.7579,
+    "rarity": "Rare",
+    "score": "5210"
+   },
+   {
+    "item": "Hot Potato Book",
+    "chest": "Gold Chest",
+    "odds_pct": 5.7579,
+    "rarity": "Rare",
+    "score": "5210"
+   },
+   {
+    "item": "Enchanted Book (Ultimate Wise II)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 5.7579,
+    "rarity": "Rare",
+    "score": "5210"
+   },
+   {
+    "item": "Enchanted Book (Ultimate Jerry III)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 4.3184,
+    "rarity": "Rare",
+    "score": "6947"
+   },
+   {
+    "item": "Recombobulator 3000",
+    "chest": "Obsidian Chest",
+    "odds_pct": 3.5987,
+    "rarity": "Rare",
+    "score": "8336"
+   },
+   {
+    "item": "Enchanted Book (Bank III)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 3.5987,
+    "rarity": "Rare",
+    "score": "8336"
+   },
+   {
+    "item": "Enchanted Book (Wisdom II)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 3.5987,
+    "rarity": "Rare",
+    "score": "8336"
+   },
+   {
+    "item": "Wither Cloak Sword",
+    "chest": "Emerald Chest",
+    "odds_pct": 3.4547,
+    "rarity": "Rare",
+    "score": "8683"
+   },
+   {
+    "item": "Wither Helmet",
+    "chest": "Diamond Chest",
+    "odds_pct": 3.4547,
+    "rarity": "Rare",
+    "score": "8683"
+   },
+   {
+    "item": "Wither Blood",
+    "chest": "Emerald Chest",
+    "odds_pct": 3.4547,
+    "rarity": "Rare",
+    "score": "8683"
+   },
+   {
+    "item": "Wither Boots",
+    "chest": "Gold Chest",
+    "odds_pct": 3.4547,
+    "rarity": "Rare",
+    "score": "8683"
+   },
+   {
+    "item": "Fuming Potato Book",
+    "chest": "Obsidian Chest",
+    "odds_pct": 2.8789,
+    "rarity": "Extraordinary",
+    "score": "10420"
+   },
+   {
+    "item": "Wither Catalyst",
+    "chest": "Gold Chest",
+    "odds_pct": 2.8789,
+    "rarity": "Extraordinary",
+    "score": "10420"
+   },
+   {
+    "item": "Enchanted Book (No Pain No Gain II)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 2.8789,
+    "rarity": "Extraordinary",
+    "score": "10420"
+   },
+   {
+    "item": "Wither Leggings",
+    "chest": "Emerald Chest",
+    "odds_pct": 2.3032,
+    "rarity": "Extraordinary",
+    "score": "13025"
+   },
+   {
+    "item": "Enchanted Book (Feather Falling VII)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 2.3032,
+    "rarity": "Extraordinary",
+    "score": "13025"
+   },
+   {
+    "item": "Auto Recombobulator",
+    "chest": "Bedrock Chest",
+    "odds_pct": 0.5758,
+    "rarity": "Pray RNGesus",
+    "score": "52102"
+   },
+   {
+    "item": "Wither Chestplate",
+    "chest": "Obsidian Chest",
+    "odds_pct": 0.5758,
+    "rarity": "Pray RNGesus",
+    "score": "52102"
+   },
+   {
+    "item": "Enchanted Book (One For All I)",
+    "chest": "Obsidian Chest",
+    "odds_pct": 0.5758,
+    "rarity": "Pray RNGesus",
+    "score": "52102"
+   },
+   {
+    "item": "Fifth Master Star",
+    "chest": "Obsidian Chest",
+    "odds_pct": 0.2159,
+    "rarity": "Pray RNGesus",
+    "score": "138940"
+   },
+   {
+    "item": "Shadow Warp",
+    "chest": "Bedrock Chest",
+    "odds_pct": 0.1799,
+    "rarity": "Pray RNGesus",
+    "score": "166728"
+   },
+   {
+    "item": "Wither Shield",
+    "chest": "Bedrock Chest",
+    "odds_pct": 0.1799,
+    "rarity": "Pray RNGesus",
+    "score": "166728"
+   },
+   {
+    "item": "Implosion",
+    "chest": "Bedrock Chest",
+    "odds_pct": 0.1799,
+    "rarity": "Pray RNGesus",
+    "score": "166728"
+   },
+   {
+    "item": "Master Skull - Tier 5",
+    "chest": "Bedrock Chest",
+    "odds_pct": 0.1727,
+    "rarity": "Pray RNGesus",
+    "score": "173675"
+   },
+   {
+    "item": "Enchanted Book (Thunderlord VII)",
+    "chest": "Bedrock Chest",
+    "odds_pct": 0.1439,
+    "rarity": "Pray RNGesus",
+    "score": "208410"
+   },
+   {
+    "item": "Necron's Handle",
+    "chest": "Bedrock Chest",
+    "odds_pct": 0.1296,
+    "rarity": "Pray RNGesus",
+    "score": "231566"
+   },
+   {
+    "item": "Dark Claymore",
+    "chest": "Bedrock Chest",
+    "odds_pct": 0.072,
+    "rarity": "Pray RNGesus",
+    "score": "416820"
+   },
+   {
+    "item": "Storm the Fish",
+    "chest": "Bedrock Chest",
+    "odds_pct": 0.036,
+    "rarity": "Pray RNGesus",
+    "score": "833640"
+   },
+   {
+    "item": "Maxor the Fish",
+    "chest": "Bedrock Chest",
+    "odds_pct": 0.036,
+    "rarity": "Pray RNGesus",
+    "score": "833640"
+   },
+   {
+    "item": "Goldor the Fish",
+    "chest": "Bedrock Chest",
+    "odds_pct": 0.036,
+    "rarity": "Pray RNGesus",
+    "score": "833640"
+   },
+   {
+    "item": "Necron Dye",
+    "chest": "Bedrock Chest",
+    "odds_pct": 0.04,
+    "rarity": "Pray RNGesus",
+    "score": "1000000"
+   }
+  ]
+ }
+}
