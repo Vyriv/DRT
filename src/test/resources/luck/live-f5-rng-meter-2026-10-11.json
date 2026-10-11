@@ -1,0 +1,30 @@
+{
+  "source": "DRT luck probe, Catacombs (F5) RNG Meter screen, Minecraft 26.2, 2026-10-11",
+  "floor": "F5",
+  "storedScore": 3224,
+  "items": [
+    {"name": "Enchanted Book (Rejuvenate III)", "appearsIn": "BEDROCK", "oddsPct": 11.811, "required": 2540},
+    {"name": "Enchanted Book (Last Stand II)", "appearsIn": "BEDROCK", "oddsPct": 11.811, "required": 2540},
+    {"name": "Enchanted Book (Ultimate Wise II)", "appearsIn": "BEDROCK", "oddsPct": 10.4987, "required": 2857},
+    {"name": "Dark Orb", "appearsIn": "GOLD", "oddsPct": 7.874, "required": 3810},
+    {"name": "Enchanted Book (Wisdom II)", "appearsIn": "BEDROCK", "oddsPct": 6.5617, "required": 4572},
+    {"name": "Fuming Potato Book", "appearsIn": "EMERALD", "oddsPct": 5.2493, "required": 5715},
+    {"name": "Enchanted Book (Overload I)", "appearsIn": "GOLD", "oddsPct": 5.2493, "required": 5715},
+    {"name": "Enchanted Book (Legion I)", "appearsIn": "DIAMOND", "oddsPct": 5.2493, "required": 5715},
+    {"name": "Enchanted Book (Lethality VI)", "appearsIn": "GOLD", "oddsPct": 5.2493, "required": 5715},
+    {"name": "Enchanted Book (Combo II)", "appearsIn": "BEDROCK", "oddsPct": 5.2493, "required": 5715},
+    {"name": "Enchanted Book (No Pain No Gain II)", "appearsIn": "BEDROCK", "oddsPct": 5.2493, "required": 5715},
+    {"name": "Enchanted Book (Bank III)", "appearsIn": "BEDROCK", "oddsPct": 5.2493, "required": 5715},
+    {"name": "Shadow Assassin Boots", "appearsIn": "DIAMOND", "oddsPct": 3.937, "required": 7620},
+    {"name": "Shadow Assassin Helmet", "appearsIn": "EMERALD", "oddsPct": 2.6247, "required": 11430},
+    {"name": "Recombobulator 3000", "appearsIn": "OBSIDIAN", "oddsPct": 1.5748, "required": 19050},
+    {"name": "Shadow Assassin Leggings", "appearsIn": "OBSIDIAN", "oddsPct": 1.3123, "required": 22860},
+    {"name": "Shadow Assassin Cloak", "appearsIn": "OBSIDIAN", "oddsPct": 1.3123, "required": 22860},
+    {"name": "Livid Dagger", "appearsIn": "OBSIDIAN", "oddsPct": 1.0499, "required": 28575},
+    {"name": "Enchanted Book (Ultimate Jerry III)", "appearsIn": "BEDROCK", "oddsPct": 1.0499, "required": 28575},
+    {"name": "Shadow Assassin Chestplate", "appearsIn": "BEDROCK", "oddsPct": 0.5249, "required": 57150},
+    {"name": "Warped Stone", "appearsIn": "EMERALD", "oddsPct": 0.5249, "required": 57150},
+    {"name": "Shadow Fury", "appearsIn": "BEDROCK", "oddsPct": 0.2625, "required": 114300},
+    {"name": "Last Breath", "appearsIn": "BEDROCK", "oddsPct": 0.2625, "required": 114300}
+  ]
+}
