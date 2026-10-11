@@ -45,6 +45,27 @@ class LuckTrackingStoreTest {
 	}
 
 	@Test
+	void revisionMovesOnEverySavedChangeAndSnapshotsAreDetached() {
+		LuckTrackingStore store = new LuckTrackingStore(file());
+		store.load();
+		long loaded = store.revision();
+		assertEquals(LuckTrackingStore.AddResult.ADDED, store.addRun(completion("fp-1", 306)));
+		long added = store.revision();
+		assertTrue(added > loaded);
+		assertEquals(LuckTrackingStore.AddResult.DUPLICATE, store.addRun(completion("fp-1", 306)));
+		assertEquals(added, store.revision(), "nothing saved, nothing moved");
+		assertTrue(store.updateProfile(maxed(), 5_000L));
+		assertTrue(store.revision() > added);
+
+		List<LuckRunRecord> snapshot = store.runSnapshots();
+		assertEquals(1, snapshot.size());
+		snapshot.get(0).floor = "F1";
+		snapshot.get(0).chests.clear();
+		assertEquals("M5", store.runs().get(0).floor, "a snapshot never writes back");
+		assertEquals("M5", store.runSnapshots().get(0).floor);
+	}
+
+	@Test
 	void duplicateCompletionIsIgnoredAcrossRestarts() {
 		LuckTrackingStore store = new LuckTrackingStore(file());
 		store.load();

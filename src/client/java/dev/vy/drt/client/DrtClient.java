@@ -10,6 +10,7 @@ import dev.vy.drt.client.cosmetics.DrtCosmetics;
 import dev.vy.drt.client.luck.LuckProbeClient;
 import dev.vy.drt.client.luck.LuckScreenCapture;
 import dev.vy.drt.client.screen.DungeonLootScreen;
+import dev.vy.drt.client.screen.DrtLuckRatingScreen;
 import dev.vy.drt.client.screen.DrtOnboardingScreen;
 import dev.vy.drt.client.screen.DungeonTrackerPositionScreen;
 import dev.vy.drt.client.tracker.DungeonRunTrackerFeature;
@@ -46,6 +47,7 @@ public final class DrtClient implements ClientModInitializer {
 	private static boolean openLootScreenNextTick;
 	private static boolean openMoveBoxNextTick;
 	private static boolean openOnboardingNextTick;
+	private static boolean openLuckRatingNextTick;
 	private static boolean autoOpenedOnboardingThisSession;
 	private static boolean iconCachesLoaded;
 
@@ -80,17 +82,24 @@ public final class DrtClient implements ClientModInitializer {
 				openLootScreenNextTick = true;
 			}
 
-			if (!openLootScreenNextTick && !openMoveBoxNextTick && !openOnboardingNextTick) return;
+			if (!openLootScreenNextTick && !openMoveBoxNextTick && !openOnboardingNextTick && !openLuckRatingNextTick) return;
 			if (client.player == null) {
 				openLootScreenNextTick = false;
 				openMoveBoxNextTick = false;
 				openOnboardingNextTick = false;
+				openLuckRatingNextTick = false;
 				return;
 			}
 
 			if (openOnboardingNextTick) {
 				openOnboardingNextTick = false;
 				client.setScreen(new DrtOnboardingScreen(tracker));
+				return;
+			}
+
+			if (openLuckRatingNextTick) {
+				openLuckRatingNextTick = false;
+				client.setScreen(new DrtLuckRatingScreen(null));
 				return;
 			}
 
@@ -110,7 +119,7 @@ public final class DrtClient implements ClientModInitializer {
 		ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> {
 			dispatcher.register(ClientCommands.literal("drt")
 				.executes(context -> {
-					context.getSource().sendError(Component.literal("§c[DRT] Invalid syntax, use /drt <config/loot/move/toggle/debug>"));
+					context.getSource().sendError(Component.literal("§c[DRT] Invalid syntax, use /drt <config/loot/luck/move/toggle/debug>"));
 					return 0;
 				})
 				.then(ClientCommands.literal("move")
@@ -132,6 +141,17 @@ public final class DrtClient implements ClientModInitializer {
 							return 0;
 						}
 						openLootScreenNextTick = true;
+						return Command.SINGLE_SUCCESS;
+					})
+				)
+				.then(ClientCommands.literal("luck")
+					.executes(context -> {
+						Minecraft client = context.getSource().getClient();
+						if (client.player == null) {
+							context.getSource().sendError(Component.literal("§c[DRT] Not in game"));
+							return 0;
+						}
+						openLuckRatingNextTick = true;
 						return Command.SINGLE_SUCCESS;
 					})
 				)

@@ -150,7 +150,7 @@ public final class LuckScreenCapture {
 		return coordinator;
 	}
 
-	private static CatacombsLootDatabase database() {
+	static synchronized CatacombsLootDatabase database() {
 		if (database == null && !databaseFailed) {
 			try {
 				database = CatacombsLootDatabase.loadBundled();

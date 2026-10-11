@@ -113,6 +113,16 @@ class LuckMissingDataPolicyTest {
 	}
 
 	@Test
+	void capturedRunsToGateCountsTheRunsInARowAFloorStillNeeds() {
+		assertEquals(10, new FloorCoverage("F5", 10, 8, 2, 0, false).capturedRunsToGate(), "18 of 20 reaches 90%");
+		assertFalse(FloorCoverage.meetsGate(8 + 9, 10 + 9), "one fewer does not");
+		assertEquals(27, new FloorCoverage("F7", 3, 0, 3, 0, false).capturedRunsToGate());
+		assertEquals(1, new FloorCoverage("M7", 19, 17, 2, 0, false).capturedRunsToGate());
+		assertEquals(0, new FloorCoverage("F5", 10, 9, 1, 0, true).capturedRunsToGate());
+		assertEquals(-1, new FloorCoverage(LuckHistoryEvaluation.UNKNOWN_FLOOR, 2, 0, 2, 0, false).capturedRunsToGate());
+	}
+
+	@Test
 	void exactlyNinetyPercentCapturedIsRatedAndOneMoreMissingRunIsNot() throws Exception {
 		LuckRunRecord live = live(S_RUN);
 		LuckRunRecord sPlus = live(S_PLUS_RUN);
@@ -124,6 +134,11 @@ class LuckMissingDataPolicyTest {
 		assertEquals(List.of("F5"), rated.ratedFloors());
 		assertEquals(Status.INSUFFICIENT_DATA, rated.status(), "rated, but nine F5 runs expect too few rare drops");
 		assertFalse(rated.withheldCauses().contains(WithholdCause.NO_ELIGIBLE_FLOOR));
+		double perRun = rated.expectedRareDrops() / 9;
+		assertEquals((int) Math.ceil((1.0 - rated.expectedRareDrops()) / perRun), rated.runsUntilSufficient());
+		assertTrue(rated.runsUntilSufficient() > 0);
+		assertNull(rated.estimate(), "only a withheld history gets an estimate");
+		assertNull(rated.estimateUnavailable());
 
 		List<LuckRunRecord> eighty = complete(live, 8);
 		eighty.addAll(unseen(sPlus, "F5", 2, last(eighty)));
@@ -136,6 +151,9 @@ class LuckMissingDataPolicyTest {
 		assertEquals(2, notRated.rejected().size());
 		assertTrue(notRated.rejected().stream().allMatch(run -> run.reasons().contains("OFFERS_NOT_OBSERVED")));
 		assertNull(notRated.evaluation());
+		assertNull(notRated.estimate(), "eight runs are too few even for a range");
+		assertTrue(notRated.estimateUnavailable().startsWith("the captured runs on F5 expect only"), notRated.estimateUnavailable());
+		assertEquals(-1, notRated.runsUntilSufficient(), "nothing is rated yet");
 	}
 
 	@Test
@@ -168,6 +186,8 @@ class LuckMissingDataPolicyTest {
 		assertEquals(List.of(WithholdCause.UNATTRIBUTED_RUNS), result.withheldCauses());
 		assertEquals(new FloorCoverage(LuckHistoryEvaluation.UNKNOWN_FLOOR, 1, 0, 1, 0, false), result.floorCoverage().get(1));
 		assertEquals(List.of("F5"), result.ratedFloors());
+		assertNull(result.estimate());
+		assertTrue(result.estimateUnavailable().contains("no readable floor"), result.estimateUnavailable());
 	}
 
 	@Test
@@ -194,6 +214,8 @@ class LuckMissingDataPolicyTest {
 		assertEquals("rerolled", result.excluded().get(0).luckRunId());
 		assertEquals(List.of("OBSIDIAN: offer 1 after a Kismet reroll"), result.excluded().get(0).evidence());
 		assertTrue(result.expectedRareDrops() > 0.0, "sufficiency is still reported alongside the withholding");
+		assertNull(result.estimate(), "a rerolled run is not an ordinary roll, so the bound cannot cover it");
+		assertTrue(result.estimateUnavailable().startsWith("Kismet rerolls are not simulated yet"), result.estimateUnavailable());
 	}
 
 	@Test
@@ -208,6 +230,8 @@ class LuckMissingDataPolicyTest {
 		assertEquals(List.of(WithholdCause.UNRECORDED_RUNS), result.withheldCauses());
 		assertTrue(result.withheldReasons().get(0).contains("after-missed-runs"), result.withheldReasons().toString());
 		assertEquals(List.of(new FloorCoverage("F5", 2, 2, 0, 0, true)), result.floorCoverage(), "every recorded run was captured");
+		assertNull(result.estimate(), "an unknown number of missed runs has no range");
+		assertTrue(result.estimateUnavailable().contains("did not record"), result.estimateUnavailable());
 	}
 
 	/**
@@ -263,6 +287,48 @@ class LuckMissingDataPolicyTest {
 		assertTrue(result.withheldReasons().get(0).startsWith("15 rejected runs on rated floors (15 with unseen loot)"), result.withheldReasons().toString());
 		assertNotNull(result.evaluation(), "the evaluation is kept for diagnostics");
 		assertNull(result.headlineBand(), "but never headlined");
+
+		LuckHistoryEvaluation.Estimate estimate = result.estimate();
+		assertNotNull(estimate, "the same bound gives a labelled range");
+		assertNull(result.estimateUnavailable());
+		assertEquals(List.of("F5"), estimate.floors());
+		assertEquals(140, estimate.scoredRuns());
+		assertEquals(15, estimate.missingRuns());
+		assertEquals(15, estimate.unknownOutcomes());
+		for (LuckEvaluator.Band band : bounds.bands()) {
+			assertTrue(band.compareTo(estimate.lowest()) >= 0 && band.compareTo(estimate.highest()) <= 0, band + " outside " + estimate);
+		}
+		LuckEvaluator.Band verdict = result.evaluation().band();
+		assertTrue(verdict.compareTo(estimate.lowest()) >= 0 && verdict.compareTo(estimate.highest()) <= 0, "the range includes the captured runs' own band");
+		assertTrue(estimate.lowPercentile() <= bounds.low().percentile() && estimate.highPercentile() >= bounds.high().percentile());
+	}
+
+	@Test
+	void aHistoryBelowTheGateGetsAnEstimateFromTheWorstSelectionBoundAndNoHeadline() throws Exception {
+		LuckRunRecord live = live(S_RUN);
+		List<LuckRunRecord> runs = rolled(live, 140, 31L);
+		runs.addAll(unseen(live(S_PLUS_RUN), "F5", 20, last(runs)));
+
+		LuckHistoryEvaluation result = evaluate(runs, 40);
+		assertEquals(List.of(new FloorCoverage("F5", 160, 140, 20, 0, false)), result.floorCoverage(), "87.5% captured is below the gate");
+		assertEquals(Status.WITHHELD, result.status());
+		assertEquals(List.of(WithholdCause.NO_ELIGIBLE_FLOOR), result.withheldCauses());
+		assertNull(result.evaluation(), "nothing is scored for the headline");
+		assertNull(result.missingRunBounds());
+		assertNull(result.headlineBand());
+
+		LuckHistoryEvaluation.Estimate estimate = result.estimate();
+		assertNotNull(estimate, result.estimateUnavailable());
+		assertEquals(List.of("F5"), estimate.floors());
+		assertEquals(140, estimate.scoredRuns());
+		assertEquals(20, estimate.missingRuns());
+		assertEquals(20, estimate.unknownOutcomes());
+		assertTrue(estimate.lowest().compareTo(estimate.highest()) <= 0);
+		assertTrue(estimate.lowPercentile() <= estimate.highPercentile());
+		assertEquals(40, result.floorCoverage().get(0).capturedRunsToGate(), "180 of 200 reaches 90%");
+
+		LuckHistoryEvaluation again = evaluate(runs, 40);
+		assertEquals(estimate, again.estimate(), "the same history and seed give the same range");
 	}
 
 	@Test
@@ -304,5 +370,14 @@ class LuckMissingDataPolicyTest {
 		assertTrue(scored.status() == Status.PROVISIONAL || scored.status() == Status.UNRESOLVED, scored.status() + " " + scored.withheldReasons());
 		assertNull(scored.missingRunBounds(), "nothing was missing");
 		assertEquals(scored.status() == Status.PROVISIONAL, scored.headlineBand() != null);
+		assertNull(scored.estimate(), "a scored history is never shown as an estimate");
+		assertNull(scored.estimateUnavailable());
+		assertEquals(0, scored.runsUntilSufficient());
+
+		LuckHistoryEvaluation again = evaluate(complete(live, 150), 40);
+		assertEquals(scored.evaluation().baseline().percentile(), again.evaluation().baseline().percentile(), "parallel scoring stays deterministic");
+		for (int i = 0; i < scored.evaluation().alternatives().size(); i++) {
+			assertEquals(scored.evaluation().alternatives().get(i).percentile(), again.evaluation().alternatives().get(i).percentile());
+		}
 	}
 }

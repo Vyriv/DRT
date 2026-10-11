@@ -59,12 +59,14 @@ public final class LuckTrackingStore {
 	private LoadState loadState = LoadState.NEW;
 	private Path preservedMalformedFile;
 	private IOException lastSaveError;
+	private long revision;
 
 	public LuckTrackingStore(Path path) {
 		this.path = Objects.requireNonNull(path, "path");
 	}
 
 	public synchronized LoadState load() {
+		revision++;
 		data = new FileData();
 		preservedMalformedFile = null;
 		if (!Files.exists(path)) {
@@ -140,6 +142,18 @@ public final class LuckTrackingStore {
 
 	public synchronized List<LuckRunRecord> runs() {
 		return List.copyOf(data.runs);
+	}
+
+	/** Moves on every load and successful save, so a reader can tell its copy is stale. */
+	public synchronized long revision() {
+		return revision;
+	}
+
+	/** Deep copies of every run, safe to read while capture keeps changing the stored ones. */
+	public synchronized List<LuckRunRecord> runSnapshots() {
+		List<LuckRunRecord> out = new ArrayList<>(data.runs.size());
+		for (LuckRunRecord run : data.runs) out.add(GSON.fromJson(GSON.toJson(run), LuckRunRecord.class));
+		return out;
 	}
 
 	public synchronized boolean containsCompletion(String completionFingerprint) {
@@ -504,6 +518,7 @@ public final class LuckTrackingStore {
 	private boolean save() {
 		try {
 			AtomicJsonFileStore.writeCrashSafe(path, GSON, data, false);
+			revision++;
 			lastSaveError = null;
 			if (loadState == LoadState.NEW) loadState = LoadState.LOADED;
 			return true;

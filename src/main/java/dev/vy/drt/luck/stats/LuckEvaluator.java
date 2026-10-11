@@ -207,12 +207,16 @@ public final class LuckEvaluator {
 
 		SplittableRandom seeds = new SplittableRandom(seed);
 		long nullSeed = seeds.nextLong();
-		ConfigurationResult base = score(database, observed, runs, baseline, samples, nullSeed);
-		List<ConfigurationResult> results = new ArrayList<>();
-		for (Configuration configuration : alternatives) {
-			// Common random numbers: every configuration uses the same seed so differences reflect the configuration.
-			results.add(score(database, observed, runs, configuration, samples, nullSeed));
-		}
+		// Common random numbers: every configuration uses the same seed so differences reflect the configuration.
+		// Each builds its own simulators, so they score in parallel and still match a sequential run exactly.
+		List<Configuration> configurations = new ArrayList<>(alternatives.size() + 1);
+		configurations.add(baseline);
+		configurations.addAll(alternatives);
+		List<ConfigurationResult> scored = configurations.parallelStream()
+			.map(configuration -> score(database, observed, runs, configuration, samples, nullSeed))
+			.toList();
+		ConfigurationResult base = scored.get(0);
+		List<ConfigurationResult> results = scored.subList(1, scored.size());
 
 		List<MidPPercentile.Result> all = new ArrayList<>();
 		all.add(base.percentile());

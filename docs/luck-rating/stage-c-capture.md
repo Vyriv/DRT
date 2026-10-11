@@ -77,6 +77,19 @@ This policy is deliberately strict. With 300 null samples, single-floor historie
 
 The bands are narrow (Lucky and Unlucky span 20 percentile points), the bound must stay inside the verdict's band including two standard errors of simulation, and one exceptional run can move a percentile several points. In practice a rated floor needs close to every run captured, and the 90% gate mostly matters for which floors can be rated at all. More null samples narrow the error margin but not the selection bound.
 
+The strict bound stays as it is. It is not loosened to produce more ratings.
+
+**Estimate for a withheld history.** `LuckHistoryEvaluation.Estimate` is a separate, labelled range, never a headline. It comes from the same worst-selection bound, so it assumes nothing about why runs are missing:
+
+- Withheld only because rejected runs could change the verdict: the range spans every band the bound and the plausible configurations reach.
+- Withheld only because no floor passes the gate: every floor with scorable runs is scored, gate or not, with the same pre-simulation checks, and its rejected runs are bounded the same way.
+- Any other cause gives no estimate, with the reason kept in `estimateUnavailable`. Kismet rerolls are not ordinary rolls, unrecorded runs have an unknown count, runs without a floor cannot be placed, and contradictions or too many configurations leave nothing to bound.
+- Too few expected rare drops on the estimate's floors also gives no estimate.
+
+A range from Very unlucky to Very lucky is reported as uninformative (`informative()` is false) rather than as an estimate. The estimate is only computed for withheld histories, so a scored history never carries one.
+
+**Looser random-loss bound (option B).** This bound is acceptable only where the capture mechanism proves that whether a run was captured is independent of its loot. No current mechanism does. "No chest opened" is not enough, because players see chest previews in the dungeon and Croesus. The one case that is loot-independent, a run blocked only by an unread numeric score with every chest seen, already counts exactly. So no run currently qualifies for a looser bound.
+
 ## Evaluation result
 
 `LuckHistoryEvaluation` keeps:
@@ -87,7 +100,9 @@ The bands are narrow (Lucky and Unlucky span 20 percentile points), the bound mu
 - the expected rare drops of the rated floors and whether that is statistically sufficient, reported even when the headline is withheld;
 - the number of distinct modifier snapshots, the baseline meter windows and notes, the alternatives dropped for contradicting readings;
 - every `WithholdCause` with a readable reason;
-- the engine's evaluation when it ran, and the missing-run bounds when they were checked. A withheld result can keep its evaluation for diagnostics; `headlineBand()` is only set when the status is `PROVISIONAL`.
+- the engine's evaluation when it ran, and the missing-run bounds when they were checked. A withheld result can keep its evaluation for diagnostics; `headlineBand()` is only set when the status is `PROVISIONAL`;
+- for a withheld history, the labelled estimate or the reason there is none;
+- progress helpers: `FloorCoverage.capturedRunsToGate()`, the fully captured runs in a row a floor still needs, and `runsUntilSufficient()`, roughly how many more rated runs reach one expected rare drop.
 
 A run is scorable when its own record is complete. A history is statistically sufficient only when the rated floors' scorable runs expect at least one rare drop. Status is one of:
 
@@ -118,7 +133,7 @@ Croesus counts chest expiry down from 72 hours after the run, so runs left longe
 
 Feasible, all player-driven:
 
-1. **Guided Croesus pass.** While the Croesus menu is open, mark each entry DRT has linked: captured, needs viewing, or not linked. Show a count such as "14 runs still need their chests viewed" and keep it updated as the player opens and closes run views. One click and one back per run, with capture as soon as the view is stable, makes 40 runs a minute or two of clicking.
+1. **Optional guided Croesus pass.** Never a required workflow; DRT stays passive. While the Croesus menu is open, mark each entry DRT has linked: captured, needs viewing, or not linked. Show a count such as "14 runs still need their chests viewed" and keep it updated as the player opens and closes run views. One click and one back per run, with capture as soon as the view is stable, makes 40 runs a minute or two of clicking.
 2. **Match across pages.** The matcher treats each page alone and refuses blocks that could continue onto another page (`PAGE_BOUNDARY`). Combining the pages seen in one visit would link those entries too.
 3. **Content fingerprints.** When the player opened a chest at the end of the dungeon, its contents identify the Croesus run exactly. That resolves `AMBIGUOUS` blocks of same-floor, same-party runs within one rounded age window.
 4. **Expiry reminder.** A passive notice when recorded runs approach their 72-hour expiry unviewed.
@@ -156,9 +171,21 @@ Regression tests: `LuckScoringInputTest`, `LuckCoverageTest`, `LuckTrackingStore
 - **Data gaps.** Dyes and other known gaps are not modelled. Runs played without DRT running are only noticed when a later reading shows unexplained progress, which withholds the headline; without a later reading they go unnoticed, and a derived start assumes no such run happened inside its window.
 - **Meter assumptions.** Selections are assumed unchanged between readings; a change is only noted when the next reading shows a different selection. Fills between the 0, 50 and 100% candidates are not tried. Resets under the on-purchase rule rely on recorded purchases, which can be unknown.
 - **Runs left out.** Rejected runs are bounded, not simulated as observed. The bound assumes the worst selection, not the worst possible loot, so a capture pattern more extreme than "the missing runs were the luckiest ones" is not covered. A gap's meter uses the fill grid even when the missing run's score is known; carrying its exact gain with a reset or no reset would be tighter.
-- **Strictness.** The missing-run check withholds most histories with more than a few unseen runs on a rated floor (see the table above). Whether provably loot-independent losses, such as an unread score, should get a looser random-loss bound is a product decision.
+- **Strictness.** The missing-run check withholds most histories with more than a few unseen runs on a rated floor (see the table above). This is kept on purpose. Incomplete histories get a labelled estimate where the bound allows one, and no capture mechanism yet qualifies for a looser bound.
 
-## What remains before Stage D
+## Luck Rating screen (Stage D)
+
+`/drt luck` opens `DrtLuckRatingScreen`, which is read-only. `LuckRatingService` evaluates deep copies of the stored runs on a low-priority background pool, with 1000 null samples per configuration, and configurations are scored in parallel. The result is cached against `LuckTrackingStore.revision()`, so it is only recalculated after something new is captured or the modifiers change.
+
+- **Verdict block.** The status is labelled distinctly: Provisional, Unresolved, Withheld, Not enough data, Not rated or No runs. Provisional shows its band and percentile. Unresolved shows the band range. Withheld shows its first cause and the labelled estimate, marked "Estimate, incomplete history" and "Not verified", or why there is none. Not enough data shows a progress bar towards one expected rare drop and roughly how many more captured runs it needs.
+- **Setup strip.** It shows whether the RNG Meter overview has been read and how many modifiers are unknown, with an Edit button for the preset. Nothing else is asked of the player.
+- **Floors tab.** For each floor: captured out of recorded, whether it is rated, and how many fully captured runs it still needs.
+- **Runs tab.** Every recorded run, newest first, as Scored, Captured (floor not rated), Not captured with its reasons, Held out with Kismet evidence, or New since the last calculation.
+- **Details tab.** Every withheld cause with its explanation and raw reason, the estimate's floors, counts and percentile range, data counts, caveats and model notes.
+
+Visual verification happens in Prism. Optional Croesus guidance comes after the screen and stays optional.
+
+## What remains
 
 1. Capture more live runs: an S score of 285 or 299, a real Kismet reroll, an opened chest in the run view, and a Master Mode run.
-2. Build the guided Croesus pass and cross-page matching, since the policy needs close to every run captured.
+2. Optional Croesus guidance and cross-page matching, since a defensible rating needs close to every run on a floor captured.
