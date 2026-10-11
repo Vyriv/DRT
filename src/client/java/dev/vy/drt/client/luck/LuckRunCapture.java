@@ -1,13 +1,19 @@
 package dev.vy.drt.client.luck;
 
 import dev.vy.drt.DungeonRunTracker;
+import dev.vy.drt.client.tracker.TabReader;
 import dev.vy.drt.config.DungeonRunCompletionRecord;
+import dev.vy.drt.luck.capture.DungeonPartyRoster;
 import dev.vy.drt.luck.capture.DungeonScoreReading;
 import dev.vy.drt.luck.capture.LuckModifierProfile;
 import dev.vy.drt.luck.capture.LuckRunRecord;
 import dev.vy.drt.luck.capture.LuckTrackingStore;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import net.fabricmc.loader.api.FabricLoader;
+import net.minecraft.ChatFormatting;
+import net.minecraft.client.Minecraft;
 
 public final class LuckRunCapture {
 	private static LuckTrackingStore store;
@@ -62,15 +68,29 @@ public final class LuckRunCapture {
 				completion.grade,
 				scoreReading
 			);
+			run.party = readParty();
+			if (run.party != null) run.partySource = LuckRunRecord.PARTY_SOURCE_TAB_LIST;
 			LuckTrackingStore.AddResult result = store().addRun(run);
 			if (result == LuckTrackingStore.AddResult.SAVE_FAILED) {
 				DungeonRunTracker.LOGGER.warn("[DRT] Could not save luck capture for {}", completion.completionFingerprint, store().lastSaveError());
 			} else {
-				DungeonRunTracker.LOGGER.info("[DRT] Luck capture {}: floor={} grade={} score={}",
-					result, run.floor, run.grade, run.score == null ? "unknown" : run.score);
+				DungeonRunTracker.LOGGER.info("[DRT] Luck capture {}: floor={} grade={} score={} party={}",
+					result, run.floor, run.grade, run.score == null ? "unknown" : run.score,
+					run.party == null ? "unread" : run.party.size());
 			}
 		} catch (RuntimeException e) {
 			DungeonRunTracker.LOGGER.warn("[DRT] Luck capture failed for {}", completion.completionFingerprint, e);
 		}
+	}
+
+	private static List<String> readParty() {
+		Minecraft client = Minecraft.getInstance();
+		if (client == null || client.player == null) return null;
+		List<String> lines = new ArrayList<>();
+		for (String raw : TabReader.readRawLines(client)) {
+			String stripped = ChatFormatting.stripFormatting(raw);
+			if (stripped != null) lines.add(stripped.trim());
+		}
+		return DungeonPartyRoster.fromTabLines(lines, client.player.getGameProfile().name());
 	}
 }

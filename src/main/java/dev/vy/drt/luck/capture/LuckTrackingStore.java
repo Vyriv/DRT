@@ -7,6 +7,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
 import com.google.gson.JsonParser;
 import dev.vy.drt.config.AtomicJsonFileStore;
+import dev.vy.drt.luck.ChestTier;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -26,17 +27,29 @@ import java.util.UUID;
  */
 public final class LuckTrackingStore {
 	public static final String SCHEMA = "drt-luck";
-	public static final int SCHEMA_VERSION = 1;
+	/** 2 adds Croesus links, structured offers, meter readings, meter requirements and unmatched Croesus chests. */
+	public static final int SCHEMA_VERSION = 2;
+	static final int MAX_METER_READINGS = 2_000;
+	static final int MAX_UNMATCHED_CROESUS = 300;
 
 	public enum LoadState { NEW, LOADED, RECOVERED_FROM_MALFORMED, NEWER_SCHEMA_READ_ONLY, UNREADABLE_READ_ONLY }
 
 	public enum AddResult { ADDED, DUPLICATE, READ_ONLY, SAVE_FAILED }
+
+	public enum OfferResult { ADDED, UNCHANGED, CHANGED_UNVERIFIED, RUN_NOT_FOUND, READ_ONLY, SAVE_FAILED }
+
+	/** A reading attached to a run as its after-run state, with the before-run reading when there is one. */
+	public record MeterAttachment(String luckRunId, String floor, LuckRunRecord.LuckMeterSnapshot before, LuckRunRecord.LuckMeterSnapshot after) {
+	}
 
 	static final class FileData {
 		String schema = SCHEMA;
 		int schemaVersion = SCHEMA_VERSION;
 		LuckModifierProfile profile = LuckModifierProfile.unknown();
 		List<LuckRunRecord> runs = new ArrayList<>();
+		List<LuckMeterReading> meterReadings = new ArrayList<>();
+		List<LuckMeterRequirement> meterRequirements = new ArrayList<>();
+		List<UnmatchedCroesusRun> unmatchedCroesus = new ArrayList<>();
 	}
 
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().serializeNulls().create();
@@ -152,11 +165,340 @@ public final class LuckTrackingStore {
 			if (sameCompletion || run.luckRunId.equals(existing.luckRunId)) return AddResult.DUPLICATE;
 		}
 		if (run.modifiers == null) run.modifiers = data.profile.copy();
+		LuckMeterReading before = readingBefore(run);
+		if (before != null) run.meterSnapshots.add(snapshot(before, LuckRunRecord.PHASE_BEFORE_RUN));
 		run.coverage = LuckCoverage.evaluate(run);
 		data.runs.add(run);
 		if (save()) return AddResult.ADDED;
 		data.runs.remove(run);
 		return AddResult.SAVE_FAILED;
+	}
+
+	public synchronized LuckRunRecord run(String luckRunId) {
+		LuckRunRecord run = find(luckRunId);
+		return run == null ? null : GSON.fromJson(GSON.toJson(run), LuckRunRecord.class);
+	}
+
+	public synchronized List<LuckMeterReading> meterReadings() {
+		return List.copyOf(data.meterReadings);
+	}
+
+	public synchronized List<UnmatchedCroesusRun> unmatchedCroesus() {
+		return List.copyOf(data.unmatchedCroesus);
+	}
+
+	public synchronized LuckMeterRequirement requirement(String floor, String itemName) {
+		for (LuckMeterRequirement requirement : data.meterRequirements) {
+			if (requirement.floor.equals(floor) && requirement.itemName.equals(itemName)) return requirement;
+		}
+		return null;
+	}
+
+	/**
+	 * Updates runs matched to entries of a Croesus page: link details, listed modifiers and which
+	 * chests were opened. Returns how many runs changed.
+	 */
+	public synchronized int applyCroesusMenu(CroesusMenuParser.Menu menu, CroesusRunMatcher.Result matches, long now) {
+		if (isReadOnly() || menu == null || matches == null) return 0;
+		int changed = 0;
+		for (CroesusMenuParser.RunEntry entry : menu.entries()) {
+			CroesusRunMatcher.EntryMatch match = matches.forSlot(entry.slot());
+			if (match == null || !match.matched()) continue;
+			LuckRunRecord run = find(match.luckRunId());
+			if (run == null) continue;
+			if (updateLink(run, entry, match.method(), now) | updatePurchases(run, entry.noChestsOpened(), entry.openedChests())) {
+				run.coverage = LuckCoverage.evaluate(run);
+				changed++;
+			}
+		}
+		if (changed > 0 && !save()) return 0;
+		return changed;
+	}
+
+	/**
+	 * Stores every chest shown for a run. Identical contents are not stored twice; different
+	 * contents for a chest already seen are appended and flagged, never treated as a reroll.
+	 */
+	public synchronized OfferResult recordCroesusOffers(String luckRunId, CroesusRunViewParser.RunView view, long now) {
+		if (isReadOnly()) return OfferResult.READ_ONLY;
+		LuckRunRecord run = find(luckRunId);
+		if (run == null || view == null) return OfferResult.RUN_NOT_FOUND;
+		boolean added = false;
+		boolean changed = false;
+		for (CroesusRunViewParser.ChestOffer offer : view.chests()) {
+			LuckRunRecord.LuckChestRecord chest = chestRecord(run.chests, offer.tier().name(), LuckRunRecord.SOURCE_CROESUS_RUN_VIEW);
+			int result = appendOffer(chest, offer, now);
+			if (result > 0) added = true;
+			if (result > 1) changed = true;
+		}
+		boolean dirty = added;
+		if (run.croesus != null) {
+			if (!view.availableModifiers().isEmpty()) {
+				dirty |= noteModifiers(run.croesus, view.availableModifiers(), LuckRunRecord.SOURCE_CROESUS_RUN_VIEW, now);
+			}
+			dirty |= updatePurchases(run, run.croesus.noChestsOpened, run.croesus.openedChests);
+		}
+		if (!dirty) return OfferResult.UNCHANGED;
+		run.coverage = LuckCoverage.evaluate(run);
+		if (!save()) return OfferResult.SAVE_FAILED;
+		if (!added) return OfferResult.UNCHANGED;
+		return changed ? OfferResult.CHANGED_UNVERIFIED : OfferResult.ADDED;
+	}
+
+	/** Keeps a Croesus observation that matched no run, merging repeats of the same chests. */
+	public synchronized boolean recordUnmatchedCroesus(UnmatchedCroesusRun observation) {
+		if (isReadOnly() || observation == null || observation.fingerprint.isBlank()) return false;
+		for (UnmatchedCroesusRun existing : data.unmatchedCroesus) {
+			if (!existing.fingerprint.equals(observation.fingerprint)) continue;
+			existing.lastObservedAtEpochMillis = observation.lastObservedAtEpochMillis;
+			if (observation.entryName != null || existing.entryName == null) existing.reason = observation.reason;
+			if (existing.entryName == null && observation.entryName != null) {
+				existing.entryName = observation.entryName;
+				existing.players = observation.players;
+				existing.completedText = observation.completedText;
+				existing.completedAfterEpochMillis = observation.completedAfterEpochMillis;
+				existing.completedBeforeEpochMillis = observation.completedBeforeEpochMillis;
+				existing.floor = observation.floor;
+				existing.masterMode = observation.masterMode;
+			}
+			return save();
+		}
+		data.unmatchedCroesus.add(observation);
+		while (data.unmatchedCroesus.size() > MAX_UNMATCHED_CROESUS) data.unmatchedCroesus.remove(0);
+		return save();
+	}
+
+	/** Replaces the stored requirements for a floor with the latest floor screen. */
+	public synchronized boolean recordMeterRequirements(String floor, List<LuckMeterRequirement> items) {
+		if (isReadOnly() || floor == null || items == null || items.isEmpty()) return false;
+		data.meterRequirements.removeIf(requirement -> requirement.floor.equals(floor));
+		data.meterRequirements.addAll(items);
+		return save();
+	}
+
+	/**
+	 * Stores a meter reading and, when it is the first reading after a captured run on that floor,
+	 * attaches it as the run's after-run state.
+	 */
+	public synchronized List<MeterAttachment> recordMeterReading(LuckMeterReading reading) {
+		if (isReadOnly() || reading == null || reading.floor.isBlank()) return List.of();
+		reading.normalize();
+		LuckMeterRequirement requirement = reading.selectedItem == null ? null : requirement(reading.floor, reading.selectedItem);
+		if (requirement != null) {
+			if (reading.requiredScore == null && requirement.requiredScore != null) {
+				reading.requiredScore = requirement.requiredScore;
+				reading.requiredSource = LuckMeterReading.SOURCE_FLOOR_MENU;
+			}
+			if (reading.guaranteeChest == null) reading.guaranteeChest = requirement.appearsIn;
+			if (reading.selectedKey == null) reading.selectedKey = requirement.itemKey;
+		}
+
+		LuckMeterReading latest = latestReading(reading.floor);
+		long lastRun = latestCompletion(reading.floor, Long.MAX_VALUE);
+		if (latest != null && latest.sameState(reading) && lastRun < latest.observedAtEpochMillis) {
+			latest.lastObservedAtEpochMillis = Math.max(latest.lastObservedAtEpochMillis, reading.observedAtEpochMillis);
+			if (latest.requiredScore == null && reading.requiredScore != null) {
+				latest.requiredScore = reading.requiredScore;
+				latest.requiredSource = reading.requiredSource;
+			}
+			save();
+			return List.of();
+		}
+		data.meterReadings.add(reading);
+		while (data.meterReadings.size() > MAX_METER_READINGS) data.meterReadings.remove(0);
+
+		List<MeterAttachment> attachments = new ArrayList<>();
+		LuckRunRecord run = latestRunBefore(reading.floor, reading.observedAtEpochMillis);
+		if (run != null && snapshotFor(run, LuckRunRecord.PHASE_AFTER_RUN) == null) {
+			LuckRunRecord.LuckMeterSnapshot after = snapshot(reading, LuckRunRecord.PHASE_AFTER_RUN);
+			run.meterSnapshots.add(after);
+			run.coverage = LuckCoverage.evaluate(run);
+			attachments.add(new MeterAttachment(run.luckRunId, run.floor, snapshotFor(run, LuckRunRecord.PHASE_BEFORE_RUN), after));
+		}
+		save();
+		return attachments;
+	}
+
+	private LuckRunRecord find(String luckRunId) {
+		if (luckRunId == null) return null;
+		for (LuckRunRecord run : data.runs) if (luckRunId.equals(run.luckRunId)) return run;
+		return null;
+	}
+
+	private LuckMeterReading latestReading(String floor) {
+		for (int i = data.meterReadings.size() - 1; i >= 0; i--) {
+			if (data.meterReadings.get(i).floor.equals(floor)) return data.meterReadings.get(i);
+		}
+		return null;
+	}
+
+	/** Latest captured completion on a floor strictly before {@code before}, or {@link Long#MIN_VALUE}. */
+	private long latestCompletion(String floor, long before) {
+		long latest = Long.MIN_VALUE;
+		for (LuckRunRecord run : data.runs) {
+			if (run.floor.equalsIgnoreCase(floor) && run.completedAtEpochMillis < before) latest = Math.max(latest, run.completedAtEpochMillis);
+		}
+		return latest;
+	}
+
+	private LuckRunRecord latestRunBefore(String floor, long time) {
+		LuckRunRecord latest = null;
+		for (LuckRunRecord run : data.runs) {
+			if (!run.floor.equalsIgnoreCase(floor) || run.completedAtEpochMillis >= time) continue;
+			if (latest == null || run.completedAtEpochMillis > latest.completedAtEpochMillis) latest = run;
+		}
+		return latest;
+	}
+
+	/** The newest reading taken after the floor's previous captured run and before this one. */
+	private LuckMeterReading readingBefore(LuckRunRecord run) {
+		long previous = latestCompletion(run.floor, run.completedAtEpochMillis);
+		for (int i = data.meterReadings.size() - 1; i >= 0; i--) {
+			LuckMeterReading reading = data.meterReadings.get(i);
+			if (!reading.floor.equalsIgnoreCase(run.floor)) continue;
+			if (reading.lastObservedAtEpochMillis >= run.completedAtEpochMillis) continue;
+			return reading.observedAtEpochMillis > previous ? reading : null;
+		}
+		return null;
+	}
+
+	private static LuckRunRecord.LuckMeterSnapshot snapshotFor(LuckRunRecord run, String phase) {
+		for (LuckRunRecord.LuckMeterSnapshot snapshot : run.meterSnapshots) {
+			if (phase.equals(snapshot.phase) && run.floor.equalsIgnoreCase(snapshot.floor)) return snapshot;
+		}
+		return null;
+	}
+
+	private static LuckRunRecord.LuckMeterSnapshot snapshot(LuckMeterReading reading, String phase) {
+		LuckRunRecord.LuckMeterSnapshot snapshot = new LuckRunRecord.LuckMeterSnapshot();
+		snapshot.floor = reading.floor;
+		snapshot.phase = phase;
+		snapshot.state = reading.storedScore == null ? LuckCoverage.MeterStatus.UNKNOWN.name() : LuckCoverage.MeterStatus.OBSERVED.name();
+		snapshot.selectedItem = reading.selectedItem;
+		snapshot.selectedKey = reading.selectedKey;
+		snapshot.storedScore = reading.storedScore;
+		snapshot.storedText = reading.storedText;
+		snapshot.requiredScore = reading.requiredScore;
+		snapshot.requiredText = reading.requiredText;
+		snapshot.guaranteeChest = reading.guaranteeChest;
+		snapshot.source = reading.source;
+		snapshot.observedAtEpochMillis = reading.observedAtEpochMillis;
+		return snapshot;
+	}
+
+	private static LuckRunRecord.LuckChestRecord chestRecord(List<LuckRunRecord.LuckChestRecord> chests, String tier, String source) {
+		for (LuckRunRecord.LuckChestRecord chest : chests) if (tier.equals(chest.tier)) return chest;
+		LuckRunRecord.LuckChestRecord chest = new LuckRunRecord.LuckChestRecord();
+		chest.tier = tier;
+		chest.source = source;
+		chests.add(chest);
+		return chest;
+	}
+
+	/** 0 when unchanged, 1 for a first offer, 2 for different contents after an earlier offer. */
+	static int appendOffer(LuckRunRecord.LuckChestRecord chest, CroesusRunViewParser.ChestOffer offer, long now) {
+		if (offer.costCoins() != null) chest.costCoins = offer.costCoins();
+		if (offer.costText() != null) chest.costText = offer.costText();
+		List<String> texts = offer.contentTexts();
+		LuckRunRecord.LuckOfferSnapshot last = chest.offers.isEmpty() ? null : chest.offers.get(chest.offers.size() - 1);
+		if (last != null && contentTexts(last).equals(texts)) return 0;
+		LuckRunRecord.LuckOfferSnapshot snapshot = new LuckRunRecord.LuckOfferSnapshot();
+		snapshot.index = chest.offers.size();
+		snapshot.observedAtEpochMillis = now;
+		snapshot.changedFromPrevious = last != null;
+		snapshot.source = LuckRunRecord.SOURCE_CROESUS_RUN_VIEW;
+		for (LuckText.ContentLine line : offer.contents()) {
+			LuckRunRecord.LuckContentLine content = new LuckRunRecord.LuckContentLine();
+			content.text = line.text();
+			content.name = line.name();
+			content.quantity = line.quantity();
+			content.kind = line.kind() == null ? null : line.kind().name();
+			content.key = line.key();
+			snapshot.contents.add(content);
+			if (line.key() != null) snapshot.itemKeys.add(line.key());
+		}
+		snapshot.rawLines.addAll(offer.rawLines());
+		chest.offers.add(snapshot);
+		return last == null ? 1 : 2;
+	}
+
+	private static List<String> contentTexts(LuckRunRecord.LuckOfferSnapshot offer) {
+		List<String> out = new ArrayList<>(offer.contents.size());
+		for (LuckRunRecord.LuckContentLine line : offer.contents) out.add(line.text);
+		return out;
+	}
+
+	private static boolean updateLink(LuckRunRecord run, CroesusMenuParser.RunEntry entry, String method, long now) {
+		boolean changed = false;
+		LuckRunRecord.LuckCroesusLink link = run.croesus;
+		if (link == null) {
+			link = new LuckRunRecord.LuckCroesusLink();
+			link.firstMatchedAtEpochMillis = now;
+			link.method = method;
+			run.croesus = link;
+			changed = true;
+		}
+		link.lastSeenAtEpochMillis = now;
+		if (!entry.name().equals(link.entryName)) {
+			link.entryName = entry.name();
+			changed = true;
+		}
+		if (!entry.players().equals(link.players)) {
+			link.players = new ArrayList<>(entry.players());
+			changed = true;
+		}
+		if (!Objects.equals(entry.completedText(), link.completedText) || !Objects.equals(entry.expiresText(), link.expiresText)) {
+			link.completedText = entry.completedText();
+			link.expiresText = entry.expiresText();
+			changed = true;
+		}
+		if (entry.noChestsOpened() != link.noChestsOpened || !entry.openedChests().equals(link.openedChests)) {
+			link.noChestsOpened = entry.noChestsOpened();
+			link.openedChests = new ArrayList<>(entry.openedChests());
+			changed = true;
+		}
+		changed |= noteModifiers(link, entry.availableModifiers(), LuckRunRecord.SOURCE_CROESUS_MENU, now);
+		return changed;
+	}
+
+	private static boolean noteModifiers(LuckRunRecord.LuckCroesusLink link, List<String> modifiers, String source, long now) {
+		List<LuckRunRecord.LuckModifierObservation> history = link.modifierHistory;
+		LuckRunRecord.LuckModifierObservation last = history.isEmpty() ? null : history.get(history.size() - 1);
+		link.availableModifiers = new ArrayList<>(modifiers);
+		if (last != null && last.modifiers.equals(modifiers)) return false;
+		LuckRunRecord.LuckModifierObservation observation = new LuckRunRecord.LuckModifierObservation();
+		observation.observedAtEpochMillis = now;
+		observation.source = source;
+		observation.modifiers = new ArrayList<>(modifiers);
+		history.add(observation);
+		return true;
+	}
+
+	/** Marks chests opened or unopened from the entry's "Opened Chest:" line. */
+	private static boolean updatePurchases(LuckRunRecord run, boolean noChestsOpened, List<String> openedChests) {
+		List<String> opened = new ArrayList<>();
+		for (String name : openedChests) {
+			ChestTier tier = LuckText.chestTier(name);
+			if (tier == null) return false;
+			opened.add(tier.name());
+		}
+		if (!noChestsOpened && opened.isEmpty()) return false;
+		boolean changed = false;
+		for (String tier : opened) {
+			LuckRunRecord.LuckChestRecord chest = chestRecord(run.chests, tier, LuckRunRecord.SOURCE_CROESUS_MENU);
+			if (!Boolean.TRUE.equals(chest.purchased)) {
+				chest.purchased = true;
+				if (!chest.offers.isEmpty()) chest.purchasedOfferIndex = chest.offers.size() - 1;
+				changed = true;
+			}
+		}
+		for (LuckRunRecord.LuckChestRecord chest : run.chests) {
+			if (opened.contains(chest.tier) || Boolean.FALSE.equals(chest.purchased)) continue;
+			if (Boolean.TRUE.equals(chest.purchased)) continue;
+			chest.purchased = false;
+			changed = true;
+		}
+		return changed;
 	}
 
 	private boolean save() {
@@ -196,6 +538,13 @@ public final class LuckTrackingStore {
 			run.normalize();
 			run.coverage = LuckCoverage.evaluate(run);
 		}
+		if (parsed.meterReadings == null) parsed.meterReadings = new ArrayList<>();
+		parsed.meterReadings.removeIf(Objects::isNull);
+		parsed.meterReadings.forEach(LuckMeterReading::normalize);
+		if (parsed.meterRequirements == null) parsed.meterRequirements = new ArrayList<>();
+		parsed.meterRequirements.removeIf(requirement -> requirement == null || requirement.floor == null || requirement.itemName == null);
+		if (parsed.unmatchedCroesus == null) parsed.unmatchedCroesus = new ArrayList<>();
+		parsed.unmatchedCroesus.removeIf(observation -> observation == null || observation.fingerprint == null);
 		return parsed;
 	}
 }

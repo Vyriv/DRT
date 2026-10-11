@@ -18,6 +18,10 @@ public final class LuckRunRecord {
 	public Integer score;
 	public String scoreSource;
 	public LuckModifierProfile modifiers;
+	/** Party members read from the tab list at completion; null when not read. */
+	public List<String> party;
+	public String partySource;
+	public LuckCroesusLink croesus;
 	public List<LuckChestRecord> chests = new ArrayList<>();
 	public List<LuckMeterSnapshot> meterSnapshots = new ArrayList<>();
 	public LuckCoverage coverage;
@@ -29,15 +33,56 @@ public final class LuckRunRecord {
 		public List<LuckOfferSnapshot> offers = new ArrayList<>();
 		public Boolean purchased;
 		public Integer purchasedOfferIndex;
+		/** Coin cost as listed, 0 for FREE; null when not observed. */
+		public Long costCoins;
+		public String costText;
 	}
 
-	/** Contents of a chest as observed once. Index 0 is the original offer, 1 the Kismet reroll. */
+	/**
+	 * Contents of a chest as observed once. Offers are appended in the order seen. A later offer
+	 * with different contents is flagged {@code changedFromPrevious}; {@code afterKismetReroll} is
+	 * only set once a reroll has been confirmed in game.
+	 */
 	public static final class LuckOfferSnapshot {
 		public int index;
 		public long observedAtEpochMillis;
 		public boolean afterKismetReroll;
+		public boolean changedFromPrevious;
+		public String source;
 		public List<String> itemKeys = new ArrayList<>();
+		public List<LuckContentLine> contents = new ArrayList<>();
 		public List<String> rawLines = new ArrayList<>();
+	}
+
+	/** One Contents line; {@code key} is null when the line could not be named without guessing. */
+	public static final class LuckContentLine {
+		public String text = "";
+		public String name = "";
+		public int quantity = 1;
+		public String kind;
+		public String key;
+	}
+
+	/** How this run was linked to a Croesus entry, and what that entry last showed. */
+	public static final class LuckCroesusLink {
+		public long firstMatchedAtEpochMillis;
+		public long lastSeenAtEpochMillis;
+		public String method = "";
+		public String entryName = "";
+		public List<String> players = new ArrayList<>();
+		public String completedText;
+		public String expiresText;
+		public boolean noChestsOpened;
+		public List<String> openedChests = new ArrayList<>();
+		public List<String> availableModifiers = new ArrayList<>();
+		/** Each change in the listed modifiers, oldest first. */
+		public List<LuckModifierObservation> modifierHistory = new ArrayList<>();
+	}
+
+	public static final class LuckModifierObservation {
+		public long observedAtEpochMillis;
+		public String source = "";
+		public List<String> modifiers = new ArrayList<>();
 	}
 
 	/** RNG Meter state for one floor, tagged with how it was obtained. */
@@ -46,12 +91,22 @@ public final class LuckRunRecord {
 		public String phase = "";
 		public String state = LuckCoverage.MeterStatus.UNKNOWN.name();
 		public String selectedItem;
+		public String selectedKey;
 		public Long storedScore;
+		public String storedText;
 		public Long requiredScore;
+		public String requiredText;
+		public String guaranteeChest;
+		public String source;
 		public long observedAtEpochMillis;
 	}
 
 	public static final String SCORE_SOURCE_COMPLETION_CHAT = "COMPLETION_CHAT";
+	public static final String PHASE_BEFORE_RUN = "BEFORE_RUN";
+	public static final String PHASE_AFTER_RUN = "AFTER_RUN";
+	public static final String SOURCE_CROESUS_RUN_VIEW = "CROESUS_RUN_VIEW";
+	public static final String SOURCE_CROESUS_MENU = "CROESUS_MENU";
+	public static final String PARTY_SOURCE_TAB_LIST = "TAB_LIST";
 
 	/**
 	 * Builds the record for a DRT dungeon completion. The numeric score is only kept when it was
@@ -96,6 +151,28 @@ public final class LuckRunRecord {
 		for (LuckChestRecord chest : chests) {
 			if (chest.offers == null) chest.offers = new ArrayList<>();
 			chest.offers.removeIf(offer -> offer == null);
+			for (LuckOfferSnapshot offer : chest.offers) {
+				if (offer.itemKeys == null) offer.itemKeys = new ArrayList<>();
+				if (offer.contents == null) offer.contents = new ArrayList<>();
+				offer.contents.removeIf(line -> line == null);
+				if (offer.rawLines == null) offer.rawLines = new ArrayList<>();
+			}
+			if (chest.costCoins != null && chest.costCoins < 0) chest.costCoins = null;
+		}
+		if (party != null) {
+			party = new ArrayList<>(party);
+			party.removeIf(name -> name == null || name.isBlank());
+			if (party.isEmpty()) {
+				party = null;
+				partySource = null;
+			}
+		}
+		if (croesus != null) {
+			if (croesus.players == null) croesus.players = new ArrayList<>();
+			if (croesus.openedChests == null) croesus.openedChests = new ArrayList<>();
+			if (croesus.availableModifiers == null) croesus.availableModifiers = new ArrayList<>();
+			if (croesus.modifierHistory == null) croesus.modifierHistory = new ArrayList<>();
+			croesus.modifierHistory.removeIf(observation -> observation == null);
 		}
 		if (meterSnapshots == null) meterSnapshots = new ArrayList<>();
 		meterSnapshots.removeIf(snapshot -> snapshot == null);

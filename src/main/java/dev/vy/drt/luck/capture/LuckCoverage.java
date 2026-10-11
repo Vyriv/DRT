@@ -15,7 +15,7 @@ import java.util.Set;
  * {@code caveats} are gaps the scoring engine handles by widening its range instead.
  */
 public final class LuckCoverage {
-	public static final int VERSION = 1;
+	public static final int VERSION = 2;
 
 	public enum ScoreStatus { OBSERVED, GRADE_ONLY, MISSING }
 
@@ -25,7 +25,11 @@ public final class LuckCoverage {
 
 	public enum MeterStatus { OBSERVED, DERIVED, UNKNOWN }
 
-	public enum KismetStatus { NOT_OBSERVED, NO_REROLL, REROLL_WITH_ORIGINAL, REROLL_WITHOUT_ORIGINAL }
+	/**
+	 * Kismet handling is provisional until a real reroll has been captured: a change in a chest's
+	 * contents is recorded as {@code CONTENTS_CHANGED_UNVERIFIED} and never read as a reroll.
+	 */
+	public enum KismetStatus { NOT_OBSERVED, NO_REROLL, REROLL_WITH_ORIGINAL, REROLL_WITHOUT_ORIGINAL, CONTENTS_CHANGED_UNVERIFIED }
 
 	public int version = VERSION;
 	public String scoreStatus = ScoreStatus.MISSING.name();
@@ -71,10 +75,12 @@ public final class LuckCoverage {
 		boolean rerollWithoutOriginal = false;
 		boolean rerollWithOriginal = false;
 		boolean anyOfferSeen = false;
+		boolean unverifiedChange = false;
 		for (LuckRunRecord.LuckChestRecord chest : run.chests) {
 			ChestTier chestTier = parseTier(chest.tier);
 			if (chestTier == null || chest.offers.isEmpty()) continue;
 			anyOfferSeen = true;
+			if (chest.offers.stream().anyMatch(offer -> offer.changedFromPrevious && !offer.afterKismetReroll)) unverifiedChange = true;
 			boolean hasOriginal = chest.offers.stream().anyMatch(offer -> !offer.afterKismetReroll);
 			boolean hasReroll = chest.offers.stream().anyMatch(offer -> offer.afterKismetReroll);
 			if (hasReroll && hasOriginal) rerollWithOriginal = true;
@@ -94,7 +100,10 @@ public final class LuckCoverage {
 			coverage.blockers.add("OFFERS_PARTIAL");
 		}
 
-		if (rerollWithoutOriginal) {
+		if (unverifiedChange) {
+			coverage.kismetStatus = KismetStatus.CONTENTS_CHANGED_UNVERIFIED.name();
+			coverage.blockers.add("OFFER_CHANGED_UNVERIFIED");
+		} else if (rerollWithoutOriginal) {
 			coverage.kismetStatus = KismetStatus.REROLL_WITHOUT_ORIGINAL.name();
 			coverage.blockers.add("KISMET_ORIGINAL_OFFER_MISSING");
 		} else if (rerollWithOriginal) {
@@ -102,6 +111,7 @@ public final class LuckCoverage {
 		} else if (anyOfferSeen) {
 			coverage.kismetStatus = KismetStatus.NO_REROLL.name();
 		}
+		if (anyOfferSeen) coverage.caveats.add("KISMET_PROVISIONAL");
 
 		coverage.meterStatus = meterStatus(run, floor).name();
 		if (!MeterStatus.OBSERVED.name().equals(coverage.meterStatus)) {
@@ -138,7 +148,7 @@ public final class LuckCoverage {
 		if (floor == null) return MeterStatus.UNKNOWN;
 		MeterStatus best = MeterStatus.UNKNOWN;
 		for (LuckRunRecord.LuckMeterSnapshot snapshot : run.meterSnapshots) {
-			if (!floor.name().equalsIgnoreCase(snapshot.floor) || !"BEFORE_RUN".equals(snapshot.phase)) continue;
+			if (!floor.name().equalsIgnoreCase(snapshot.floor) || !LuckRunRecord.PHASE_BEFORE_RUN.equals(snapshot.phase)) continue;
 			if (MeterStatus.OBSERVED.name().equals(snapshot.state)) return MeterStatus.OBSERVED;
 			if (MeterStatus.DERIVED.name().equals(snapshot.state)) best = MeterStatus.DERIVED;
 		}

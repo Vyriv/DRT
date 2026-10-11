@@ -180,7 +180,8 @@ public final class LuckEvaluator {
 	) {
 		RunSimulator simulator = new RunSimulator(database, configuration.modifiers(), configuration.rules());
 		double statistic = SurprisalStatistic.ofObserved(observed, simulator);
-		double[] nullSamples = NullDistribution.sample(simulator, runs, configuration.meterStart(), configuration.selection(), configuration.kismet(), samples, seed);
+		double[] nullSamples = NullDistribution.sample(simulator, runs, configuration.meterStart(), NullDistribution.observedMeterEvents(observed),
+			configuration.selection(), configuration.kismet(), samples, seed);
 		return new ConfigurationResult(configuration, statistic, MidPPercentile.compute(statistic, nullSamples, TIE_TOLERANCE));
 	}
 

@@ -1,12 +1,14 @@
 package dev.vy.drt.luck.stats;
 
 import dev.vy.drt.luck.FloorId;
+import dev.vy.drt.luck.meter.MeterEvent;
 import dev.vy.drt.luck.meter.RngMeterState;
 import dev.vy.drt.luck.sim.HistorySimulator;
 import dev.vy.drt.luck.sim.KismetPolicy;
 import dev.vy.drt.luck.sim.RunContext;
 import dev.vy.drt.luck.sim.RunSimulator;
 import dev.vy.drt.luck.sim.SelectionPolicy;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.SplittableRandom;
@@ -37,12 +39,36 @@ public final class NullDistribution {
 		int samples,
 		long seed
 	) {
+		return sample(simulator, runs, initialMeters, List.of(), selection, kismet, samples, seed);
+	}
+
+	/** @param events meter readings and selection changes, identical in every simulated history */
+	public static double[] sample(
+		RunSimulator simulator,
+		List<RunContext> runs,
+		Map<FloorId, RngMeterState> initialMeters,
+		List<MeterEvent> events,
+		SelectionPolicy selection,
+		KismetPolicy kismet,
+		int samples,
+		long seed
+	) {
 		HistorySimulator history = new HistorySimulator(simulator);
 		SplittableRandom seeds = new SplittableRandom(seed);
 		double[] out = new double[samples];
 		for (int i = 0; i < samples; i++) {
-			out[i] = SurprisalStatistic.of(history.simulate(runs, initialMeters, selection, kismet, seeds.nextLong()), simulator);
+			out[i] = SurprisalStatistic.of(history.simulate(runs, initialMeters, events, selection, kismet, seeds.nextLong()), simulator);
 		}
 		return out;
+	}
+
+	/** Meter readings attached to observed runs, as events before each run. */
+	public static List<MeterEvent> observedMeterEvents(List<ObservedRun> observed) {
+		List<MeterEvent> events = new ArrayList<>();
+		for (int i = 0; i < observed.size(); i++) {
+			RngMeterState before = observed.get(i).meterBefore();
+			if (before != null) events.add(new MeterEvent.Observed(i, before));
+		}
+		return events;
 	}
 }

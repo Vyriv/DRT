@@ -59,6 +59,11 @@ public final class LuckProbeClient {
 			RECORDER.screenClosed();
 			return;
 		}
+		RECORDER.observeScreen(screen, sample(client, screen));
+	}
+
+	/** Server-owned slots of a container screen, with names and lore stripped of formatting. */
+	public static LuckProbeRecorder.ScreenSample sample(Minecraft client, AbstractContainerScreen<?> screen) {
 		List<LuckProbeRecorder.SlotSample> slots = new ArrayList<>();
 		int containerSlots = 0;
 		for (Slot slot : screen.getMenu().slots) {
@@ -74,7 +79,7 @@ public final class LuckProbeClient {
 				loreLines(stack)
 			));
 		}
-		RECORDER.observeScreen(screen, new LuckProbeRecorder.ScreenSample(title, containerSlots, slots));
+		return new LuckProbeRecorder.ScreenSample(clean(screen.getTitle().getString()), containerSlots, slots);
 	}
 
 	public static void onMessage(Component message, boolean overlay) {
@@ -91,7 +96,7 @@ public final class LuckProbeClient {
 		return lines;
 	}
 
-	private static String clean(String text) {
+	static String clean(String text) {
 		if (text == null) return "";
 		String stripped = ChatFormatting.stripFormatting(text);
 		return stripped == null ? "" : stripped.trim();

@@ -8,6 +8,7 @@ import com.mojang.brigadier.suggestion.SuggestionsBuilder;
 import dev.vy.drt.DungeonRunTracker;
 import dev.vy.drt.client.cosmetics.DrtCosmetics;
 import dev.vy.drt.client.luck.LuckProbeClient;
+import dev.vy.drt.client.luck.LuckScreenCapture;
 import dev.vy.drt.client.screen.DungeonLootScreen;
 import dev.vy.drt.client.screen.DrtOnboardingScreen;
 import dev.vy.drt.client.screen.DungeonTrackerPositionScreen;
@@ -62,6 +63,7 @@ public final class DrtClient implements ClientModInitializer {
 
 			tracker.tick(client);
 			LuckProbeClient.tick(client);
+			LuckScreenCapture.tick(client);
 
 			if (!autoOpenedOnboardingThisSession
 				&& client.player != null
@@ -359,6 +361,7 @@ public final class DrtClient implements ClientModInitializer {
 			ScreenMouseEvents.allowMouseClick(screen).register(new ScreenMouseEvents.AllowMouseClick() {
 				@Override
 				public boolean allowMouseClick(Screen s, MouseButtonEvent event) {
+					LuckScreenCapture.onMouseClick(client, s);
 					if (s instanceof DungeonTrackerPositionScreen) {
 						return true;
 					}
