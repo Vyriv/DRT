@@ -1,0 +1,119 @@
+{
+  "schemaVersion": 1,
+  "appliesTo": "catacombs-loot-v1",
+  "policy": "Every change to the base data is listed here with its evidence. Options are selectable rule variants; defaultOption is used unless a caller selects another. Base data is the default unless the evidence is decisive.",
+  "disputes": [
+    {
+      "id": "M4_SPIRIT_MASK_WEIGHT",
+      "floors": ["M4"],
+      "status": "EVIDENCE_BACKED",
+      "summary": "Spirit Mask weight in the M4 Obsidian chest.",
+      "evidence": [
+        {
+          "source": "NotEnoughUpdates-REPO constants/rngscore.json (in-game RNG Meter copy, M4 updated 2026-02-25)",
+          "url": "https://raw.githubusercontent.com/NotEnoughUpdates/NotEnoughUpdates-REPO/master/constants/rngscore.json",
+          "authority": "IN_GAME_COPY",
+          "finding": "All 22 M4 required scores fit total weight 296 with Spirit Mask weight 4 (required 22200). The data sums to 293 with Spirit Mask weight 1."
+        },
+        {
+          "source": "Pigicial sb-calculators commit history",
+          "url": "https://github.com/Pigicial/sb-calculators",
+          "authority": "COMMUNITY_CALCULATOR",
+          "finding": "March 2026 change multiplied every M4 Obsidian weight by 4 and added Spirit Mask at weight 1."
+        }
+      ],
+      "defaultOption": "IN_GAME_WEIGHT_4",
+      "options": [
+        { "id": "IN_GAME_WEIGHT_4", "label": "Weight 4 (in-game meter)", "patches": [ { "type": "setWeight", "floor": "M4", "chest": "OBSIDIAN", "entry": "SPIRIT_MASK", "value": 4 } ] },
+        { "id": "DATA_WEIGHT_1", "label": "Weight 1 (base data)", "patches": [] }
+      ]
+    },
+    {
+      "id": "M5_M7_METER_TOTAL_WEIGHT",
+      "floors": ["M5", "M7"],
+      "status": "EVIDENCE_BACKED",
+      "summary": "Top chest total weight used for RNG Meter required scores on M5 and M7.",
+      "evidence": [
+        {
+          "source": "NotEnoughUpdates-REPO constants/rngscore.json",
+          "url": "https://raw.githubusercontent.com/NotEnoughUpdates/NotEnoughUpdates-REPO/master/constants/rngscore.json",
+          "authority": "IN_GAME_COPY",
+          "finding": "M5 scores imply total 326 (data 325) and list DYE_LIVID; M7 scores imply 13894 (data 13893) and list DYE_NECRON."
+        },
+        {
+          "source": "Fandom RNG Meter/UI/Catacombs",
+          "url": "https://hypixel-skyblock.fandom.com/wiki/RNG_Meter/UI/Catacombs",
+          "authority": "IN_GAME_COPY",
+          "finding": "M5 odds imply total 326."
+        }
+      ],
+      "defaultOption": "IN_GAME_TOTAL",
+      "options": [
+        { "id": "IN_GAME_TOTAL", "label": "Data total + 1 (unmodelled dye)", "patches": [ { "type": "meterTotalWeightDelta", "floor": "M5", "value": 1 }, { "type": "meterTotalWeightDelta", "floor": "M7", "value": 1 } ] },
+        { "id": "DATA_TOTAL", "label": "Data total", "patches": [] }
+      ]
+    },
+    {
+      "id": "F7_OBSIDIAN_WITHER_SHARD",
+      "floors": ["F7"],
+      "status": "DISPUTED",
+      "summary": "Whether the F7 Obsidian chest has a guaranteed Wither Shard.",
+      "evidence": [
+        { "source": "Pigicial data f7/obsidian.json", "url": "https://github.com/Pigicial/sb-calculators/blob/main/assets/dungeon_loot/f7/obsidian.json", "authority": "COMMUNITY_CALCULATOR", "finding": "Listed with weight 0 and quality 0 (guaranteed)." },
+        { "source": "Community wiki The Catacombs - Floor VII/Loot", "url": "https://hypixelskyblock.minecraft.wiki/w/The_Catacombs_-_Floor_VII/Loot", "authority": "COMMUNITY_WIKI", "finding": "Not listed." }
+      ],
+      "impact": "Guaranteed entries do not affect rolled items.",
+      "defaultOption": "DATA_GUARANTEED",
+      "options": [
+        { "id": "DATA_GUARANTEED", "label": "Guaranteed (base data)", "patches": [] },
+        { "id": "ABSENT", "label": "Absent (wiki)", "patches": [ { "type": "removeEntry", "floor": "F7", "chest": "OBSIDIAN", "entry": "WITHER_SHARD" } ] }
+      ]
+    },
+    {
+      "id": "F2_M2_EMERALD_BASE_COST",
+      "floors": ["F2", "M2"],
+      "status": "DISPUTED",
+      "summary": "Emerald chest base cost on Floor 2.",
+      "evidence": [
+        { "source": "Pigicial data f2/emerald.json, m2/emerald.json", "url": "https://github.com/Pigicial/sb-calculators/tree/main/assets/dungeon_loot", "authority": "COMMUNITY_CALCULATOR", "finding": "200,000." },
+        { "source": "Archived official wiki (January 2024), Fandom (2023), community wiki chest table", "url": "https://hypixelskyblock.minecraft.wiki/w/Dungeon_Reward_Chest", "authority": "COMMUNITY_WIKI", "finding": "250,000." }
+      ],
+      "impact": "Cost only. Affects cost-aware selection policies, not rolls.",
+      "defaultOption": "DATA_200K",
+      "options": [
+        { "id": "DATA_200K", "label": "200,000 (base data)", "patches": [] },
+        { "id": "WIKI_250K", "label": "250,000 (wiki tables)", "patches": [ { "type": "setBaseCost", "floor": "F2", "chest": "EMERALD", "value": 250000 }, { "type": "setBaseCost", "floor": "M2", "chest": "EMERALD", "value": 250000 } ] }
+      ]
+    }
+  ],
+  "knownGaps": [
+    {
+      "id": "DYES_NOT_MODELLED",
+      "floors": ["M5", "M7"],
+      "summary": "Livid Dye (M5 Bedrock) and Necron Dye (M7 Bedrock) are not in the base data and are not rolled.",
+      "evidence": "Wiki shows a separate 1 in 5,000 / 1 in 2,500 roll. In-game meter totals imply a weight-1 pool entry. A 2025 forum post lists Necron Dye as weight 3. Mechanism unresolved.",
+      "consequence": "Dyes cannot be scored. Floors marked PROVISIONAL."
+    },
+    {
+      "id": "M7_GOLD_ESSENCE",
+      "floors": ["M7"],
+      "summary": "M7 Gold guaranteed essence (20 Undead, 18 Wither) is identical to F7 Gold; M6 Gold is 40 and 35.",
+      "evidence": "Pattern only. No source gives a different value.",
+      "consequence": "Essence amounts only. No alternative value available, so no override."
+    },
+    {
+      "id": "M7_DRAGON_SHARD_CHESTS",
+      "floors": ["M7"],
+      "summary": "Wiki lists the 50/50 Apex or Power Dragon Shard in Emerald, Obsidian and Bedrock; data has it in Bedrock only.",
+      "evidence": "Community wiki M7 loot page versus base data.",
+      "consequence": "Guaranteed entry. No effect on rolled items."
+    },
+    {
+      "id": "MUSIC_DISCS_NOT_MODELLED",
+      "floors": ["F1", "F2", "F3", "F4", "F5", "F6", "F7", "M1", "M2", "M3", "M4", "M5", "M6", "M7"],
+      "summary": "Music disc replacement of essence is not modelled.",
+      "evidence": "Archived official wiki says 1.6% of essence drops; community wiki and Fandom say 2% in Obsidian and Bedrock.",
+      "consequence": "Discs cannot be scored."
+    }
+  ]
+}
