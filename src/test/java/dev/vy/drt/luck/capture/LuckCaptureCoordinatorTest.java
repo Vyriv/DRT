@@ -172,6 +172,113 @@ class LuckCaptureCoordinatorTest {
 		assertEquals(LuckCaptureCoordinator.REASON_NO_CLICKED_ENTRY, outcome.unmatchedReason());
 	}
 
+	private LuckRunRecord addF5Run(long completedAt, String session) {
+		LuckRunRecord run = LuckRunRecord.forCompletion(session, "fp-f5-" + session, completedAt, "F5", "S", new DungeonScoreReading(296, "S"));
+		run.party = List.of("LocalPlayer");
+		run.partySource = LuckRunRecord.PARTY_SOURCE_TAB_LIST;
+		assertEquals(LuckTrackingStore.AddResult.ADDED, store.addRun(run));
+		return store.runs().get(store.runs().size() - 1);
+	}
+
+	@Test
+	void quickClickReadsThePageAtTheClickAndLinksTheView() {
+		LuckRunRecord run = addF5Run(NOW - 20_000L);
+		CroesusRunMatcher.EntryMatch clicked = coordinator.onCroesusClick(ProbeFixtures.screen(ProbeFixtures.CROESUS_MENU), 10, NOW);
+		assertNotNull(clicked, "no stable page was captured, the click itself carries the entry");
+		assertTrue(clicked.matched());
+		assertEquals(run.luckRunId, clicked.luckRunId());
+
+		LuckCaptureCoordinator.ViewOutcome outcome = coordinator.onCroesusRunView(ProbeFixtures.screen(ProbeFixtures.CROESUS_RUN_VIEW_F5), NOW + 1_000L);
+		assertEquals(run.luckRunId, outcome.luckRunId());
+		assertEquals(LuckTrackingStore.OfferResult.ADDED, outcome.offerResult());
+		assertFalse(outcome.live());
+		assertEquals("session", coordinator.activeViewRunSession(NOW + 2_000L), "chests opened from this view belong to the run");
+		assertTrue(store.unmatchedCroesus().isEmpty());
+
+		LuckCaptureCoordinator.ViewOutcome reopened = coordinator.onCroesusRunView(ProbeFixtures.screen(ProbeFixtures.CROESUS_RUN_VIEW_F5), NOW + 60_000L);
+		assertEquals(run.luckRunId, reopened.luckRunId(), "leaving for a chest and coming back keeps the link");
+		assertEquals(LuckTrackingStore.OfferResult.UNCHANGED, reopened.offerResult());
+	}
+
+	@Test
+	void clickOffAnEntryOfTheCurrentPageNeverFallsBackToAnOlderPage() {
+		addF5Run(NOW - 20_000L);
+		coordinator.onCroesusMenu(ProbeFixtures.screen(ProbeFixtures.CROESUS_MENU), NOW);
+		LuckProbeRecorder.ScreenSample page = ProbeFixtures.screen(ProbeFixtures.CROESUS_MENU);
+		LuckProbeRecorder.ScreenSample withoutSlot10 = new LuckProbeRecorder.ScreenSample(page.title(), page.containerSlots(),
+			page.slots().stream().filter(slot -> slot.slot() != 10).toList());
+		assertNull(coordinator.onCroesusClick(withoutSlot10, 10, NOW + 1_000L));
+		LuckCaptureCoordinator.ViewOutcome outcome = coordinator.onCroesusRunView(ProbeFixtures.screen(ProbeFixtures.CROESUS_RUN_VIEW_F5), NOW + 2_000L);
+		assertEquals(LuckCaptureCoordinator.REASON_NO_CLICKED_ENTRY, outcome.unmatchedReason());
+	}
+
+	@Test
+	void quickClickOnAnAmbiguousEntryStaysUnmatched() {
+		addF5Run(NOW - 20_000L, "live-a-run-1");
+		addF5Run(NOW - 25_000L, "live-a-run-2");
+		CroesusRunMatcher.EntryMatch clicked = coordinator.onCroesusClick(ProbeFixtures.screen(ProbeFixtures.CROESUS_MENU), 10, NOW);
+		assertNotNull(clicked);
+		assertFalse(clicked.matched(), "two captured runs fit the entry; strict matching refuses to pick one");
+		LuckCaptureCoordinator.ViewOutcome outcome = coordinator.onCroesusRunView(ProbeFixtures.screen(ProbeFixtures.CROESUS_RUN_VIEW_F5), NOW + 1_000L);
+		assertNull(outcome.luckRunId());
+		assertTrue(store.runs().stream().allMatch(run -> run.chests.isEmpty()));
+		assertNull(coordinator.activeViewRunSession(NOW + 2_000L));
+	}
+
+	@Test
+	void runViewInTheCompletedRunsInstanceLinksWithoutAClick() {
+		LuckRunRecord run = addF5Run(NOW - 20_000L, "live-a-run-1");
+		LuckCaptureCoordinator.ViewOutcome outcome = coordinator.onCroesusRunView(ProbeFixtures.screen(ProbeFixtures.CROESUS_RUN_VIEW_F5), NOW,
+			new LiveRewardSession("live-a-run-1", "F5"));
+		assertEquals(run.luckRunId, outcome.luckRunId());
+		assertTrue(outcome.live());
+		assertEquals(LuckTrackingStore.OfferResult.ADDED, outcome.offerResult());
+		assertEquals(6, store.run(run.luckRunId).chests.size());
+		assertTrue(store.run(run.luckRunId).chests.stream().noneMatch(chest -> Boolean.TRUE.equals(chest.purchased)), "seeing offers is not buying");
+		assertNull(coordinator.activeViewRunSession(NOW + 1_000L), "the live link is never reused for a later Croesus visit");
+		assertTrue(store.unmatchedCroesus().isEmpty());
+	}
+
+	@Test
+	void liveSessionForAnotherFloorKeepsTheViewUnmatched() {
+		LuckRunRecord run = addF5Run(NOW - 20_000L, "live-a-run-1");
+		LuckCaptureCoordinator.ViewOutcome outcome = coordinator.onCroesusRunView(ProbeFixtures.screen(ProbeFixtures.CROESUS_RUN_VIEW_F5), NOW,
+			new LiveRewardSession("live-a-run-1", "F6"));
+		assertNull(outcome.luckRunId());
+		assertEquals(LuckCaptureCoordinator.REASON_LIVE_FLOOR_MISMATCH, outcome.unmatchedReason());
+		assertTrue(store.run(run.luckRunId).chests.isEmpty());
+		assertEquals(1, store.unmatchedCroesus().size());
+	}
+
+	@Test
+	void delayedCroesusViewIsNeverGivenToTheMostRecentRun() {
+		LuckRunRecord older = addF5Run(NOW - 30L * 60_000L, "live-a-run-1");
+		LuckRunRecord newest = addF5Run(NOW - 20_000L, "live-a-run-2");
+		LuckCaptureCoordinator.ViewOutcome outcome = coordinator.onCroesusRunView(ProbeFixtures.screen(ProbeFixtures.CROESUS_RUN_VIEW_F5), NOW + 5_000L);
+		assertEquals(LuckCaptureCoordinator.REASON_NO_CLICKED_ENTRY, outcome.unmatchedReason());
+		assertTrue(store.run(older.luckRunId).chests.isEmpty());
+		assertTrue(store.run(newest.luckRunId).chests.isEmpty());
+		assertEquals(1, store.unmatchedCroesus().size(), "kept, with every offer, for later review");
+	}
+
+	@Test
+	void consecutiveRunsInTheirOwnInstancesDoNotCrossLink() {
+		LuckRunRecord first = addF5Run(NOW - 10L * 60_000L, "live-a-run-1");
+		coordinator.onCroesusRunView(ProbeFixtures.screen(ProbeFixtures.CROESUS_RUN_VIEW_F5), NOW - 9L * 60_000L,
+			new LiveRewardSession("live-a-run-1", "F5"));
+		LuckRunRecord second = addF5Run(NOW - 20_000L, "live-a-run-2");
+		LuckProbeRecorder.ScreenSample secondView = ProbeFixtures.screen(ProbeFixtures.CROESUS_RUN_VIEW_F5,
+			line -> line.equals("Dark Orb") ? "Enchanted Book (Bank III)" : line);
+		coordinator.onCroesusRunView(secondView, NOW, new LiveRewardSession("live-a-run-2", "F5"));
+
+		LuckRunRecord.LuckChestRecord firstBedrock = store.run(first.luckRunId).chests.stream().filter(c -> c.tier.equals("BEDROCK")).findFirst().orElseThrow();
+		LuckRunRecord.LuckChestRecord secondBedrock = store.run(second.luckRunId).chests.stream().filter(c -> c.tier.equals("BEDROCK")).findFirst().orElseThrow();
+		assertEquals(1, firstBedrock.offers.size(), "the second run's offers never land on the first");
+		assertFalse(firstBedrock.offers.get(0).rawLines.contains("Enchanted Book (Bank III)"));
+		assertEquals(1, secondBedrock.offers.size());
+		assertTrue(secondBedrock.offers.get(0).rawLines.contains("Enchanted Book (Bank III)"));
+	}
+
 	@Test
 	void meterReadingsBecomeBeforeAndAfterSnapshots() {
 		coordinator.onMeterOverview(ProbeFixtures.screen(ProbeFixtures.RNG_OVERVIEW), NOW - 600_000L);

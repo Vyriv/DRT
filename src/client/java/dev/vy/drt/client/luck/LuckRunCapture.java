@@ -1,6 +1,8 @@
 package dev.vy.drt.client.luck;
 
 import dev.vy.drt.DungeonRunTracker;
+import dev.vy.drt.client.DrtClient;
+import dev.vy.drt.client.tracker.DungeonRunTrackerFeature;
 import dev.vy.drt.client.tracker.TabReader;
 import dev.vy.drt.config.DungeonLootEntry;
 import dev.vy.drt.config.DungeonRunCompletionRecord;
@@ -8,6 +10,7 @@ import dev.vy.drt.luck.ChestTier;
 import dev.vy.drt.luck.FloorId;
 import dev.vy.drt.luck.capture.CroesusRunViewParser;
 import dev.vy.drt.luck.capture.DungeonPartyRoster;
+import dev.vy.drt.luck.capture.LiveRewardSession;
 import dev.vy.drt.luck.capture.LuckText;
 import dev.vy.drt.luck.data.CatacombsLootDatabase;
 import dev.vy.drt.luck.data.FloorTable;
@@ -135,6 +138,29 @@ public final class LuckRunCapture {
 			store().recordDungeonPurchase(runSessionId, tier);
 		} catch (RuntimeException e) {
 			DungeonRunTracker.LOGGER.warn("[DRT] Could not store dungeon chest purchase for {}", runSessionId, e);
+		}
+	}
+
+	/** A chest opened from a Croesus run view linked to this run, once its rewards were received. */
+	public static void onCroesusChestPurchased(String runSessionId, String chestTitle) {
+		ChestTier tier = LuckText.chestTier(chestTitle);
+		if (tier == null || runSessionId == null || runSessionId.isBlank()) return;
+		try {
+			if (store().recordCroesusPurchase(runSessionId, tier)) {
+				DungeonRunTracker.LOGGER.info("[DRT] Croesus chest purchase recorded for {}: {}", runSessionId, tier);
+			}
+		} catch (RuntimeException e) {
+			DungeonRunTracker.LOGGER.warn("[DRT] Could not store Croesus chest purchase for {}", runSessionId, e);
+		}
+	}
+
+	/** The run just completed in the dungeon instance the player is still in; null otherwise. */
+	public static LiveRewardSession liveRewardSession() {
+		try {
+			DungeonRunTrackerFeature tracker = DrtClient.getTracker();
+			return tracker == null ? null : tracker.liveRewardSession();
+		} catch (RuntimeException e) {
+			return null;
 		}
 	}
 

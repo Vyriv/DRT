@@ -24,6 +24,7 @@ import dev.vy.drt.config.KuudraKeyShopCost;
 import dev.vy.drt.config.RunRecordCommitDecision;
 import dev.vy.drt.config.RunRecordDeduplicator;
 import dev.vy.drt.luck.capture.DungeonScoreReading;
+import dev.vy.drt.luck.capture.LiveRewardSession;
 import dev.vy.drt.mixin.AbstractContainerScreenAccessor;
 import dev.vy.drt.price.DungeonProfitPricing;
 import dev.vy.drt.price.LootFloorGuards;
@@ -40,6 +41,7 @@ import dev.vy.drt.tracking.LootObservation;
 import dev.vy.drt.tracking.ChestSession;
 import dev.vy.drt.tracking.ChestState;
 import dev.vy.drt.tracking.ResolvedLoot;
+import dev.vy.drt.tracking.RewardChatBlock;
 import dev.vy.drt.tracking.RunMode;
 import dev.vy.drt.tracking.RunSession;
 import dev.vy.drt.tracking.RunState;
@@ -435,6 +437,9 @@ public final class DungeonRunTrackerFeature {
 	private String liveCompletionRunSessionId = "";
 	private String liveCompletionFloor = "";
 	private long liveCompletionAtMillis;
+	/** The world the completion happened in; a server transfer replaces it, so a different world is a different instance. */
+	private Object liveCompletionLevel;
+	private final RewardChatBlock rewardChatBlock = new RewardChatBlock();
 	private String pendingLootRunLinkSource;
 	private String pendingLootLinkedRunId = "";
 	private final Map<String, String> dungeonPreviewScans = new HashMap<>();
@@ -1663,7 +1668,10 @@ public final class DungeonRunTrackerFeature {
 
 		String rawText = ChatFormatting.stripFormatting(message.getString());
 		String cleaned = normalize(rawText);
-		if (cleaned.isEmpty()) return;
+		if (cleaned.isEmpty()) {
+			rewardChatBlock.close();
+			return;
+		}
 
 		expirePendingCompletionState(now);
 		List<String> rawLines = splitMessageLines(rawText);
@@ -1673,13 +1681,25 @@ public final class DungeonRunTrackerFeature {
 		}
 
 		if (rawLines.size() > 1) {
-			for (String rawLine : rawLines) {
-				String cleanedLine = normalize(rawLine);
-				if (!cleanedLine.isEmpty()) handleLootMessage(rawLine.trim(), cleanedLine, now);
+			for (String untrimmedLine : untrimmedMessageLines(rawText)) {
+				String cleanedLine = normalize(untrimmedLine);
+				if (cleanedLine.isEmpty()) rewardChatBlock.close();
+				else handleLootMessage(untrimmedLine.trim(), cleanedLine, untrimmedLine, now);
 			}
 		} else {
-			handleLootMessage(rawText == null ? cleaned : rawText.trim(), cleaned, now);
+			handleLootMessage(rawText == null ? cleaned : rawText.trim(), cleaned, rawText, now);
 		}
+	}
+
+	/** Lines of a multi-line message with their leading indentation, blank lines included. */
+	private static List<String> untrimmedMessageLines(String rawText) {
+		String expanded = rawText
+				.replace("\\r\\n", "\n")
+				.replace("\\n", "\n")
+				.replace("\\r", "\n");
+		List<String> lines = new ArrayList<>();
+		for (String piece : expanded.split("\\R")) lines.add(piece.stripTrailing());
+		return lines;
 	}
 
 	private void submitMessage(Component message, boolean fromGameMessage) {
@@ -3537,10 +3557,13 @@ public final class DungeonRunTrackerFeature {
 				lastViewedOpenedRewardChestTitle = "";
 				return;
 			}
-			if (!rewardScreenSettled(screen, now)) return;
+			boolean openedFromArmedPreview = canonicalRewardTitle.equals(armedPreviewRewardChestTitle);
+			// The settle delay guards a preview whose Open button has not arrived yet. After this
+			// tier's preview was seen with the button, the opened chest is scanned at once: it can be
+			// closed, or its chat rewards can arrive and lock out the scan, within the delay.
+			if (!openedFromArmedPreview && !rewardScreenSettled(screen, now)) return;
 
 			DungeonChestOffer cached = cachedChestOffersByTitle.get(canonicalRewardTitle);
-			boolean openedFromArmedPreview = canonicalRewardTitle.equals(armedPreviewRewardChestTitle);
 			long previewOpenCost = openedFromArmedPreview ? armedPreviewRewardChestCost : -1L;
 			if (openedFromArmedPreview) {
 				armedPreviewRewardChestTitle = "";
@@ -3972,13 +3995,29 @@ public final class DungeonRunTrackerFeature {
 		return !liveCompletionRunSessionId.isBlank() && now - liveCompletionAtMillis <= LIVE_CHEST_LINK_MS;
 	}
 
+	/** Still in the instance where the live completion happened: same world, not the Dungeon Hub. */
+	private boolean inLiveCompletionInstance(long now) {
+		return (insideDungeon || insideKuudra)
+			&& !inDungeonHub
+			&& hasLiveCompletion(now)
+			&& liveCompletionLevel != null
+			&& liveCompletionLevel == Minecraft.getInstance().level;
+	}
+
+	/** The run just completed in the Catacombs instance the player is still in; null otherwise. */
+	public LiveRewardSession liveRewardSession() {
+		long now = System.currentTimeMillis();
+		if (!insideDungeon || insideKuudra || !inLiveCompletionInstance(now)) return null;
+		return new LiveRewardSession(liveCompletionRunSessionId, liveCompletionFloor);
+	}
+
 	/**
 	 * Stores a reward chest preview seen in the dungeon instance as an offer of the run just
 	 * completed. The contents must read the same on two scans after the screen settled, so a menu
 	 * still filling in is never stored as a short offer.
 	 */
 	private void captureDungeonChestPreview(Screen screen, AbstractContainerMenu menu, String canonicalTitle, Long cost, long now) {
-		if (!insideDungeon || insideKuudra || !hasLiveCompletion(now) || menu == null) return;
+		if (!insideDungeon || insideKuudra || !inLiveCompletionInstance(now) || menu == null) return;
 		if (!isCatacombsRewardChest(canonicalTitle) || !rewardScreenSettled(screen, now)) return;
 		String key = liveCompletionRunSessionId + "#" + canonicalTitle + "#" + menu.containerId;
 		if (capturedDungeonPreviews.contains(key)) return;
@@ -4009,7 +4048,7 @@ public final class DungeonRunTrackerFeature {
 	 */
 	private void decidePendingRunLink(long now) {
 		boolean inInstance = insideDungeon || insideKuudra;
-		if (inInstance && hasLiveCompletion(now)) {
+		if (inLiveCompletionInstance(now)) {
 			pendingLootRunLinkSource = DungeonRunRecord.LINK_LIVE;
 			pendingLootLinkedRunId = liveCompletionRunSessionId;
 			return;
@@ -5001,6 +5040,7 @@ public final class DungeonRunTrackerFeature {
 		liveCompletionRunSessionId = "";
 		liveCompletionFloor = "";
 		liveCompletionAtMillis = 0L;
+		liveCompletionLevel = null;
 		dungeonPreviewScans.clear();
 		capturedDungeonPreviews.clear();
 	}
@@ -5251,6 +5291,7 @@ public final class DungeonRunTrackerFeature {
 		liveCompletionRunSessionId = activeRunSessionId;
 		liveCompletionFloor = key;
 		liveCompletionAtMillis = now;
+		liveCompletionLevel = Minecraft.getInstance().level;
 		LuckRunCapture.onCompletionRecorded(completionRecord, scoreReading);
 		resyncLifetimeFromConfig();
 		int newCount = floorRunCounts.getOrDefault(key, 0);
@@ -5409,6 +5450,7 @@ public final class DungeonRunTrackerFeature {
 	private void clearLootWindow() {
 		lootWindowUntilMillis = 0L;
 		lootCollectionUntilMillis = 0L;
+		rewardChatBlock.close();
 		pendingLootRunNumber = 0;
 		pendingLootRunTimestamp = 0L;
 		pendingChestSessionId = "";
@@ -5446,7 +5488,8 @@ public final class DungeonRunTrackerFeature {
 		ignoredPlayerInventoryDiagnosticKeys.clear();
 	}
 
-	private void handleLootMessage(String rawText, String cleaned, long now) {
+	private void handleLootMessage(String rawText, String cleaned, String untrimmedText, long now) {
+		boolean rewardBlockLine = rewardChatBlock.acceptLine(untrimmedText);
 		if (isDrtClientMessage(cleaned) || isDrtClientMessage(rawText)) return;
 		if (isPartyRareDropAnnouncement(cleaned) || isPartyRareDropAnnouncement(rawText)) return;
 		if ((lootWindowUntilMillis <= 0L || now > lootWindowUntilMillis) && isLootHeader(cleaned)) {
@@ -5478,7 +5521,12 @@ public final class DungeonRunTrackerFeature {
 			} else {
 				assignOpenedChest(cleaned);
 			}
-			if (pendingLootChestAssigned) pendingLootChatConfirmed = true;
+			if (pendingLootChestAssigned) {
+				pendingLootChatConfirmed = true;
+				rewardChatBlock.open();
+			} else {
+				rewardChatBlock.close();
+			}
 			lootCollectionUntilMillis = now + LOOT_COLLECTION_MS;
 			return;
 		}
@@ -5488,7 +5536,7 @@ public final class DungeonRunTrackerFeature {
 		// RARE REWARD chat is enrichment only. Never let it seed an empty chest (creates
 		// handle-only duplicate records at full AH price with no open cost).
 		if (rareRewardLine && pendingLootEntries.isEmpty() && !pendingLootSeededFromGui) return;
-		DungeonLootEntry parsed = parseLootEntry(rawText, cleaned);
+		DungeonLootEntry parsed = parseLootEntry(rawText, cleaned, rewardBlockLine);
 		if (parsed == null) return;
 		observeTrackingLoot(parsed, DetectionSource.STRUCTURED_CHAT, -1, -1, SlotOwner.SERVER_CONTAINER, cleaned);
 		if (!markLootLineForProcessing(cleaned, now)) return;
@@ -5549,7 +5597,8 @@ public final class DungeonRunTrackerFeature {
 		return builder.toString();
 	}
 
-	private DungeonLootEntry parseLootEntry(String rawText, String cleaned) {
+	/** @param rewardBlockLine an indented line directly under this chest's CHEST REWARDS header */
+	private DungeonLootEntry parseLootEntry(String rawText, String cleaned, boolean rewardBlockLine) {
 		if (rawText == null || rawText.isBlank()) return null;
 		String trimmedRaw = rawText.trim();
 		if (trimmedRaw.isEmpty()) return null;
@@ -5605,6 +5654,12 @@ public final class DungeonRunTrackerFeature {
 			candidateName = CHAT_REPEAT_SUFFIX_PATTERN.matcher(trimmedRaw).replaceFirst("");
 			structuredLootLine = true;
 			plainKuudraRewardLine = true;
+		}
+
+		// Dungeon reward chat lists books and other items as bare indented lines under the header.
+		if (candidateName == null && rewardBlockLine) {
+			candidateName = CHAT_REPEAT_SUFFIX_PATTERN.matcher(trimmedRaw).replaceFirst("");
+			structuredLootLine = true;
 		}
 
 		// Never treat arbitrary chat (PMs, party chat, bare words like "scroll") as loot.
@@ -6997,6 +7052,9 @@ public final class DungeonRunTrackerFeature {
 				trackingSession.commitChest(record.chestSessionId, record.commitFingerprint);
 				if (DungeonRunRecord.LINK_LIVE.equals(record.runLinkSource)) {
 					LuckRunCapture.onDungeonChestPurchased(record.linkedRunId, record.chestTitle);
+				} else if (DungeonRunRecord.LINK_CROESUS_UNIQUE.equals(record.runLinkSource) && pendingLootChatConfirmed) {
+					// The CHEST REWARDS chat is Hypixel's receipt for the open; viewing an offer is not a purchase.
+					LuckRunCapture.onCroesusChestPurchased(record.linkedRunId, record.chestTitle);
 				}
 				if (sessionActive && sessionStartMillis > 0L && record.timestampEpochMillis >= sessionStartMillis) {
 					sessionTotalProfit += chestProfitCoins;
@@ -7028,6 +7086,7 @@ public final class DungeonRunTrackerFeature {
 
 	private void resetPendingChestState() {
 		lootCollectionUntilMillis = 0L;
+		rewardChatBlock.close();
 		pendingChestSessionId = nextChestSessionId(pendingLootRunNumber > 0 ? activeRunSessionId : "");
 		pendingLootOrphaned = pendingLootRunNumber <= 0;
 		pendingLootChestTitle = "";

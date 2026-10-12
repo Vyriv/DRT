@@ -297,6 +297,24 @@ public final class LuckTrackingStore {
 		return save();
 	}
 
+	/**
+	 * Marks a chest opened from a Croesus run view that was linked to this run, after Hypixel
+	 * delivered its rewards. A purchase already proven by the Croesus page or in the instance is
+	 * left as it is. Returns whether anything changed.
+	 */
+	public synchronized boolean recordCroesusPurchase(String drtRunSessionId, ChestTier tier) {
+		if (isReadOnly() || tier == null) return false;
+		LuckRunRecord run = findBySession(drtRunSessionId);
+		if (run == null) return false;
+		LuckRunRecord.LuckChestRecord chest = chestRecord(run.chests, tier.name(), LuckRunRecord.SOURCE_CROESUS_RUN_VIEW);
+		if (Boolean.TRUE.equals(chest.purchased)) return false;
+		chest.purchased = true;
+		chest.purchaseSource = LuckRunRecord.SOURCE_CROESUS_CHEST;
+		if (!chest.offers.isEmpty()) chest.purchasedOfferIndex = chest.offers.size() - 1;
+		run.coverage = LuckCoverage.evaluate(run);
+		return save();
+	}
+
 	/** Keeps a Croesus observation that matched no run, merging repeats of the same chests. */
 	public synchronized boolean recordUnmatchedCroesus(UnmatchedCroesusRun observation) {
 		if (isReadOnly() || observation == null || observation.fingerprint.isBlank()) return false;

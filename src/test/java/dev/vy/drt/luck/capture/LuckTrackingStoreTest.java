@@ -2,6 +2,7 @@ package dev.vy.drt.luck.capture;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -333,6 +334,44 @@ class LuckTrackingStoreTest {
 		assertEquals(Boolean.TRUE, chest.purchased);
 		assertEquals(LuckRunRecord.SOURCE_DUNGEON_CHEST, chest.purchaseSource);
 		assertEquals(Integer.valueOf(0), chest.purchasedOfferIndex);
+	}
+
+	@Test
+	void croesusPurchaseMarksOnlyTheOpenedChestAndSurvivesARestart() {
+		LuckTrackingStore store = new LuckTrackingStore(file());
+		store.load();
+		store.addRun(completion("fp-1", 306));
+		String luckRunId = store.runForSession("live-a-run-1").luckRunId;
+		CroesusRunViewParser.RunView view = new CroesusRunViewParser.RunView("Catacombs - Floor V", 5, null,
+			List.of(offer(dev.vy.drt.luck.ChestTier.WOOD, "A"), offer(dev.vy.drt.luck.ChestTier.GOLD, "B")), List.of());
+		store.recordCroesusOffers(luckRunId, view, 2_000L);
+		assertTrue(store.runForSession("live-a-run-1").chests.stream().noneMatch(c -> Boolean.TRUE.equals(c.purchased)),
+			"viewing the offers is not a purchase");
+
+		assertTrue(store.recordCroesusPurchase("live-a-run-1", dev.vy.drt.luck.ChestTier.WOOD));
+		assertFalse(store.recordCroesusPurchase("live-a-run-1", dev.vy.drt.luck.ChestTier.WOOD), "already recorded");
+		assertFalse(store.recordCroesusPurchase("some-other-run", dev.vy.drt.luck.ChestTier.WOOD));
+
+		LuckTrackingStore restarted = new LuckTrackingStore(file());
+		restarted.load();
+		LuckRunRecord run = restarted.runForSession("live-a-run-1");
+		LuckRunRecord.LuckChestRecord wood = run.chests.stream().filter(c -> c.tier.equals("WOOD")).findFirst().orElseThrow();
+		LuckRunRecord.LuckChestRecord gold = run.chests.stream().filter(c -> c.tier.equals("GOLD")).findFirst().orElseThrow();
+		assertEquals(Boolean.TRUE, wood.purchased);
+		assertEquals(LuckRunRecord.SOURCE_CROESUS_CHEST, wood.purchaseSource);
+		assertEquals(Integer.valueOf(0), wood.purchasedOfferIndex);
+		assertNotEquals(Boolean.TRUE, gold.purchased);
+	}
+
+	@Test
+	void croesusPurchaseNeverOverridesAStrongerProof() {
+		LuckTrackingStore store = new LuckTrackingStore(file());
+		store.load();
+		store.addRun(completion("fp-1", 306));
+		store.recordDungeonChestOffer("live-a-run-1", offer(dev.vy.drt.luck.ChestTier.OBSIDIAN, "A"), 2_000L);
+		store.recordDungeonPurchase("live-a-run-1", dev.vy.drt.luck.ChestTier.OBSIDIAN);
+		assertFalse(store.recordCroesusPurchase("live-a-run-1", dev.vy.drt.luck.ChestTier.OBSIDIAN));
+		assertEquals(LuckRunRecord.SOURCE_DUNGEON_CHEST, store.runForSession("live-a-run-1").chests.get(0).purchaseSource);
 	}
 
 	@Test
