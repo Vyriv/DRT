@@ -437,6 +437,11 @@ public final class DungeonProfitPricing {
 
 	private static String renamedKuudraBookId(String itemId) {
 		if (!itemId.startsWith("ENCHANTMENT_")) return itemId;
+		// Wisdom is an ultimate enchant even though its display name omits the word
+		// "Ultimate". Older records therefore contain the non-existent regular id.
+		if (itemId.startsWith("ENCHANTMENT_WISDOM_")) {
+			return "ENCHANTMENT_ULTIMATE_WISDOM_" + itemId.substring("ENCHANTMENT_WISDOM_".length());
+		}
 		for (String[] rename : KUUDRA_BOOK_RENAMES) {
 			if (itemId.startsWith(rename[0])) return rename[1] + itemId.substring(rename[0].length());
 		}

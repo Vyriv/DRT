@@ -124,6 +124,23 @@ class DungeonProfitPricingTest {
 	}
 
 	@Test
+	void legacyWisdomBookIdUsesUltimateWisdomPrice() throws Exception {
+		setStaticMap("itemIdToBazaarData", Map.of(
+			"ENCHANTMENT_ULTIMATE_WISDOM_1",
+			new PriceCache.BazaarPriceData("ENCHANTMENT_ULTIMATE_WISDOM_1", 119_790.5D, 29_280.0D, 144_437.0D, 149_358.8D)
+		));
+		DrtConfig config = new DrtConfig();
+		config.bazaarPriceMode = "INSTANT";
+
+		long unit = DungeonProfitPricing.resolveUnitPrice(
+			new DungeonLootEntry("Enchanted Book (Wisdom I)", "ENCHANTMENT_WISDOM_1", 1),
+			config
+		);
+
+		assertEquals(119_791L, unit);
+	}
+
+	@Test
 	void auroraStaffUsesRunicStaffPrice() throws Exception {
 		setStaticMap("itemIdToAuctionData", Map.of(
 			"RUNIC_STAFF",

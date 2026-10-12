@@ -9,7 +9,6 @@ import net.minecraft.core.component.DataComponents;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.NbtOps;
-import net.minecraft.resources.Identifier;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -204,10 +203,6 @@ public final class NeuItemResolver {
 			item = translateItemId(neuItemId);
 		}
 		ItemStack stack = new ItemStack(item);
-		Identifier modelId = itemModel == null ? null : Identifier.tryParse(itemModel);
-		if (modelId != null) {
-			stack.set(DataComponents.ITEM_MODEL, modelId);
-		}
 		Integer leatherColor = extractLeatherColor(nbttag);
 		if (leatherColor != null && isLeatherArmor(item)) {
 			stack.set(DataComponents.DYED_COLOR, new DyedItemColor(leatherColor));
