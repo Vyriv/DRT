@@ -59,23 +59,29 @@ public final class LuckScreenCapture {
 	}
 
 	/**
-	 * Called on every container click before other handlers; remembers which Croesus entry was
-	 * clicked, read from the page at the click so a quick click is not lost.
+	 * Called on every container click before other handlers. Croesus pages and run views are read
+	 * at the click, so a click made before the screen was captured as stable is not lost.
 	 */
 	public static void onMouseClick(Minecraft client, Screen screen) {
 		if (client.player == null || !(screen instanceof AbstractContainerScreen<?> container)) return;
-		if (!CroesusMenuParser.isMenuTitle(LuckProbeClient.clean(container.getTitle().getString()))) return;
+		String title = LuckProbeClient.clean(container.getTitle().getString());
+		if (!CroesusMenuParser.isMenuTitle(title) && !CroesusRunViewParser.isRunViewTitle(title)) return;
 		try {
 			Slot slot = ((AbstractContainerScreenAccessor) container).drt$getHoveredSlot();
 			if (slot == null || slot.container == client.player.getInventory()) return;
-			CroesusRunMatcher.EntryMatch match = coordinator().onCroesusClick(LuckProbeClient.sample(client, container), slot.index, System.currentTimeMillis());
+			LuckCaptureCoordinator.ClickOutcome outcome = coordinator().onCroesusScreenClick(
+				LuckProbeClient.sample(client, container), slot.index, System.currentTimeMillis(), LuckRunCapture.liveRewardSession());
+			if (outcome == null) return;
+			CroesusRunMatcher.EntryMatch match = outcome.entry();
 			if (match != null) {
 				DungeonRunTracker.LOGGER.info("[DRT] Luck Croesus entry clicked: {}", match.matched()
 					? "linked to " + match.luckRunId() + " (" + match.method() + ")"
 					: "not linked (" + match.reason() + ")");
 			}
+			LuckCaptureCoordinator.ViewOutcome view = outcome.view();
+			if (view != null && view.offerResult() != LuckTrackingStore.OfferResult.UNCHANGED) logView(view, " at click");
 		} catch (RuntimeException e) {
-			DungeonRunTracker.LOGGER.warn("[DRT] Luck capture could not read the clicked Croesus entry", e);
+			DungeonRunTracker.LOGGER.warn("[DRT] Luck capture could not read the clicked Croesus screen", e);
 		}
 	}
 
@@ -97,16 +103,20 @@ public final class LuckScreenCapture {
 			}
 		} else if (CroesusRunViewParser.isRunViewTitle(title)) {
 			LuckCaptureCoordinator.ViewOutcome outcome = capture.onCroesusRunView(sample, now, LuckRunCapture.liveRewardSession());
-			if (outcome != null && outcome.luckRunId() != null) {
-				DungeonRunTracker.LOGGER.info("[DRT] Luck chest offers {} for {} ({} chests{})", outcome.offerResult(), outcome.luckRunId(), outcome.chests(),
-					outcome.live() ? ", in the run's instance" : "");
-			} else if (outcome != null) {
-				DungeonRunTracker.LOGGER.info("[DRT] Luck chest offers kept unmatched: {} ({} chests)", outcome.unmatchedReason(), outcome.chests());
-			}
+			if (outcome != null) logView(outcome, "");
 		} else if (RngMeterParser.isOverviewTitle(title)) {
 			logAttachments(capture.onMeterOverview(sample, now));
 		} else if (RngMeterParser.floorMenuFloor(title) != null) {
 			logAttachments(capture.onMeterFloorMenu(sample, now));
+		}
+	}
+
+	private static void logView(LuckCaptureCoordinator.ViewOutcome outcome, String when) {
+		if (outcome.luckRunId() != null) {
+			DungeonRunTracker.LOGGER.info("[DRT] Luck chest offers {}{} for {} ({} chests{})", outcome.offerResult(), when, outcome.luckRunId(), outcome.chests(),
+				outcome.live() ? ", in the run's instance" : "");
+		} else {
+			DungeonRunTracker.LOGGER.info("[DRT] Luck chest offers kept unmatched{}: {} ({} chests)", when, outcome.unmatchedReason(), outcome.chests());
 		}
 	}
 

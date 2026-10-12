@@ -92,6 +92,32 @@ public final class LuckCaptureCoordinator {
 		}
 	}
 
+	/** Result of a click on a Croesus screen: the clicked page entry or the run view read at the click. */
+	public record ClickOutcome(CroesusRunMatcher.EntryMatch entry, ViewOutcome view) {
+	}
+
+	/**
+	 * A click on a Croesus page or run view, read from the screen as it is at the click. Either
+	 * screen may be left before it stays open long enough to be captured as stable: a page click
+	 * arms the clicked entry, and a run view click reads the view at once so its offers are stored
+	 * and the chest opened from it is linked under the same strict rules as a stable view.
+	 *
+	 * @return what the click recorded, or null when it recorded nothing
+	 */
+	public ClickOutcome onCroesusScreenClick(LuckProbeRecorder.ScreenSample screenAtClick, int slot, long now, LiveRewardSession live) {
+		if (screenAtClick == null) return null;
+		String title = screenAtClick.title();
+		if (CroesusMenuParser.isMenuTitle(title)) {
+			CroesusRunMatcher.EntryMatch match = onCroesusClick(screenAtClick, slot, now);
+			return match == null ? null : new ClickOutcome(match, null);
+		}
+		if (CroesusRunViewParser.isRunViewTitle(title)) {
+			ViewOutcome view = onCroesusRunView(screenAtClick, now, live);
+			return view == null ? null : new ClickOutcome(null, view);
+		}
+		return null;
+	}
+
 	public ViewOutcome onCroesusRunView(LuckProbeRecorder.ScreenSample screen, long now) {
 		return onCroesusRunView(screen, now, null);
 	}

@@ -2,6 +2,7 @@ package dev.vy.drt.client.tracker;
 
 import dev.vy.drt.DungeonRunTracker;
 import dev.vy.drt.config.ChestCostBreakdown;
+import dev.vy.drt.config.ClearConfirmation;
 import dev.vy.drt.client.luck.LuckRunCapture;
 import dev.vy.drt.client.overlay.OverlayColors;
 import dev.vy.drt.client.overlay.OverlayFormat;
@@ -338,8 +339,7 @@ public final class DungeonRunTrackerFeature {
 	private final Map<String, Long> floorRunTimeMs = new LinkedHashMap<>();
 	private final Map<String, Long> floorProfitTotals = new LinkedHashMap<>();
 	private DungeonFloor selectedFloor = null;
-	private long hudResetConfirmUntilMillis;
-	private String hudResetConfirmFloorKey;
+	private final ClearConfirmation hudResetConfirm = new ClearConfirmation();
 	private final DiagnosticRecorder diagnostics = new DiagnosticRecorder(
 		new dev.vy.drt.tracking.SystemTrackerClock(),
 		DIAGNOSTIC_EVENT_LIMIT,
@@ -857,7 +857,7 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private void hideHudFromOverlay() {
-		clearHudResetConfirm();
+		hudResetConfirm.reset();
 		setEnabled(false);
 		sendDrtSystemMessage(Minecraft.getInstance(), Component.literal("§a[DRT] Overlay hidden, run /drt toggle UI to show it again"));
 	}
@@ -1080,43 +1080,40 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private boolean hudResetConfirmArmed(long now) {
-		if (now > hudResetConfirmUntilMillis) return false;
-		String currentKey = selectedFloor == null ? null : selectedFloor.name();
-		if (hudResetConfirmFloorKey == null) return currentKey == null;
-		return hudResetConfirmFloorKey.equals(currentKey);
-	}
-
-	private void clearHudResetConfirm() {
-		hudResetConfirmUntilMillis = 0L;
-		hudResetConfirmFloorKey = null;
+		return hudResetConfirm.isArmed(selectedFloor == null ? null : selectedFloor.name(), now);
 	}
 
 	private void resetSelectedFloor() {
-		long now = System.currentTimeMillis();
-		if (!hudResetConfirmArmed(now)) {
-			hudResetConfirmUntilMillis = now + 3_000L;
-			hudResetConfirmFloorKey = selectedFloor == null ? null : selectedFloor.name();
-			return;
-		}
-		clearHudResetConfirm();
-		if (selectedFloor == null) {
+		String key = selectedFloor == null ? null : selectedFloor.name();
+		if (hudResetConfirm.click(key, System.currentTimeMillis()) != ClearConfirmation.Result.CONFIRMED) return;
+		if (key == null) {
+			if (!DrtConfigManager.clearAllData("HUD reset")) {
+				notifyHistoryClearFailed();
+				return;
+			}
 			floorRunCounts.clear();
 			floorRunTimeMs.clear();
 			totalLifetimeProfit = 0L;
 			floorProfitTotals.clear();
 			gradeRunCounts.clear();
 			clearSession();
-			DrtConfigManager.clearAllData();
 		} else {
-			String key = selectedFloor.name();
+			if (!DrtConfigManager.clearFloorData(key, "HUD reset")) {
+				notifyHistoryClearFailed();
+				return;
+			}
 			totalLifetimeProfit -= floorProfitTotals.getOrDefault(key, 0L);
 			floorRunCounts.remove(key);
 			floorRunTimeMs.remove(key);
 			floorProfitTotals.remove(key);
-			DrtConfigManager.clearFloorData(key);
 			selectedFloor = null;
 			DrtConfigManager.updateSelectedFloor(null);
 		}
+	}
+
+	public void notifyHistoryClearFailed() {
+		sendDrtSystemMessage(Minecraft.getInstance(),
+			Component.literal("[DRT] History was not cleared: a backup could not be written first. See the log.").withStyle(ChatFormatting.RED));
 	}
 
 	private void cycleSelectedFloor() {
@@ -1137,7 +1134,7 @@ public final class DungeonRunTrackerFeature {
 		if (idx < 0) idx = 0;
 		int next = Math.floorMod(idx + direction, available.size());
 		selectedFloor = available.get(next);
-		clearHudResetConfirm();
+		hudResetConfirm.reset();
 		DrtConfigManager.updateSelectedFloor(selectedFloor == null ? null : selectedFloor.name());
 	}
 

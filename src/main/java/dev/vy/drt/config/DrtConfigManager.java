@@ -24,9 +24,11 @@ public final class DrtConfigManager {
 	private static final float MAX_HUD_SCALE = 2.0F;
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 	private static final Path CONFIG_PATH = FabricLoader.getInstance().getConfigDir().resolve("drt.json");
+	private static final Path BACKUP_DIR = CONFIG_PATH.resolveSibling("drt").resolve("backups");
 	private static final long COMPLETION_SESSION_DEDUP_WINDOW_MS = 30L * 60L * 1000L;
 	private static DrtConfig config = new DrtConfig();
 	private static boolean primaryConfigMalformed;
+	private static long nextRollingBackupAtMillis;
 
 	private DrtConfigManager() {
 	}
@@ -34,36 +36,42 @@ public final class DrtConfigManager {
 	public static synchronized void load() {
 		try {
 			Files.createDirectories(CONFIG_PATH.getParent());
-			if (Files.notExists(CONFIG_PATH)) {
-				config = new DrtConfig();
-				applyFreshOverlayDefaults(config);
-				primaryConfigMalformed = false;
-				save();
-				return;
-			}
-			try (Reader reader = Files.newBufferedReader(CONFIG_PATH, StandardCharsets.UTF_8)) {
-				JsonObject root = JsonParser.parseReader(reader).getAsJsonObject();
-				LoadedConfig loaded = normalizeLoadedConfig(GSON.fromJson(root, DrtConfig.class), root);
-				config = loaded.config();
-				primaryConfigMalformed = false;
-				if (loaded.migrated()) save();
-			} catch (com.google.gson.JsonSyntaxException | IllegalStateException e) {
-				DungeonRunTracker.LOGGER.error("[DRT] Config file malformed, preserving primary and attempting backup recovery", e);
-				primaryConfigMalformed = true;
-				DrtConfig recovered = tryRecoverFromBackup();
-				if (recovered != null) {
-					config = recovered;
-					DungeonRunTracker.LOGGER.warn("[DRT] Recovered config from {}", AtomicJsonFileStore.backupPath(CONFIG_PATH));
-				} else {
-					config = new DrtConfig();
-					applyFreshOverlayDefaults(config);
-					DungeonRunTracker.LOGGER.error("[DRT] Backup recovery failed; using in-memory defaults without overwriting malformed primary");
-				}
-			}
 		} catch (IOException e) {
-			DungeonRunTracker.LOGGER.error("[DRT] Failed to load config", e);
+			DungeonRunTracker.LOGGER.error("[DRT] Failed to create config directory", e);
+		}
+		if (Files.notExists(CONFIG_PATH)) {
 			config = new DrtConfig();
 			applyFreshOverlayDefaults(config);
+			primaryConfigMalformed = false;
+			save();
+			return;
+		}
+		try (Reader reader = Files.newBufferedReader(CONFIG_PATH, StandardCharsets.UTF_8)) {
+			JsonObject root = JsonParser.parseReader(reader).getAsJsonObject();
+			LoadedConfig loaded = normalizeLoadedConfig(GSON.fromJson(root, DrtConfig.class), root);
+			config = loaded.config();
+			primaryConfigMalformed = false;
+			DungeonRunTracker.LOGGER.info("[DRT] Loaded config: {} loot records, {} run completions", config.runHistory.size(), config.runCompletions.size());
+			if (loaded.migrated()) save();
+		} catch (com.google.gson.JsonParseException | IllegalStateException e) {
+			recoverUnreadablePrimary("[DRT] Config file malformed, preserving primary and attempting backup recovery", e);
+		} catch (IOException e) {
+			recoverUnreadablePrimary("[DRT] Config file could not be read, preserving primary and attempting backup recovery", e);
+		}
+	}
+
+	/** The primary is kept as a .malformed copy on the next save instead of being overwritten unseen. */
+	private static void recoverUnreadablePrimary(String message, Exception e) {
+		DungeonRunTracker.LOGGER.error(message, e);
+		primaryConfigMalformed = true;
+		DrtConfig recovered = tryRecoverFromBackup();
+		if (recovered != null) {
+			config = recovered;
+			DungeonRunTracker.LOGGER.warn("[DRT] Recovered config from {}: {} loot records", AtomicJsonFileStore.backupPath(CONFIG_PATH), config.runHistory.size());
+		} else {
+			config = new DrtConfig();
+			applyFreshOverlayDefaults(config);
+			DungeonRunTracker.LOGGER.error("[DRT] Backup recovery failed; using in-memory defaults, the unreadable primary is kept as a .malformed copy");
 		}
 	}
 
@@ -104,6 +112,7 @@ public final class DrtConfigManager {
 	}
 
 	public static synchronized void save() {
+		rollBackupIfDue();
 		try {
 			AtomicJsonFileStore.writeCrashSafe(CONFIG_PATH, GSON, config, primaryConfigMalformed);
 			primaryConfigMalformed = false;
@@ -384,22 +393,70 @@ public final class DrtConfigManager {
 		return true;
 	}
 
-	public static synchronized void clearAllData() {
+	/**
+	 * Clears every floor's history after writing a before-clear backup.
+	 *
+	 * @param source what asked for the clear, for the log
+	 * @return false when the backup failed and nothing was cleared
+	 */
+	public static synchronized boolean clearAllData(String source) {
+		int records = config.runHistory == null ? 0 : config.runHistory.size();
+		int completions = config.runCompletions == null ? 0 : config.runCompletions.size();
+		Path backup = backupBeforeClear("all", source, records, completions);
+		if (backup == null && records + completions > 0) return false;
 		if (config.floorRunCounts != null) config.floorRunCounts.clear();
 		if (config.floorRunTimeMs != null) config.floorRunTimeMs.clear();
 		config.legacyRunsCompleted = 0;
 		config.runHistory = new ArrayList<>();
 		config.runCompletions = new ArrayList<>();
 		config.nextChestLogNumber = 1;
+		DungeonRunTracker.LOGGER.warn("[DRT] Cleared all history from {}: {} loot records, {} run completions. Backup: {}",
+			source, records, completions, backup == null ? "none (nothing to clear)" : backup);
 		save();
+		return true;
 	}
 
-	public static synchronized void clearFloorData(String floor) {
+	/**
+	 * Clears one floor's history after writing a before-clear backup of the whole config.
+	 *
+	 * @param source what asked for the clear, for the log
+	 * @return false when the backup failed and nothing was cleared
+	 */
+	public static synchronized boolean clearFloorData(String floor, String source) {
+		int records = config.runHistory == null ? 0 : (int) config.runHistory.stream().filter(r -> r != null && floor.equals(r.floor)).count();
+		int completions = config.runCompletions == null ? 0 : (int) config.runCompletions.stream().filter(r -> r != null && floor.equals(r.floor)).count();
+		Path backup = backupBeforeClear(floor, source, records, completions);
+		if (backup == null && records + completions > 0) return false;
 		if (config.floorRunCounts != null) config.floorRunCounts.remove(floor);
 		if (config.floorRunTimeMs != null) config.floorRunTimeMs.remove(floor);
 		if (config.runHistory != null) config.runHistory.removeIf(r -> r != null && floor.equals(r.floor));
 		if (config.runCompletions != null) config.runCompletions.removeIf(r -> r != null && floor.equals(r.floor));
+		DungeonRunTracker.LOGGER.warn("[DRT] Cleared {} history from {}: {} loot records, {} run completions. Backup: {}",
+			floor, source, records, completions, backup == null ? "none (nothing to clear)" : backup);
 		save();
+		return true;
+	}
+
+	/** @return the backup written, or null when there was nothing to back up or the write failed */
+	private static Path backupBeforeClear(String scope, String source, int records, int completions) {
+		if (records + completions == 0) return null;
+		try {
+			return HistoryBackups.writeBeforeClear(BACKUP_DIR, scope, GSON.toJson(config), System.currentTimeMillis());
+		} catch (IOException | RuntimeException e) {
+			DungeonRunTracker.LOGGER.error("[DRT] Clearing {} history from {} cancelled: the backup could not be written", scope, source, e);
+			return null;
+		}
+	}
+
+	private static void rollBackupIfDue() {
+		long now = System.currentTimeMillis();
+		if (primaryConfigMalformed || now < nextRollingBackupAtMillis) return;
+		try {
+			nextRollingBackupAtMillis = HistoryBackups.rollIfDue(BACKUP_DIR, CONFIG_PATH, now);
+		} catch (IOException | RuntimeException e) {
+			nextRollingBackupAtMillis = now + HistoryBackups.ROLLING_INTERVAL_MILLIS;
+			DungeonRunTracker.LOGGER.warn("[DRT] Rolling history backup failed", e);
+		}
 	}
 
 	public static synchronized boolean removeRunRecord(DungeonRunRecord target) {

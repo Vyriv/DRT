@@ -226,6 +226,41 @@ class LuckCaptureCoordinatorTest {
 	}
 
 	@Test
+	void chestClickedBeforeTheRunViewWasStableStillStoresOffersAndLinksTheChest() {
+		LuckRunRecord run = addF5Run(NOW - 20_000L);
+		LuckCaptureCoordinator.ClickOutcome page = coordinator.onCroesusScreenClick(ProbeFixtures.screen(ProbeFixtures.CROESUS_MENU), 10, NOW, null);
+		assertNotNull(page);
+		assertEquals(run.luckRunId, page.entry().luckRunId());
+		assertNull(page.view());
+
+		LuckCaptureCoordinator.ClickOutcome chestClick = coordinator.onCroesusScreenClick(ProbeFixtures.screen(ProbeFixtures.CROESUS_RUN_VIEW_F5), 13, NOW + 400L, null);
+		assertNotNull(chestClick, "the view left within the stability window is read at the chest click");
+		assertNull(chestClick.entry());
+		assertEquals(run.luckRunId, chestClick.view().luckRunId());
+		assertEquals(LuckTrackingStore.OfferResult.ADDED, chestClick.view().offerResult());
+		assertEquals(6, store.run(run.luckRunId).chests.size());
+		assertEquals("session", coordinator.activeViewRunSession(NOW + 3_000L), "the chest opened from the view belongs to the run");
+
+		LuckCaptureCoordinator.ViewOutcome stable = coordinator.onCroesusRunView(ProbeFixtures.screen(ProbeFixtures.CROESUS_RUN_VIEW_F5), NOW + 900L);
+		assertEquals(LuckTrackingStore.OfferResult.UNCHANGED, stable.offerResult(), "a later stable read of the same view stores nothing twice");
+		assertEquals(6, store.run(run.luckRunId).chests.size());
+	}
+
+	@Test
+	void runViewClickWithoutAClickedEntryOrOnAnotherScreenLinksNothing() {
+		addF5Run(NOW - 20_000L);
+		LuckCaptureCoordinator.ClickOutcome chestClick = coordinator.onCroesusScreenClick(ProbeFixtures.screen(ProbeFixtures.CROESUS_RUN_VIEW_F5), 13, NOW, null);
+		assertEquals(LuckCaptureCoordinator.REASON_NO_CLICKED_ENTRY, chestClick.view().unmatchedReason());
+		assertNull(coordinator.activeViewRunSession(NOW + 1_000L));
+		assertTrue(store.runs().stream().allMatch(run -> run.chests.isEmpty()));
+
+		LuckProbeRecorder.ScreenSample menu = ProbeFixtures.screen(ProbeFixtures.CROESUS_MENU);
+		LuckProbeRecorder.ScreenSample other = new LuckProbeRecorder.ScreenSample("Large Chest", menu.containerSlots(), menu.slots());
+		assertNull(coordinator.onCroesusScreenClick(other, 10, NOW + 2_000L, null));
+		assertNull(coordinator.onCroesusScreenClick(null, 10, NOW + 2_000L, null));
+	}
+
+	@Test
 	void runViewInTheCompletedRunsInstanceLinksWithoutAClick() {
 		LuckRunRecord run = addF5Run(NOW - 20_000L, "live-a-run-1");
 		LuckCaptureCoordinator.ViewOutcome outcome = coordinator.onCroesusRunView(ProbeFixtures.screen(ProbeFixtures.CROESUS_RUN_VIEW_F5), NOW,
