@@ -266,6 +266,75 @@ class LuckTrackingStoreTest {
 		assertEquals("Mystery", restarted.run("luck-v1").chests.get(0).offers.get(0).contents.get(0).text);
 	}
 
+	private static CroesusRunViewParser.ChestOffer offer(dev.vy.drt.luck.ChestTier tier, String... keys) {
+		List<LuckText.ContentLine> lines = new java.util.ArrayList<>();
+		for (String key : keys) lines.add(new LuckText.ContentLine(key, key, 1, dev.vy.drt.luck.data.LootEntry.Kind.ITEM, key));
+		return new CroesusRunViewParser.ChestOffer(tier, -1, lines, 2_000_000L, "2,000,000 Coins", List.of(keys));
+	}
+
+	@Test
+	void dungeonChestOffersAreStoredUnderTheCompletedRun() {
+		LuckTrackingStore store = new LuckTrackingStore(file());
+		store.load();
+		store.addRun(completion("fp-1", 306));
+		assertEquals(LuckTrackingStore.OfferResult.ADDED,
+			store.recordDungeonChestOffer("live-a-run-1", offer(dev.vy.drt.luck.ChestTier.BEDROCK, "A", "B"), 2_000L));
+		assertEquals(LuckTrackingStore.OfferResult.UNCHANGED,
+			store.recordDungeonChestOffer("live-a-run-1", offer(dev.vy.drt.luck.ChestTier.BEDROCK, "A", "B"), 3_000L));
+		assertEquals(LuckTrackingStore.OfferResult.RUN_NOT_FOUND,
+			store.recordDungeonChestOffer("some-other-run", offer(dev.vy.drt.luck.ChestTier.BEDROCK, "A"), 3_000L));
+
+		LuckRunRecord run = store.runForSession("live-a-run-1");
+		assertEquals(1, run.chests.size());
+		LuckRunRecord.LuckChestRecord chest = run.chests.get(0);
+		assertEquals("BEDROCK", chest.tier);
+		assertEquals(LuckRunRecord.SOURCE_DUNGEON_CHEST, chest.source);
+		assertEquals(1, chest.offers.size());
+		assertNull(chest.purchased, "seeing a chest is not buying it");
+		assertNull(store.runForSession("some-other-run"));
+	}
+
+	@Test
+	void changedDungeonContentsAreFlaggedNotReplaced() {
+		LuckTrackingStore store = new LuckTrackingStore(file());
+		store.load();
+		store.addRun(completion("fp-1", 306));
+		store.recordDungeonChestOffer("live-a-run-1", offer(dev.vy.drt.luck.ChestTier.BEDROCK, "A", "B"), 2_000L);
+		assertEquals(LuckTrackingStore.OfferResult.CHANGED_UNVERIFIED,
+			store.recordDungeonChestOffer("live-a-run-1", offer(dev.vy.drt.luck.ChestTier.BEDROCK, "A", "C"), 3_000L));
+		assertEquals(2, store.runForSession("live-a-run-1").chests.get(0).offers.size());
+	}
+
+	@Test
+	void croesusViewOfTheSameDungeonChestIsNotStoredTwice() {
+		LuckTrackingStore store = new LuckTrackingStore(file());
+		store.load();
+		store.addRun(completion("fp-1", 306));
+		store.recordDungeonChestOffer("live-a-run-1", offer(dev.vy.drt.luck.ChestTier.BEDROCK, "A", "B"), 2_000L);
+		String luckRunId = store.runForSession("live-a-run-1").luckRunId;
+		CroesusRunViewParser.RunView view = new CroesusRunViewParser.RunView("Catacombs - Floor V", 5, false,
+			List.of(offer(dev.vy.drt.luck.ChestTier.BEDROCK, "B", "A")), List.of());
+		assertEquals(LuckTrackingStore.OfferResult.UNCHANGED, store.recordCroesusOffers(luckRunId, view, 5_000L));
+		assertEquals(1, store.runForSession("live-a-run-1").chests.get(0).offers.size());
+	}
+
+	@Test
+	void dungeonPurchaseMarksTheChestAndSurvivesARestart() {
+		LuckTrackingStore store = new LuckTrackingStore(file());
+		store.load();
+		store.addRun(completion("fp-1", 306));
+		store.recordDungeonChestOffer("live-a-run-1", offer(dev.vy.drt.luck.ChestTier.OBSIDIAN, "A"), 2_000L);
+		assertTrue(store.recordDungeonPurchase("live-a-run-1", dev.vy.drt.luck.ChestTier.OBSIDIAN));
+		assertFalse(store.recordDungeonPurchase("live-a-run-1", dev.vy.drt.luck.ChestTier.OBSIDIAN), "already recorded");
+
+		LuckTrackingStore restarted = new LuckTrackingStore(file());
+		restarted.load();
+		LuckRunRecord.LuckChestRecord chest = restarted.runForSession("live-a-run-1").chests.get(0);
+		assertEquals(Boolean.TRUE, chest.purchased);
+		assertEquals(LuckRunRecord.SOURCE_DUNGEON_CHEST, chest.purchaseSource);
+		assertEquals(Integer.valueOf(0), chest.purchasedOfferIndex);
+	}
+
 	@Test
 	void storeOnlyTouchesItsOwnFiles() throws Exception {
 		Path drtConfig = dir.resolve("drt.json");

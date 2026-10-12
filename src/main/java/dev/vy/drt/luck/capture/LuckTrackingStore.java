@@ -16,7 +16,9 @@ import java.nio.file.StandardCopyOption;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -259,6 +261,42 @@ public final class LuckTrackingStore {
 		return changed ? OfferResult.CHANGED_UNVERIFIED : OfferResult.ADDED;
 	}
 
+	/** The stored run for a DRT completion's run session id, as a copy; null when none. */
+	public synchronized LuckRunRecord runForSession(String drtRunSessionId) {
+		LuckRunRecord run = findBySession(drtRunSessionId);
+		return run == null ? null : GSON.fromJson(GSON.toJson(run), LuckRunRecord.class);
+	}
+
+	/**
+	 * Stores one chest previewed or opened in the dungeon instance for the run DRT just completed.
+	 * Merges with Croesus observations of the same chest by the same rules as the run view.
+	 */
+	public synchronized OfferResult recordDungeonChestOffer(String drtRunSessionId, CroesusRunViewParser.ChestOffer offer, long now) {
+		if (isReadOnly()) return OfferResult.READ_ONLY;
+		LuckRunRecord run = findBySession(drtRunSessionId);
+		if (run == null || offer == null || offer.contents().isEmpty()) return OfferResult.RUN_NOT_FOUND;
+		LuckRunRecord.LuckChestRecord chest = chestRecord(run.chests, offer.tier().name(), LuckRunRecord.SOURCE_DUNGEON_CHEST);
+		int result = appendOffer(chest, offer, now, LuckRunRecord.SOURCE_DUNGEON_CHEST);
+		if (result == 0) return OfferResult.UNCHANGED;
+		run.coverage = LuckCoverage.evaluate(run);
+		if (!save()) return OfferResult.SAVE_FAILED;
+		return result > 1 ? OfferResult.CHANGED_UNVERIFIED : OfferResult.ADDED;
+	}
+
+	/** Marks a chest opened in the dungeon instance as purchased. Returns whether anything changed. */
+	public synchronized boolean recordDungeonPurchase(String drtRunSessionId, ChestTier tier) {
+		if (isReadOnly() || tier == null) return false;
+		LuckRunRecord run = findBySession(drtRunSessionId);
+		if (run == null) return false;
+		LuckRunRecord.LuckChestRecord chest = chestRecord(run.chests, tier.name(), LuckRunRecord.SOURCE_DUNGEON_CHEST);
+		if (Boolean.TRUE.equals(chest.purchased) && LuckRunRecord.SOURCE_DUNGEON_CHEST.equals(chest.purchaseSource)) return false;
+		chest.purchased = true;
+		chest.purchaseSource = LuckRunRecord.SOURCE_DUNGEON_CHEST;
+		if (!chest.offers.isEmpty()) chest.purchasedOfferIndex = chest.offers.size() - 1;
+		run.coverage = LuckCoverage.evaluate(run);
+		return save();
+	}
+
 	/** Keeps a Croesus observation that matched no run, merging repeats of the same chests. */
 	public synchronized boolean recordUnmatchedCroesus(UnmatchedCroesusRun observation) {
 		if (isReadOnly() || observation == null || observation.fingerprint.isBlank()) return false;
@@ -339,6 +377,12 @@ public final class LuckTrackingStore {
 		return null;
 	}
 
+	private LuckRunRecord findBySession(String drtRunSessionId) {
+		if (drtRunSessionId == null || drtRunSessionId.isBlank()) return null;
+		for (LuckRunRecord run : data.runs) if (drtRunSessionId.equals(run.drtRunSessionId)) return run;
+		return null;
+	}
+
 	private LuckMeterReading latestReading(String floor) {
 		for (int i = data.meterReadings.size() - 1; i >= 0; i--) {
 			if (data.meterReadings.get(i).floor.equals(floor)) return data.meterReadings.get(i);
@@ -411,16 +455,21 @@ public final class LuckTrackingStore {
 
 	/** 0 when unchanged, 1 for a first offer, 2 for different contents after an earlier offer. */
 	static int appendOffer(LuckRunRecord.LuckChestRecord chest, CroesusRunViewParser.ChestOffer offer, long now) {
+		return appendOffer(chest, offer, now, LuckRunRecord.SOURCE_CROESUS_RUN_VIEW);
+	}
+
+	static int appendOffer(LuckRunRecord.LuckChestRecord chest, CroesusRunViewParser.ChestOffer offer, long now, String source) {
 		if (offer.costCoins() != null) chest.costCoins = offer.costCoins();
 		if (offer.costText() != null) chest.costText = offer.costText();
 		List<String> texts = offer.contentTexts();
 		LuckRunRecord.LuckOfferSnapshot last = chest.offers.isEmpty() ? null : chest.offers.get(chest.offers.size() - 1);
 		if (last != null && contentTexts(last).equals(texts)) return 0;
+		if (last != null && !Objects.equals(last.source, source) && sameResolvedContents(last, offer)) return 0;
 		LuckRunRecord.LuckOfferSnapshot snapshot = new LuckRunRecord.LuckOfferSnapshot();
 		snapshot.index = chest.offers.size();
 		snapshot.observedAtEpochMillis = now;
 		snapshot.changedFromPrevious = last != null;
-		snapshot.source = LuckRunRecord.SOURCE_CROESUS_RUN_VIEW;
+		snapshot.source = source;
 		for (LuckText.ContentLine line : offer.contents()) {
 			LuckRunRecord.LuckContentLine content = new LuckRunRecord.LuckContentLine();
 			content.text = line.text();
@@ -434,6 +483,26 @@ public final class LuckTrackingStore {
 		snapshot.rawLines.addAll(offer.rawLines());
 		chest.offers.add(snapshot);
 		return last == null ? 1 : 2;
+	}
+
+	/**
+	 * Chest screens and the Croesus run view word the same contents differently, so an offer seen
+	 * in both is compared by resolved item keys and quantities. Any unresolved line on either side
+	 * leaves the texts to decide.
+	 */
+	private static boolean sameResolvedContents(LuckRunRecord.LuckOfferSnapshot last, CroesusRunViewParser.ChestOffer offer) {
+		if (last.contents.isEmpty() || offer.contents().isEmpty()) return false;
+		Map<String, Integer> before = new HashMap<>();
+		for (LuckRunRecord.LuckContentLine line : last.contents) {
+			if (line.key == null) return false;
+			before.merge(line.key, Math.max(1, line.quantity), Integer::sum);
+		}
+		Map<String, Integer> after = new HashMap<>();
+		for (LuckText.ContentLine line : offer.contents()) {
+			if (line.key() == null) return false;
+			after.merge(line.key(), Math.max(1, line.quantity()), Integer::sum);
+		}
+		return before.equals(after);
 	}
 
 	private static List<String> contentTexts(LuckRunRecord.LuckOfferSnapshot offer) {
@@ -502,6 +571,7 @@ public final class LuckTrackingStore {
 			LuckRunRecord.LuckChestRecord chest = chestRecord(run.chests, tier, LuckRunRecord.SOURCE_CROESUS_MENU);
 			if (!Boolean.TRUE.equals(chest.purchased)) {
 				chest.purchased = true;
+				chest.purchaseSource = LuckRunRecord.SOURCE_CROESUS_MENU;
 				if (!chest.offers.isEmpty()) chest.purchasedOfferIndex = chest.offers.size() - 1;
 				changed = true;
 			}

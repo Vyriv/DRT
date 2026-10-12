@@ -423,6 +423,10 @@ public final class DrtConfigManager {
 			stored.timestampEpochMillis = existing.timestampEpochMillis;
 			stored.chestNumber = existing.chestNumber;
 			stored.runNumber = existing.runNumber;
+			if (stored.runLinkSource == null) {
+				stored.runLinkSource = existing.runLinkSource;
+				stored.linkedRunId = existing.linkedRunId;
+			}
 			stored.normalizeCostBreakdown();
 			config.runHistory.set(i, stored);
 			save();

@@ -5,12 +5,13 @@ Live capture for future runs, from dungeon completion to Stage B scoring input. 
 ## Pipeline
 
 1. **Completion.** `LuckTrackingStore.addRun` stores the floor, grade and numeric score from the completion chat, the party from the tab list, a copy of the modifier profile active at that moment, and the newest meter reading for the floor taken after the floor's previous captured run (`BEFORE_RUN`).
-2. **Croesus menu.** `CroesusRunMatcher` links menu entries to stored runs by floor, roster and completion-age window. Ambiguous entries are not linked; entries that match no run go to `unmatchedCroesus`. The link records the listed modifiers (Kismet Feather, Dungeon Chest Key) and which chests were opened.
-3. **Croesus run view.** Every chest offer is stored with raw lore and resolved content lines. Identical contents are not stored twice. Different contents for a chest already seen are appended and flagged, and only count as a Kismet reroll when marked as one.
-4. **RNG Meter.** A reading is attached as `AFTER_RUN` to the floor's latest run before it, if that run has none. An unchanged reading with no run in between only moves its last-seen time.
-5. **Coverage.** `LuckCoverage.evaluate` (version 3) is recomputed on every change and on every load, so a stale stored verdict is never trusted.
-6. **Conversion.** `LuckScoringInput.history` turns stored runs into `ObservedRun`s, re-evaluating coverage itself. Runs it cannot score come back as rejected with their blockers, runs with a Kismet reroll as excluded with their evidence, and gaps the engine can widen over as caveats.
-7. **Evaluation.** `LuckHistoryEvaluation.evaluate` applies the missing-data policy (below), builds configurations for the rated floors with `HistoryConfigurations` (per-run modifiers, meter scenarios from `MeterScenarioPlanner`), runs `LuckEvaluator` and bounds the runs left out. The result keeps everything the Luck Rating screen needs; see below.
+2. **In-dungeon reward chests.** A reward chest preview seen in the instance of the run DRT just completed is stored as that run's offer (source `DUNGEON_CHEST`), once its contents read the same on two scans after the screen settled. A chest opened there is marked purchased with the same source. Nothing is clicked for the player.
+3. **Croesus menu.** `CroesusRunMatcher` links menu entries to stored runs by floor, roster, completion-age window and, for chests DRT saw opened in the dungeon, the entry's opened chests. Under the default strict policy a group of look-alike entries is linked only when the evidence leaves a single pairing (`UNIQUE`, or `ELIMINATION` for larger groups); otherwise it stays `AMBIGUOUS`. The menu's list order is never used to pair entries until it is verified in game (`Policy.LIST_ORDER`, off). Entries that match no run go to `unmatchedCroesus`. The link records the listed modifiers (Kismet Feather, Dungeon Chest Key) and which chests were opened.
+4. **Croesus run view.** Every chest offer is stored with raw lore and resolved content lines. Identical contents are not stored twice, including the same chest seen first in the dungeon and later in Croesus when every line resolved to the same keys. Different contents for a chest already seen are appended and flagged, and only count as a Kismet reroll when marked as one.
+5. **RNG Meter.** A reading is attached as `AFTER_RUN` to the floor's latest run before it, if that run has none. An unchanged reading with no run in between only moves its last-seen time.
+6. **Coverage.** `LuckCoverage.evaluate` (version 3) is recomputed on every change and on every load, so a stale stored verdict is never trusted.
+7. **Conversion.** `LuckScoringInput.history` turns stored runs into `ObservedRun`s, re-evaluating coverage itself. Runs it cannot score come back as rejected with their blockers, runs with a Kismet reroll as excluded with their evidence, and gaps the engine can widen over as caveats.
+8. **Evaluation.** `LuckHistoryEvaluation.evaluate` applies the missing-data policy (below), builds configurations for the rated floors with `HistoryConfigurations` (per-run modifiers, meter scenarios from `MeterScenarioPlanner`), runs `LuckEvaluator` and bounds the runs left out. The result keeps everything the Luck Rating screen needs; see below.
 
 ## Coverage
 
@@ -126,7 +127,7 @@ Players visit Croesus every 20 to 60 runs. What DRT can see without automating a
 |---|---|---|
 | Croesus menu (paged list) | Floor, party, completion age, expiry, opened chests, Kismet and Chest Key availability. No contents. | Linking entries to runs |
 | Croesus run view (one click per run) | Every chest's full contents and cost on one screen | Complete offers for that run |
-| In-dungeon reward chest screens | One chest's contents per screen, only for chests the player opens | Partial offers; an exact fingerprint of the run |
+| In-dungeon reward chest screens | One chest's contents per screen, for every chest the player looks at | Offers for the run just completed; opened chests are evidence for Croesus matching |
 | `RARE REWARD!` chat | Rare items from opened chests | Purchases only, not appearance |
 
 Croesus counts chest expiry down from 72 hours after the run, so runs left longer than that cannot be captured at all. The menu alone never shows contents, so DRT cannot fill in offers it did not see. Clicking through Croesus automatically would be unsafe gameplay automation and is ruled out.
@@ -135,9 +136,25 @@ Feasible, all player-driven:
 
 1. **Optional guided Croesus pass.** Never a required workflow; DRT stays passive. While the Croesus menu is open, mark each entry DRT has linked: captured, needs viewing, or not linked. Show a count such as "14 runs still need their chests viewed" and keep it updated as the player opens and closes run views. One click and one back per run, with capture as soon as the view is stable, makes 40 runs a minute or two of clicking.
 2. **Match across pages.** The matcher treats each page alone and refuses blocks that could continue onto another page (`PAGE_BOUNDARY`). Combining the pages seen in one visit would link those entries too.
-3. **Content fingerprints.** When the player opened a chest at the end of the dungeon, its contents identify the Croesus run exactly. That resolves `AMBIGUOUS` blocks of same-floor, same-party runs within one rounded age window.
+3. **Content fingerprints.** Chests opened at the end of the dungeon already narrow Croesus candidates by tier (an entry must list them as opened). Comparing their contents with the run view would separate runs that opened the same tiers.
 4. **Expiry reminder.** A passive notice when recorded runs approach their 72-hour expiry unviewed.
 5. **Later, chest-level scoring.** Scoring only chests the player chose to open is biased if opening a second chest depends on the first one's contents, so it would need its own policy and is not part of Stage D.
+
+## Loot history links and run times
+
+Loot history (`/drt loot`) and the luck store share runs through the DRT run session id. A chest record is tied to a completed run only on proof, decided when it is opened and stored on the record (`runLinkSource`, `linkedRunId`):
+
+| Link | When |
+|---|---|
+| `LIVE_INSTANCE` | Opened in the instance of the run DRT completed there, within 10 minutes |
+| `CROESUS_UNIQUE` | Opened from a Croesus run view whose entry the evidence linked to one run |
+| `UNLINKED` | Anything else |
+
+Older records carry no link. `RunHistoryLinks` judges them at display time without changing them: a chest stamped with its run's own completion time, floor and session, in a group of at most two chests of different tiers, counts as opened in the dungeon. Croesus opens that older versions filed under the latest run fail these checks and stay unlinked. Any run with more than two linked chests, or the same tier twice, has all of them unlinked. Loot, cost and profit are never changed by any of this, and totals still count only purchased chests.
+
+Completion records store where their time came from (`runTimeSource`): the boss time from chat (`OFFICIAL_CHAT`), DRT's own clock (`MEASURED`) or a manual entry. Older records are judged by their fingerprint, which ends in the chat time or 0. A linked chest shows its run's time; anything else shows "Time unavailable".
+
+The loot screen shows one tab per chest the run offered when there is more than one: purchased chests with their logged loot and a green mark, chests seen but not bought as hypothetical, and chests never seen as "Not recorded". Up and Down move through the chest list, Left and Right through the tabs.
 
 ## Meter attachment
 
@@ -165,7 +182,7 @@ Regression tests: `LuckScoringInputTest`, `LuckCoverageTest`, `LuckTrackingStore
 ## Remaining limitations
 
 - **Kismet.** No real reroll has been captured. Confirmed and suspected rerolls are excluded from the score until the real behaviour is verified and simulated. A reroll used before DRT first saw the chest looks like a normal offer and cannot be detected.
-- **Opened-chest formats.** How an opened chest looks in the Croesus run view has not been observed. If its contents are not shown, the run is blocked as `OFFERS_PARTIAL`. Chests opened at the end of the dungeon are only known through Croesus "Opened Chest:" lines; their contents are not captured from the in-dungeon chest screen.
+- **Opened-chest formats.** How an opened chest looks in the Croesus run view has not been observed. If its contents are not shown, the run is blocked as `OFFERS_PARTIAL`. In-dungeon previews are now captured, but their item wording has only been checked against logged loot, not against a live preview; a line that resolves to no key blocks the run as `OFFER_CONTENT_UNRESOLVED` rather than being guessed.
 - **Master Mode.** The run view title has only been seen for Normal floors. A title without a Master Mode marker leaves the mode unknown and relies on the matched menu entry. No Master Mode run has been captured end to end.
 - **Mechanic variants.** S-run meter gain is still provisional (round first or one combined multiplier) until an S score of 285 or 299 is read. M7 chest eligibility, guarantee placement, meter reset trigger, overflow, Kismet and meter, and the rounding variants are still unconfirmed and stay in sensitivity analysis.
 - **Data gaps.** Dyes and other known gaps are not modelled. Runs played without DRT running are only noticed when a later reading shows unexplained progress, which withholds the headline; without a later reading they go unnoticed, and a derived start assumes no such run happened inside its window.

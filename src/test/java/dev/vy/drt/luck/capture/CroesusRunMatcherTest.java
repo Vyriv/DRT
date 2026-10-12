@@ -58,10 +58,21 @@ class CroesusRunMatcherTest {
 	}
 
 	@Test
-	void identicalEntriesPairInOrderWhenTheBlockIsComplete() {
+	void identicalEntriesStayUnmatchedUnderTheStrictPolicy() {
 		List<LuckRunRecord> runs = new ArrayList<>();
 		for (int i = 0; i < HOUR_AGO_SLOTS.length; i++) runs.add(run("m5-" + i, "M5", HOUR + (i + 1) * 4 * MINUTE, M5_PARTY));
 		CroesusRunMatcher.Result result = CroesusRunMatcher.match(menu(), runs, NOW);
+		for (int slot : HOUR_AGO_SLOTS) {
+			assertNull(result.forSlot(slot).luckRunId(), "slot " + slot);
+			assertEquals(CroesusRunMatcher.REASON_AMBIGUOUS, result.forSlot(slot).reason());
+		}
+	}
+
+	@Test
+	void identicalEntriesPairInOrderOnlyUnderTheListOrderPolicy() {
+		List<LuckRunRecord> runs = new ArrayList<>();
+		for (int i = 0; i < HOUR_AGO_SLOTS.length; i++) runs.add(run("m5-" + i, "M5", HOUR + (i + 1) * 4 * MINUTE, M5_PARTY));
+		CroesusRunMatcher.Result result = CroesusRunMatcher.match(menu(), runs, NOW, CroesusRunMatcher.Policy.LIST_ORDER);
 		for (int i = 0; i < HOUR_AGO_SLOTS.length; i++) {
 			CroesusRunMatcher.EntryMatch match = result.forSlot(HOUR_AGO_SLOTS[i]);
 			assertEquals("m5-" + i, match.luckRunId(), "slot " + HOUR_AGO_SLOTS[i]);
@@ -111,6 +122,106 @@ class CroesusRunMatcherTest {
 		linked.croesus = new LuckRunRecord.LuckCroesusLink();
 		linked.croesus.players = new ArrayList<>(List.of("LocalPlayer", "Other"));
 		assertFalse(CroesusRunMatcher.match(menu(), List.of(linked), NOW).forSlot(10).matched());
+	}
+
+	@Test
+	void chestsOpenedInTheDungeonSeparateConsecutiveRuns() {
+		List<String> party = List.of("LocalPlayer", "Alpha");
+		CroesusMenuParser.Menu menu = new CroesusMenuParser.Menu(1, 1, false, List.of(
+			opened(10, 0, party, List.of("Bedrock")),
+			opened(11, 1, party, List.of("Obsidian"))
+		));
+		List<LuckRunRecord> runs = List.of(
+			withDungeonPurchase(run("first", "F5", HOUR + 50 * MINUTE, party), "OBSIDIAN"),
+			withDungeonPurchase(run("second", "F5", HOUR + 10 * MINUTE, party), "BEDROCK")
+		);
+		CroesusRunMatcher.Result result = CroesusRunMatcher.match(menu, runs, NOW);
+		assertEquals("second", result.forSlot(10).luckRunId());
+		assertEquals("first", result.forSlot(11).luckRunId());
+		assertEquals(CroesusRunMatcher.METHOD_UNIQUE, result.forSlot(10).method());
+	}
+
+	@Test
+	void oneRunWithPurchaseEvidenceCanForceTheOtherPairing() {
+		List<String> party = List.of("LocalPlayer", "Alpha");
+		CroesusMenuParser.Menu menu = new CroesusMenuParser.Menu(1, 1, false, List.of(
+			opened(10, 0, party, List.of("Bedrock")),
+			opened(11, 1, party, List.of("Obsidian"))
+		));
+		List<LuckRunRecord> runs = List.of(
+			run("first", "F5", HOUR + 50 * MINUTE, party),
+			withDungeonPurchase(run("second", "F5", HOUR + 10 * MINUTE, party), "BEDROCK")
+		);
+		CroesusRunMatcher.Result result = CroesusRunMatcher.match(menu, runs, NOW);
+		assertEquals("second", result.forSlot(10).luckRunId());
+		assertEquals("first", result.forSlot(11).luckRunId());
+		assertEquals(CroesusRunMatcher.METHOD_ELIMINATION, result.forSlot(10).method());
+		assertEquals(CroesusRunMatcher.METHOD_ELIMINATION, result.forSlot(11).method());
+	}
+
+	@Test
+	void sameOpenedChestsLeaveConsecutiveRunsUnmatched() {
+		List<String> party = List.of("LocalPlayer", "Alpha");
+		CroesusMenuParser.Menu menu = new CroesusMenuParser.Menu(1, 1, false, List.of(
+			opened(10, 0, party, List.of("Bedrock")),
+			opened(11, 1, party, List.of("Bedrock"))
+		));
+		List<LuckRunRecord> runs = List.of(
+			withDungeonPurchase(run("first", "F5", HOUR + 50 * MINUTE, party), "BEDROCK"),
+			withDungeonPurchase(run("second", "F5", HOUR + 10 * MINUTE, party), "BEDROCK")
+		);
+		CroesusRunMatcher.Result result = CroesusRunMatcher.match(menu, runs, NOW);
+		assertEquals(CroesusRunMatcher.REASON_AMBIGUOUS, result.forSlot(10).reason());
+		assertEquals(CroesusRunMatcher.REASON_AMBIGUOUS, result.forSlot(11).reason());
+	}
+
+	@Test
+	void aChestOpenedInTheDungeonMustBeListedOnTheEntry() {
+		List<String> party = List.of("LocalPlayer", "Alpha");
+		CroesusMenuParser.Menu menu = new CroesusMenuParser.Menu(1, 1, false, List.of(entry(10, 0, party)));
+		LuckRunRecord run = withDungeonPurchase(run("only", "F5", HOUR + 10 * MINUTE, party), "BEDROCK");
+		CroesusRunMatcher.Result result = CroesusRunMatcher.match(menu, List.of(run), NOW);
+		assertEquals(CroesusRunMatcher.REASON_NO_CANDIDATE, result.forSlot(10).reason());
+	}
+
+	@Test
+	void chestsBoughtInCroesusAreNotEvidence() {
+		List<String> party = List.of("LocalPlayer", "Alpha");
+		CroesusMenuParser.Menu menu = new CroesusMenuParser.Menu(1, 1, false, List.of(entry(10, 0, party)));
+		LuckRunRecord run = run("only", "F5", HOUR + 10 * MINUTE, party);
+		LuckRunRecord.LuckChestRecord chest = new LuckRunRecord.LuckChestRecord();
+		chest.tier = "BEDROCK";
+		chest.purchased = true;
+		chest.purchaseSource = LuckRunRecord.SOURCE_CROESUS_MENU;
+		run.chests.add(chest);
+		assertEquals("only", CroesusRunMatcher.match(menu, List.of(run), NOW).forSlot(10).luckRunId());
+	}
+
+	@Test
+	void eliminationNeedsEveryPairingForced() {
+		CroesusMenuParser.RunEntry a = entry(10, 0, List.of());
+		CroesusMenuParser.RunEntry b = entry(11, 1, List.of());
+		CroesusMenuParser.RunEntry c = entry(12, 2, List.of());
+		java.util.Map<Integer, java.util.Set<String>> forced = java.util.Map.of(
+			10, java.util.Set.of("x"), 11, java.util.Set.of("x", "y"), 12, java.util.Set.of("y", "z"));
+		assertEquals(java.util.Map.of(10, "x", 11, "y", 12, "z"), CroesusRunMatcher.assignByElimination(List.of(a, b, c), forced));
+		java.util.Map<Integer, java.util.Set<String>> open = java.util.Map.of(
+			10, java.util.Set.of("x", "y"), 11, java.util.Set.of("x", "y"));
+		assertNull(CroesusRunMatcher.assignByElimination(List.of(a, b), open));
+	}
+
+	private static LuckRunRecord withDungeonPurchase(LuckRunRecord run, String tier) {
+		LuckRunRecord.LuckChestRecord chest = new LuckRunRecord.LuckChestRecord();
+		chest.tier = tier;
+		chest.purchased = true;
+		chest.purchaseSource = LuckRunRecord.SOURCE_DUNGEON_CHEST;
+		run.chests.add(chest);
+		return run;
+	}
+
+	private static CroesusMenuParser.RunEntry opened(int slot, int position, List<String> players, List<String> openedChests) {
+		return new CroesusMenuParser.RunEntry(slot, position, "The Catacombs", false, true, dev.vy.drt.luck.FloorId.F5, players,
+			"1 hour ago", HOUR, 2 * HOUR, null, false, openedChests, List.of(), List.of());
 	}
 
 	private static CroesusMenuParser.RunEntry entry(int slot, int position, List<String> players) {

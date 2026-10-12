@@ -1,5 +1,6 @@
 package dev.vy.drt.luck.capture;
 
+import dev.vy.drt.luck.ChestTier;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -13,16 +14,27 @@ import java.util.TreeSet;
 
 /**
  * Links Croesus run entries to captured luck runs. An entry is a candidate for a run when floor and
- * mode agree, the run's completion time falls inside the entry's rounded age window, and party
- * rosters agree wherever both are known. Entries and runs that share candidates form a block; a
- * block is assigned only when it has as many entries as runs, the newest-first pairing is
- * consistent, and no part of it could continue onto an unseen page. Anything else stays unmatched.
+ * mode agree, the run's completion time falls inside the entry's rounded age window, party rosters
+ * agree wherever both are known, and every chest DRT saw opened in the dungeon is listed as opened.
+ * Entries and runs that share candidates form a block, and a block is only linked when it has as
+ * many runs as entries and could not continue onto an unseen page. Under the default
+ * {@link Policy#STRICT} a block is linked only when the evidence allows a single pairing. Pairing by
+ * the menu's newest-first order is only allowed under {@link Policy#LIST_ORDER}, which stays off
+ * until that order is verified in game.
  */
 public final class CroesusRunMatcher {
+	/** Whether identical-looking entries may be paired with runs by the menu's list order. */
+	public record Policy(boolean pairByListOrder) {
+		public static final Policy STRICT = new Policy(false);
+		public static final Policy LIST_ORDER = new Policy(true);
+	}
+
 	/** Allowance for client and server clocks and for the menu text being a moment old. */
 	public static final long TIME_SLACK_MILLIS = 45_000L;
 
 	public static final String METHOD_UNIQUE = "UNIQUE";
+	/** A larger block where the evidence leaves exactly one possible pairing. */
+	public static final String METHOD_ELIMINATION = "ELIMINATION";
 	public static final String METHOD_ORDER_IN_BLOCK = "ORDER_IN_BLOCK";
 
 	public static final String REASON_NOT_CATACOMBS = "NOT_CATACOMBS";
@@ -53,6 +65,11 @@ public final class CroesusRunMatcher {
 	}
 
 	public static Result match(CroesusMenuParser.Menu menu, List<LuckRunRecord> runs, long observedAtEpochMillis) {
+		return match(menu, runs, observedAtEpochMillis, Policy.STRICT);
+	}
+
+	public static Result match(CroesusMenuParser.Menu menu, List<LuckRunRecord> runs, long observedAtEpochMillis, Policy policy) {
+		Policy rules = policy == null ? Policy.STRICT : policy;
 		List<CroesusMenuParser.RunEntry> entries = new ArrayList<>(menu.entries());
 		entries.sort(Comparator.comparingInt(CroesusMenuParser.RunEntry::position));
 		Map<Integer, EntryMatch> out = new LinkedHashMap<>();
@@ -84,28 +101,30 @@ public final class CroesusRunMatcher {
 			Set<String> blockRuns = new HashSet<>();
 			for (CroesusMenuParser.RunEntry entry : block) blockRuns.addAll(candidates.get(entry.slot()));
 			String reason = null;
-			if (couldReachUnseenPage(blockRuns, runsById, entries, menu, observedAtEpochMillis)) reason = REASON_PAGE_BOUNDARY;
-			else if (blockRuns.size() != block.size()) reason = REASON_AMBIGUOUS;
-			List<LuckRunRecord> ordered = new ArrayList<>();
-			if (reason == null) {
-				for (String id : blockRuns) ordered.add(runsById.get(id));
-				ordered.sort(Comparator.comparingLong((LuckRunRecord run) -> run.completedAtEpochMillis).reversed()
-					.thenComparing(run -> run.luckRunId));
-				for (int i = 0; i < block.size(); i++) {
-					if (!candidates.get(block.get(i).slot()).contains(ordered.get(i).luckRunId)) {
-						reason = REASON_ORDER_CONFLICT;
-						break;
-					}
-				}
+			String method = null;
+			Map<Integer, String> assignment = null;
+			if (couldReachUnseenPage(blockRuns, runsById, entries, menu, observedAtEpochMillis)) {
+				reason = REASON_PAGE_BOUNDARY;
+			} else if (blockRuns.size() != block.size()) {
+				reason = REASON_AMBIGUOUS;
+			} else if (block.size() == 1) {
+				assignment = Map.of(block.get(0).slot(), blockRuns.iterator().next());
+				method = METHOD_UNIQUE;
+			} else if ((assignment = assignByElimination(block, candidates)) != null) {
+				method = METHOD_ELIMINATION;
+			} else if (rules.pairByListOrder()) {
+				assignment = assignByListOrder(block, blockRuns, candidates, runsById);
+				if (assignment == null) reason = REASON_ORDER_CONFLICT;
+				else method = METHOD_ORDER_IN_BLOCK;
+			} else {
+				reason = REASON_AMBIGUOUS;
 			}
-			for (int i = 0; i < block.size(); i++) {
-				CroesusMenuParser.RunEntry entry = block.get(i);
+			for (CroesusMenuParser.RunEntry entry : block) {
 				int count = candidates.get(entry.slot()).size();
 				if (reason != null) {
 					out.put(entry.slot(), new EntryMatch(entry.slot(), null, null, reason, count));
 				} else {
-					String method = block.size() == 1 ? METHOD_UNIQUE : METHOD_ORDER_IN_BLOCK;
-					out.put(entry.slot(), new EntryMatch(entry.slot(), ordered.get(i).luckRunId, method, null, count));
+					out.put(entry.slot(), new EntryMatch(entry.slot(), assignment.get(entry.slot()), method, null, count));
 				}
 			}
 		}
@@ -121,7 +140,83 @@ public final class CroesusRunMatcher {
 		if (run.completedAtEpochMillis < earliest || run.completedAtEpochMillis > latest) return false;
 		if (!sameRoster(entry.players(), run.party)) return false;
 		if (run.croesus != null && !sameRoster(entry.players(), run.croesus.players)) return false;
+		return purchasesAgree(entry, run);
+	}
+
+	/**
+	 * A chest DRT saw opened in the dungeon must appear as opened on the entry. Chests opened later
+	 * in Croesus prove nothing either way, so extra opened chests on the entry are allowed.
+	 */
+	static boolean purchasesAgree(CroesusMenuParser.RunEntry entry, LuckRunRecord run) {
+		Set<String> opened = new HashSet<>();
+		for (String name : entry.openedChests()) {
+			ChestTier tier = LuckText.chestTier(name);
+			if (tier != null) opened.add(tier.name());
+		}
+		for (LuckRunRecord.LuckChestRecord chest : run.chests) {
+			if (!Boolean.TRUE.equals(chest.purchased) || !LuckRunRecord.SOURCE_DUNGEON_CHEST.equals(chest.purchaseSource)) continue;
+			if (entry.noChestsOpened() || !opened.contains(chest.tier)) return false;
+		}
 		return true;
+	}
+
+	/**
+	 * Pairs a block where every entry and run is pinned down by evidence alone: repeatedly takes an
+	 * entry with one remaining candidate, or a run that only one remaining entry can be. Returns null
+	 * as soon as a choice would be needed, so a result is the only pairing the evidence allows.
+	 */
+	static Map<Integer, String> assignByElimination(List<CroesusMenuParser.RunEntry> block, Map<Integer, Set<String>> candidates) {
+		Map<Integer, Set<String>> open = new LinkedHashMap<>();
+		for (CroesusMenuParser.RunEntry entry : block) open.put(entry.slot(), new HashSet<>(candidates.get(entry.slot())));
+		Map<Integer, String> assigned = new HashMap<>();
+		while (!open.isEmpty()) {
+			Integer slot = null;
+			String run = null;
+			for (Map.Entry<Integer, Set<String>> entry : open.entrySet()) {
+				if (entry.getValue().size() == 1) {
+					slot = entry.getKey();
+					run = entry.getValue().iterator().next();
+					break;
+				}
+			}
+			if (slot == null) {
+				Map<String, List<Integer>> entriesByRun = new HashMap<>();
+				for (Map.Entry<Integer, Set<String>> entry : open.entrySet()) {
+					for (String id : entry.getValue()) entriesByRun.computeIfAbsent(id, key -> new ArrayList<>()).add(entry.getKey());
+				}
+				for (Map.Entry<String, List<Integer>> entry : entriesByRun.entrySet()) {
+					if (entry.getValue().size() == 1) {
+						slot = entry.getValue().get(0);
+						run = entry.getKey();
+						break;
+					}
+				}
+			}
+			if (slot == null) return null;
+			assigned.put(slot, run);
+			open.remove(slot);
+			for (Set<String> remaining : open.values()) {
+				remaining.remove(run);
+				if (remaining.isEmpty()) return null;
+			}
+		}
+		return assigned;
+	}
+
+	/** Newest entry to newest run, used only under {@link Policy#LIST_ORDER}. */
+	private static Map<Integer, String> assignByListOrder(List<CroesusMenuParser.RunEntry> block, Set<String> blockRuns,
+		Map<Integer, Set<String>> candidates, Map<String, LuckRunRecord> runsById) {
+		List<LuckRunRecord> ordered = new ArrayList<>();
+		for (String id : blockRuns) ordered.add(runsById.get(id));
+		ordered.sort(Comparator.comparingLong((LuckRunRecord run) -> run.completedAtEpochMillis).reversed()
+			.thenComparing(run -> run.luckRunId));
+		Map<Integer, String> out = new HashMap<>();
+		for (int i = 0; i < block.size(); i++) {
+			int slot = block.get(i).slot();
+			if (!candidates.get(slot).contains(ordered.get(i).luckRunId)) return null;
+			out.put(slot, ordered.get(i).luckRunId);
+		}
+		return out;
 	}
 
 	/** Rosters agree when either is unknown or both name the same players, ignoring case. */
