@@ -2,6 +2,7 @@ package dev.vy.drt.client.screen;
 
 import dev.vy.drt.client.DrtClient;
 import dev.vy.drt.client.luck.LuckRunCapture;
+import dev.vy.drt.config.ClearConfirmation;
 import dev.vy.drt.config.DrtConfigManager;
 import dev.vy.drt.config.DungeonFloor;
 import dev.vy.drt.config.DungeonLootEntry;
@@ -72,7 +73,7 @@ public final class DungeonLootScreen extends Screen {
 	private long lootSearchLastTypedMillis;
 	private int listScroll;
 	private int tableScroll;
-	private long clearConfirmUntilMillis;
+	private final ClearConfirmation clearConfirm = new ClearConfirmation();
 	private int deleteConfirmRunIndex = -1;
 	private long deleteConfirmUntilMillis;
 	private LootSortColumn lootSortColumn;
@@ -504,7 +505,7 @@ public final class DungeonLootScreen extends Screen {
 		selectedRunIndex = index;
 		clearLootFocus();
 		tableScroll = 0;
-		clearConfirmUntilMillis = 0L;
+		clearConfirm.reset();
 	}
 
 	private boolean isDeleteConfirming() {
@@ -740,34 +741,35 @@ public final class DungeonLootScreen extends Screen {
 
 		boolean closeHov = contains(closeX, buttonY, closeW, buttonH, mouseX, mouseY);
 		boolean clearHov = contains(clearX, buttonY, clearW, buttonH, mouseX, mouseY);
-		boolean confirming = clearConfirmUntilMillis > System.currentTimeMillis();
+		String clearScope = selectedTab == null ? null : selectedTab.name();
+		boolean confirming = clearConfirm.isArmed(clearScope, System.currentTimeMillis());
 		drawClearButton(g, clearX, buttonY, clearW, buttonH, clearHov, confirming);
 		drawButton(g, closeX, buttonY, closeW, buttonH, closeHov, "Close");
 
 		clickTargets.add(new ClickTarget(closeX, buttonY, closeW, buttonH, 0, this::onClose));
 		clickTargets.add(new ClickTarget(clearX, buttonY, clearW, buttonH, 0, () -> {
-			long now = System.currentTimeMillis();
-			if (clearConfirmUntilMillis > now) {
-				List<DungeonRunRecord> removed;
-				if (selectedTab == null) {
-					removed = DrtConfigManager.getRunHistory();
-					DrtConfigManager.clearAllData();
-				} else {
-					String floor = selectedTab.name();
-					removed = DrtConfigManager.getRunHistory().stream()
-						.filter(r -> r != null && floor.equals(r.floor))
-						.toList();
-					DrtConfigManager.clearFloorData(floor);
-				}
-				DrtClient.getTracker().notifyHistoryCleared(removed);
-				clearConfirmUntilMillis = 0L;
-				clearDeleteConfirm();
-				clearLootFocus();
-				reloadHistory();
+			ClearConfirmation.Result result = clearConfirm.click(clearScope, System.currentTimeMillis());
+			if (result == ClearConfirmation.Result.ARMED) clearDeleteConfirm();
+			if (result != ClearConfirmation.Result.CONFIRMED) return;
+			List<DungeonRunRecord> removed;
+			boolean cleared;
+			if (clearScope == null) {
+				removed = DrtConfigManager.getRunHistory();
+				cleared = DrtConfigManager.clearAllData("loot screen");
 			} else {
-				clearConfirmUntilMillis = now + 3000L;
-				clearDeleteConfirm();
+				removed = DrtConfigManager.getRunHistory().stream()
+					.filter(r -> r != null && clearScope.equals(r.floor))
+					.toList();
+				cleared = DrtConfigManager.clearFloorData(clearScope, "loot screen");
 			}
+			if (!cleared) {
+				DrtClient.getTracker().notifyHistoryClearFailed();
+				return;
+			}
+			DrtClient.getTracker().notifyHistoryCleared(removed);
+			clearDeleteConfirm();
+			clearLootFocus();
+			reloadHistory();
 		}));
 	}
 
@@ -854,7 +856,7 @@ public final class DungeonLootScreen extends Screen {
 		clearLootFocus();
 		listScroll = 0;
 		tableScroll = 0;
-		clearConfirmUntilMillis = 0L;
+		clearConfirm.reset();
 		DrtConfigManager.updateSelectedFloor(floor == null ? null : floor.name());
 		rebuildTabHistory();
 	}
