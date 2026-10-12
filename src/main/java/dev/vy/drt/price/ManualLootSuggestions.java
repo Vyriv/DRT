@@ -15,9 +15,9 @@ public final class ManualLootSuggestions {
 	private static final int SEARCH_LIMIT = 80;
 	private static final Pattern ENCHANTED_BOOK_PATTERN = Pattern.compile("^Enchanted Book \\((.+) ([IVX]+)\\)$", Pattern.CASE_INSENSITIVE);
 	private static final Set<String> ULTIMATE_ENCHANTS = Set.of(
-			"LEGION", "ULTIMATE_WISE", "LAST_STAND", "SOUL_EATER", "SWARM", "COMBO", "REND",
+			"LEGION", "WISE", "LAST_STAND", "SOUL_EATER", "SWARM", "COMBO", "REND",
 			"NO_PAIN_NO_GAIN", "ONE_FOR_ALL", "CHIMERA", "BANK", "JERRY", "INFERNO",
-			"FATAL_TEMPO", "DUPLEX", "FLASH", "HABANERO_TACTICS"
+			"FATAL_TEMPO", "DUPLEX", "FLASH", "HABANERO_TACTICS", "WISDOM"
 	);
 
 	private static final List<String> COMMON_DUNGEON_CHEST_REWARDS = List.of(

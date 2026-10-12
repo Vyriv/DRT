@@ -74,6 +74,7 @@ import java.util.regex.Pattern;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.client.gui.screens.inventory.InventoryScreen;
 import net.minecraft.core.component.DataComponents;
@@ -107,6 +108,9 @@ public final class DungeonRunTrackerFeature {
 	private static final long KUUDRA_KEY_SHOP_SCAN_INTERVAL_MS = 500L;
 	private static final Pattern KUUDRA_KEY_SHOP_MATERIAL_PATTERN = Pattern.compile("^(.+?)\\s+[xX×]\\s*(\\d[\\d,]*)$");
 	private static final long REWARD_OPEN_FAILED_GRACE_MS = 1_500L;
+	// Hypixel can fill a reward chest menu over several packets, so loot slots may
+	// arrive before the Open Reward Chest button that marks it as a preview.
+	private static final long REWARD_SCREEN_SETTLE_MS = 500L;
 	private static final long REWARD_MODIFIER_SCAN_INTERVAL_MS = 300L;
 	private static final Pattern ESSENCE_PATTERN = Pattern.compile("^(?:\\+\\s*)?(WITHER|UNDEAD|SPIDER|DRAGON|ICE|DIAMOND|GOLD|CRIMSON) ESSENCE(?:\\s*[xX×]\\s*(\\d[\\d,]*))?$");
 	private static final Pattern RECEIVED_PATTERN = Pattern.compile("^YOU RECEIVED\\s+(.+?)(?:\\s*[xX×]\\s*(\\d+))?!?$");
@@ -164,7 +168,7 @@ public final class DungeonRunTrackerFeature {
 	private static final Set<String> ULTIMATE_ENCHANTS = Set.of(
 			"LEGION", "WISE", "LAST_STAND", "SOUL_EATER", "SWARM", "COMBO", "REND",
 			"NO_PAIN_NO_GAIN", "ONE_FOR_ALL", "CHIMERA", "BANK", "JERRY", "INFERNO",
-			"FATAL_TEMPO", "DUPLEX", "FLASH", "HABANERO_TACTICS"
+			"FATAL_TEMPO", "DUPLEX", "FLASH", "HABANERO_TACTICS", "WISDOM"
 	);
 	private static final Map<String, String> ITEM_ID_ALIASES = createItemIdAliases();
 	private static final String ITEM_DUNGEON_CHEST_KEY = "DUNGEON_CHEST_KEY";
@@ -423,6 +427,8 @@ public final class DungeonRunTrackerFeature {
 	private boolean pendingLootChestAssigned;
 	private boolean pendingLootChatConfirmed;
 	private long lastRewardOpenFailedMillis;
+	private Screen trackedRewardScreen;
+	private long trackedRewardScreenSinceMillis;
 	/** Incident id waiting for a non-null player so chat notify can be delivered. */
 	private String pendingIncidentChatNotifyId = "";
 	private int openedRewardChestsInLootWindow;
@@ -3486,6 +3492,10 @@ public final class DungeonRunTrackerFeature {
 		String canonicalRewardTitle = resolveCanonicalRewardChestTitle(normalizedTitle, menu);
 		DungeonFloor menuTitleFloor = rewardContextFloorFromTitle(normalizedTitle);
 		long now = System.currentTimeMillis();
+		if (screen != trackedRewardScreen) {
+			trackedRewardScreen = screen;
+			trackedRewardScreenSinceMillis = now;
+		}
 		rememberRunContextFromMenuTitle(normalizedTitle, now);
 
 		if (canonicalRewardTitle != null) {
@@ -3516,6 +3526,7 @@ public final class DungeonRunTrackerFeature {
 				lastViewedOpenedRewardChestTitle = "";
 				return;
 			}
+			if (!rewardScreenSettled(screen, now)) return;
 
 			DungeonChestOffer cached = cachedChestOffersByTitle.get(canonicalRewardTitle);
 			boolean openedFromArmedPreview = canonicalRewardTitle.equals(armedPreviewRewardChestTitle);
@@ -3945,6 +3956,12 @@ public final class DungeonRunTrackerFeature {
 		recordContextConflictDiagnostic(handler, "croesus_offer_floor_conflicts_with_pending_context", offerFloor);
 	}
 
+	private boolean rewardScreenSettled(Screen screen, long now) {
+		return screen != null
+			&& screen == trackedRewardScreen
+			&& now - trackedRewardScreenSinceMillis >= REWARD_SCREEN_SETTLE_MS;
+	}
+
 	private boolean isRewardChestPreviewScreen(AbstractContainerMenu menu) {
 		return findOpenRewardChestSlotIndex(menu) >= 0;
 	}
@@ -3953,6 +3970,7 @@ public final class DungeonRunTrackerFeature {
 		if (!(client.screen instanceof AbstractContainerScreen<?>) || client.player == null) return;
 		String canonical = canonicalRewardChestTitle(normalize(client.screen.getTitle().getString()));
 		if (canonical == null || !pendingLootChestAssigned) return;
+		if (!rewardScreenSettled(client.screen, now)) return;
 		if (isRewardChestPreviewScreen(client.player.containerMenu)) return;
 		// Same chest session only: do not merge a different title into pending.
 		if (!toDisplayChestTitle(canonical).equalsIgnoreCase(pendingLootChestTitle)) return;
