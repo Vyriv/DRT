@@ -652,7 +652,7 @@ public final class DungeonLootScreen extends Screen {
 		}
 		ChestOfferTabs.Tab selected = selectedChestTabValue();
 		String caption = selected == null ? null
-			: selected.state() == ChestOfferTabs.State.OBSERVED && !selected.purchased() ? "Not opened, hypothetical"
+			: selected.state() == ChestOfferTabs.State.OBSERVED && !selected.purchased() ? "Not Opened"
 			: null;
 		if (caption != null) {
 			int captionX = tableX + tableW - 2 - font.width(caption);
@@ -736,17 +736,7 @@ public final class DungeonLootScreen extends Screen {
 		int closeX = ox + winW - MARGIN - closeW;
 		int clearX = closeX - 8 - clearW;
 
-		RunSelection sel = currentSelection();
-		int statX = ox + MARGIN;
-		if (sel.kind() == SelectionKind.LOGGED) {
-			statX += drawStatBlock(g, statX, buttonY, "Open Cost", formatCoins(sel.totalCostCoins), TEXT_SECONDARY) + 6;
-			if (sel.totalValueCoins > 0L) {
-				statX += drawStatBlock(g, statX, buttonY, "Loot Value", formatCoins(sel.totalValueCoins), 0xFF9CE3AC) + 6;
-			}
-			drawStatBlock(g, statX, buttonY, "Profit", formatSigned(sel.totalProfitCoins), profitColor(sel.totalProfitCoins));
-		} else {
-			drawOfferStats(g, statX, buttonY, clearX - 8, sel);
-		}
+		drawChestStats(g, ox + MARGIN, buttonY, clearX - 8, currentSelection());
 
 		boolean closeHov = contains(closeX, buttonY, closeW, buttonH, mouseX, mouseY);
 		boolean clearHov = contains(clearX, buttonY, clearW, buttonH, mouseX, mouseY);
@@ -814,22 +804,24 @@ public final class DungeonLootScreen extends Screen {
 	}
 
 	/**
-	 * Stats for a chest that was offered but not purchased. Its value never counts towards profit,
-	 * so it is always labelled hypothetical, with shorter labels when the footer is narrow.
+	 * Stats for the selected chest, with the same labels whether it was purchased or only offered,
+	 * and shorter labels when the footer is narrow. An offered chest's figures are display only;
+	 * history totals come from saved loot records alone.
 	 */
-	private void drawOfferStats(GuiGraphicsExtractor g, int x, int y, int limitX, RunSelection sel) {
+	private void drawChestStats(GuiGraphicsExtractor g, int x, int y, int limitX, RunSelection sel) {
 		String cost = sel.costKnown() ? formatCoins(sel.totalCostCoins) : "Unknown";
 		if (sel.kind() == SelectionKind.NOT_RECORDED) {
 			if (sel.costKnown()) drawStatBlock(g, x, y, "Opening Cost", cost, TEXT_SECONDARY);
 			return;
 		}
+		boolean showValue = sel.kind() != SelectionKind.LOGGED || sel.totalValueCoins > 0L;
 		String value = formatCoins(sel.totalValueCoins);
 		String profit = sel.costKnown() ? formatSigned(sel.totalProfitCoins) : "Unknown";
 		int profitColor = sel.costKnown() ? profitColor(sel.totalProfitCoins) : TEXT_MUTED;
 		String[][] layouts = {
-			{"Opening Cost", "Hypothetical Value", "Hypothetical Profit"},
-			{"Opening Cost", null, "Hypothetical Profit"},
-			{"Cost", null, "Hyp. Profit"}
+			{"Opening Cost", showValue ? "Loot Value" : null, "Profit"},
+			{"Cost", showValue ? "Value" : null, "Profit"},
+			{"Cost", null, "Profit"}
 		};
 		String[] chosen = layouts[layouts.length - 1];
 		for (String[] layout : layouts) {
@@ -927,7 +919,7 @@ public final class DungeonLootScreen extends Screen {
 			case PURCHASED_LOGGED -> RunSelection.logged(tab.purchases(), sumCoins(tab.purchases(), true, false), sumCoins(tab.purchases(), false, true), sumProfit(tab.purchases()));
 			case OBSERVED -> {
 				long value = DungeonProfitPricing.calculateLootValue(tab.contents(), DrtConfigManager.getConfig());
-				yield new RunSelection(List.of(), tab.contents(), cost, value, value - cost, costKnown, SelectionKind.HYPOTHETICAL);
+				yield new RunSelection(List.of(), tab.contents(), cost, value, value - cost, costKnown, SelectionKind.OFFERED);
 			}
 			case NOT_RECORDED -> new RunSelection(List.of(), List.of(), cost, 0L, 0L, costKnown, SelectionKind.NOT_RECORDED);
 		};
@@ -975,7 +967,7 @@ public final class DungeonLootScreen extends Screen {
 
 	private List<DisplayRow> buildDisplayRows() {
 		RunSelection selection = currentSelection();
-		if (selection.kind() == SelectionKind.HYPOTHETICAL) return buildDisplayRowsForEntries(selection.entries());
+		if (selection.kind() == SelectionKind.OFFERED) return buildDisplayRowsForEntries(selection.entries());
 		return buildDisplayRowsForRecords(selection.records());
 	}
 
@@ -1523,7 +1515,7 @@ public final class DungeonLootScreen extends Screen {
 
 	private record ClickTarget(int x, int y, int w, int h, int button, Runnable action) {}
 	private record DisplayRow(String label, String itemId, int quantity, long unitPrice, long totalPrice, boolean forcedSalvage) {}
-	private enum SelectionKind { LOGGED, HYPOTHETICAL, NOT_RECORDED }
+	private enum SelectionKind { LOGGED, OFFERED, NOT_RECORDED }
 
 	private record RunSelection(List<DungeonRunRecord> records, List<DungeonLootEntry> entries, long totalCostCoins, long totalValueCoins, long totalProfitCoins, boolean costKnown, SelectionKind kind) {
 		static RunSelection logged(List<DungeonRunRecord> records, long cost, long value, long profit) {

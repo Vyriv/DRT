@@ -158,7 +158,7 @@ Older records carry no link. `RunHistoryLinks` judges them at display time witho
 
 Completion records store where their time came from (`runTimeSource`): the boss time from chat (`OFFICIAL_CHAT`), DRT's own clock (`MEASURED`) or a manual entry. Older records are judged by their fingerprint, which ends in the chat time or 0. A linked chest shows its run's time; anything else shows "Time unavailable".
 
-The loot screen shows one tab per chest the run offered when there is more than one: purchased chests with their logged loot and a green mark, chests seen but not bought as hypothetical, and chests never seen as "Not recorded". Up and Down move through the chest list, Left and Right through the tabs.
+The loot screen shows one tab per chest the run offered when there is more than one: purchased chests with their logged loot and a green mark, chests seen but not bought with their observed contents marked "Not Opened", and chests never seen as "Not recorded". Every observed chest shows Opening Cost, Loot Value and Profit; for an unopened chest these are display only and never enter history totals, filters or statistics. Up and Down move through the chest list, Left and Right through the tabs.
 
 ## Meter attachment
 
