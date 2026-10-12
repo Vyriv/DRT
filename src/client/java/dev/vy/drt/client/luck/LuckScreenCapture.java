@@ -140,6 +140,10 @@ public final class LuckScreenCapture {
 		}
 	}
 
+	static String activeViewRunSession(long now) {
+		return coordinator().activeViewRunSession(now);
+	}
+
 	private static synchronized LuckCaptureCoordinator coordinator() {
 		if (coordinator == null) {
 			coordinator = new LuckCaptureCoordinator(LuckRunCapture.store(), floor -> {

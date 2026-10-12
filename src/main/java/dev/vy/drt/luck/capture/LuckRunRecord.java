@@ -17,6 +17,10 @@ public final class LuckRunRecord {
 	public String grade = "?";
 	public Integer score;
 	public String scoreSource;
+	/** Dungeon duration from the completion; null when unknown. Independent of the completion time. */
+	public Long durationMillis;
+	/** A {@code DungeonRunCompletionRecord.RUN_TIME_} value, set together with {@link #durationMillis}. */
+	public String durationSource;
 	public LuckModifierProfile modifiers;
 	/** Party members read from the tab list at completion; null when not read. */
 	public List<String> party;
@@ -32,6 +36,8 @@ public final class LuckRunRecord {
 		public String source = "";
 		public List<LuckOfferSnapshot> offers = new ArrayList<>();
 		public Boolean purchased;
+		/** Where {@link #purchased} was last proven; {@link #SOURCE_DUNGEON_CHEST} for an open DRT saw in the instance. */
+		public String purchaseSource;
 		public Integer purchasedOfferIndex;
 		/** Coin cost as listed, 0 for FREE; null when not observed. */
 		public Long costCoins;
@@ -106,6 +112,8 @@ public final class LuckRunRecord {
 	public static final String PHASE_AFTER_RUN = "AFTER_RUN";
 	public static final String SOURCE_CROESUS_RUN_VIEW = "CROESUS_RUN_VIEW";
 	public static final String SOURCE_CROESUS_MENU = "CROESUS_MENU";
+	/** A reward chest screen in the dungeon instance, right after the run's completion. */
+	public static final String SOURCE_DUNGEON_CHEST = "DUNGEON_CHEST";
 	public static final String PARTY_SOURCE_TAB_LIST = "TAB_LIST";
 
 	/**
@@ -145,6 +153,8 @@ public final class LuckRunRecord {
 			score = null;
 			scoreSource = null;
 		}
+		if (durationMillis != null && durationMillis <= 0L) durationMillis = null;
+		if (durationMillis == null) durationSource = null;
 		if (modifiers != null) modifiers.normalize();
 		if (chests == null) chests = new ArrayList<>();
 		chests.removeIf(chest -> chest == null);

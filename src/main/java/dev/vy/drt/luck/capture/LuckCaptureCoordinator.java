@@ -87,6 +87,20 @@ public final class LuckCaptureCoordinator {
 		return new ViewOutcome(null, null, reason, view.chests().size());
 	}
 
+	/**
+	 * The DRT run session of the run whose Croesus run view is open or was just left for one of its
+	 * chests, when the evidence linked that view's entry to exactly one recorded run. Null otherwise,
+	 * including for links made by list order.
+	 */
+	public String activeViewRunSession(long now) {
+		if (activeView == null || now - activeView.at() > VIEW_CONTEXT_MILLIS) return null;
+		CroesusRunMatcher.EntryMatch match = activeView.match();
+		if (match == null || !match.matched()) return null;
+		if (!CroesusRunMatcher.METHOD_UNIQUE.equals(match.method()) && !CroesusRunMatcher.METHOD_ELIMINATION.equals(match.method())) return null;
+		LuckRunRecord run = store.run(match.luckRunId());
+		return run == null || run.drtRunSessionId.isBlank() ? null : run.drtRunSessionId;
+	}
+
 	/** Readings from the Catacombs RNG Meters overview. */
 	public List<LuckTrackingStore.MeterAttachment> onMeterOverview(LuckProbeRecorder.ScreenSample screen, long now) {
 		RngMeterParser.Overview overview = RngMeterParser.parseOverview(screen);

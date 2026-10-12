@@ -4,10 +4,24 @@ import java.util.ArrayList;
 import java.util.List;
 
 public final class DungeonRunRecord {
+	/** Opened in the dungeon instance right after DRT recorded that run's completion. */
+	public static final String LINK_LIVE = "LIVE_INSTANCE";
+	/** Opened from a Croesus run view whose entry matched exactly one recorded run. */
+	public static final String LINK_CROESUS_UNIQUE = "CROESUS_UNIQUE";
+	/** Recorded with no provable run, for example a Croesus chest from an ambiguous entry. */
+	public static final String LINK_NONE = "UNLINKED";
+
 	public String recordId = "";
 	public String runSessionId = "";
 	public String chestSessionId = "";
 	public String commitFingerprint = "";
+	/**
+	 * How this chest is tied to a completed run, one of the {@code LINK_} values; null for records
+	 * written before links were stored, which are judged by {@code RunHistoryLinks} instead.
+	 */
+	public String runLinkSource;
+	/** The completion's run session id when {@link #runLinkSource} names a link, else empty. */
+	public String linkedRunId = "";
 	public long timestampEpochMillis;
 	public int runNumber;
 	public int chestNumber;
@@ -63,6 +77,8 @@ public final class DungeonRunRecord {
 		copy.runSessionId = runSessionId == null ? "" : runSessionId;
 		copy.chestSessionId = chestSessionId == null ? "" : chestSessionId;
 		copy.commitFingerprint = commitFingerprint == null ? "" : commitFingerprint;
+		copy.runLinkSource = runLinkSource;
+		copy.linkedRunId = linkedRunId == null ? "" : linkedRunId;
 		copy.applyCostBreakdown(toCostBreakdown());
 		copy.normalizeCostBreakdown();
 		return copy;

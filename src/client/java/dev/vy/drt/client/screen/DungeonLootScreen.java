@@ -1,12 +1,16 @@
 package dev.vy.drt.client.screen;
 
 import dev.vy.drt.client.DrtClient;
+import dev.vy.drt.client.luck.LuckRunCapture;
 import dev.vy.drt.config.DrtConfigManager;
 import dev.vy.drt.config.DungeonFloor;
 import dev.vy.drt.config.DungeonLootEntry;
 import dev.vy.drt.config.DungeonRunRecord;
 import dev.vy.drt.client.tracker.DungeonRunTrackerFeature;
 import dev.vy.drt.client.tracker.NeuItemResolver;
+import dev.vy.drt.history.ChestOfferTabs;
+import dev.vy.drt.history.RunHistoryLinks;
+import dev.vy.drt.luck.capture.LuckRunRecord;
 import dev.vy.drt.price.DungeonProfitPricing;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -51,6 +55,10 @@ public final class DungeonLootScreen extends Screen {
 	private static final int TEXT_PRIMARY = 0xFFE5E7F0;
 	private static final int TEXT_SECONDARY = 0xFF9AA4BD;
 	private static final int TEXT_MUTED = 0xFF78829D;
+	private static final int CHEST_TAB_GAP = 3;
+	private static final int CHEST_TAB_ACTIVE_BG = 0xFF261F4E;
+	private static final int CHEST_TAB_ACTIVE_BORDER = 0xFF7E6AC8;
+	private static final int PURCHASED_MARK = 0xFF63D184;
 
 	// null = All
 	private DungeonFloor selectedTab = null;
@@ -69,6 +77,10 @@ public final class DungeonLootScreen extends Screen {
 	private long deleteConfirmUntilMillis;
 	private LootSortColumn lootSortColumn;
 	private boolean lootSortAscending;
+	private Map<DungeonRunRecord, RunHistoryLinks.Link> runLinks = Map.of();
+	private DungeonRunRecord chestTabsRecord;
+	private List<ChestOfferTabs.Tab> chestTabs = List.of();
+	private int selectedChestTab = -1;
 
 	private final List<ClickTarget> clickTargets = new ArrayList<>();
 
@@ -160,8 +172,8 @@ public final class DungeonLootScreen extends Screen {
 			listScroll = clamp(listScroll - delta, 0, maxScroll);
 			return true;
 		}
-		if (contains(tableX, tableY, tableW, tableH, (int) mouseX, (int) mouseY)) {
-			int viewportH = Math.max(ROW_H, tableH - ROW_H);
+		if (contains(tableX, lootPanelY(), tableW, lootPanelH(), (int) mouseX, (int) mouseY)) {
+			int viewportH = Math.max(ROW_H, lootPanelH() - ROW_H);
 			int maxScroll = Math.max(0, buildDisplayRows().size() * ROW_H - viewportH);
 			tableScroll = clamp(tableScroll - delta, 0, maxScroll);
 			return true;
@@ -184,7 +196,51 @@ public final class DungeonLootScreen extends Screen {
 			searchLootRows();
 			return true;
 		}
+		if (getFocused() == null) {
+			if (event.key() == GLFW.GLFW_KEY_UP) {
+				moveRunSelection(-1);
+				return true;
+			}
+			if (event.key() == GLFW.GLFW_KEY_DOWN) {
+				moveRunSelection(1);
+				return true;
+			}
+			if ((event.key() == GLFW.GLFW_KEY_LEFT || event.key() == GLFW.GLFW_KEY_RIGHT) && !chestTabs().isEmpty()) {
+				selectChestTab(ChestOfferTabs.step(selectedChestTab, event.key() == GLFW.GLFW_KEY_LEFT ? -1 : 1, chestTabs().size()));
+				return true;
+			}
+		}
 		return super.keyPressed(event);
+	}
+
+	/** Up and Down walk the chest list, "All Chests" included, and stop at either end. */
+	private void moveRunSelection(int delta) {
+		int next = clamp(selectedRunIndex + delta, -1, tabHistory.size() - 1);
+		if (next == selectedRunIndex) return;
+		if (next != deleteConfirmRunIndex) clearDeleteConfirm();
+		selectedRunIndex = next;
+		clearLootFocus();
+		tableScroll = 0;
+		scrollRunRowIntoView(next);
+	}
+
+	private void scrollRunRowIntoView(int index) {
+		updateLayout();
+		int rowTop = (index + 1) * ROW_H;
+		if (rowTop < listScroll) {
+			listScroll = rowTop;
+		} else if (rowTop + ROW_H > listScroll + listH) {
+			listScroll = rowTop + ROW_H - listH;
+		}
+		int maxScroll = Math.max(0, (tabHistory.size() + 1) * ROW_H - listH);
+		listScroll = clamp(listScroll, 0, maxScroll);
+	}
+
+	private void selectChestTab(int index) {
+		if (index == selectedChestTab || index < 0) return;
+		selectedChestTab = index;
+		clearLootFocus();
+		tableScroll = 0;
 	}
 
 	@Override
@@ -329,6 +385,28 @@ public final class DungeonLootScreen extends Screen {
 		String tableLabel = selectedRunIndex >= 0 && selectedRunIndex < tabHistory.size()
 			? "Loot Summary, Chest #" + chestDisplayNumber(tabHistory.get(selectedRunIndex), selectedRunIndex)
 			: "Loot Summary, All Chests";
+		DungeonRunRecord record = selectedRecord();
+		if (record != null) {
+			RunHistoryLinks.Link link = runLinks.get(record);
+			RunHistoryLinks.RunTime time = link != null && link.linked() ? RunHistoryLinks.runTime(link.completion()) : null;
+			String full = "Time unavailable";
+			String compact = full;
+			if (time != null) {
+				String qualifier = switch (time.source()) {
+					case OFFICIAL -> "";
+					case MEASURED -> " (measured)";
+					case MANUAL -> " (manual)";
+				};
+				compact = RunHistoryLinks.formatRunTime(time.millis()) + qualifier;
+				full = "Run time " + compact;
+			}
+			int labelLeft = tableX + 2;
+			int right = tableX + tableW - 2;
+			String timeText = labelLeft + font.width(tableLabel) + 8 + font.width(full) <= right ? full : compact;
+			int timeX = right - font.width(timeText);
+			g.text(font, timeText, timeX, y + 4, time == null ? TEXT_MUTED : TEXT_SECONDARY);
+			tableLabel = ellipsize(tableLabel, Math.max(0, timeX - 8 - labelLeft));
+		}
 		g.text(font, tableLabel, tableX + 2, y + 4, TEXT_SECONDARY);
 	}
 
@@ -439,6 +517,10 @@ public final class DungeonLootScreen extends Screen {
 	}
 
 	private void drawLootTable(GuiGraphicsExtractor g, int mouseX, int mouseY) {
+		List<ChestOfferTabs.Tab> offerTabs = chestTabs();
+		if (!offerTabs.isEmpty()) drawChestTabs(g, mouseX, mouseY, offerTabs);
+		int tableY = lootPanelY();
+		int tableH = lootPanelH();
 		g.fill(tableX, tableY, tableX + tableW, tableY + tableH, PANEL_BG);
 		border(g, tableX, tableY, tableW, tableH, PANEL_BORDER);
 
@@ -447,6 +529,17 @@ public final class DungeonLootScreen extends Screen {
 			int cx = tableX + (tableW - font.width(msg)) / 2;
 			int cy = tableY + (tableH - font.lineHeight) / 2;
 			g.text(font, msg, cx, cy, 0xFFFFCC00);
+			return;
+		}
+		ChestOfferTabs.Tab offerTab = selectedChestTabValue();
+		if (offerTab != null && offerTab.state() == ChestOfferTabs.State.NOT_RECORDED) {
+			String title = "Not recorded";
+			String detail = ellipsize(offerTab.purchased()
+				? "Opened, but its loot is not linked to this run"
+				: "DRT did not see this chest's rewards", Math.max(0, tableW - 16));
+			int cy = tableY + (tableH - font.lineHeight * 2 - 4) / 2;
+			g.text(font, title, tableX + (tableW - font.width(title)) / 2, cy, TEXT_SECONDARY);
+			g.text(font, detail, tableX + (tableW - font.width(detail)) / 2, cy + font.lineHeight + 4, TEXT_MUTED);
 			return;
 		}
 
@@ -519,12 +612,81 @@ public final class DungeonLootScreen extends Screen {
 				drawRightAligned(g, Integer.toString(row.quantity), qtyRight, textY, 0xFFB6C2DF);
 				drawRightAligned(g, formatCoins(row.unitPrice), eachRight, textY, 0xFF7FB98E);
 				drawRightAligned(g, formatCoins(row.totalPrice), totalRight, textY, 0xFF9CE3AC);
-				addLootRowTargets(row, drawY);
+				addLootRowTargets(row, drawY, tableY + tableHeaderH, tableY + tableH);
 			}
 			drawY += ROW_H;
 			rowIndex++;
 		}
 		g.disableScissor();
+	}
+
+	/** Chest tabs for the selected chest's run, one per chest the run offered, above the loot table. */
+	private void drawChestTabs(GuiGraphicsExtractor g, int mouseX, int mouseY, List<ChestOfferTabs.Tab> tabs) {
+		boolean compact = chestTabsWidth(tabs, false) > tableW;
+		int fixedW = compact && chestTabsWidth(tabs, true) > tableW
+			? Math.max(8, (tableW - CHEST_TAB_GAP * (tabs.size() - 1)) / tabs.size())
+			: -1;
+		int x = tableX;
+		int y = tableY;
+		for (int i = 0; i < tabs.size(); i++) {
+			ChestOfferTabs.Tab tab = tabs.get(i);
+			String label = compact ? shortChestLabel(tab) : tab.label();
+			int w = fixedW > 0 ? fixedW : font.width(label) + 12;
+			if (fixedW > 0) label = clipToWidth(label, w - 4);
+			boolean active = i == selectedChestTab;
+			boolean hovered = contains(x, y, w, TAB_H, mouseX, mouseY);
+			int bg = active ? CHEST_TAB_ACTIVE_BG : hovered ? 0xFF17172A : 0xFF0F0F1D;
+			int border = active ? CHEST_TAB_ACTIVE_BORDER : hovered ? PANEL_BORDER_HOVER : 0xFF343458;
+			g.fill(x, y, x + w, y + TAB_H, bg);
+			border(g, x, y, w, TAB_H, border);
+			if (tab.purchased()) {
+				g.fill(x + 1, y + TAB_H - 3, x + w - 1, y + TAB_H - 1, PURCHASED_MARK);
+			}
+			int textColor = active ? TEXT_PRIMARY
+				: tab.state() == ChestOfferTabs.State.NOT_RECORDED ? TEXT_MUTED
+				: hovered ? 0xFFC8CDDD : TEXT_SECONDARY;
+			g.text(font, label, x + (w - font.width(label)) / 2, y + 4, textColor);
+			final int index = i;
+			clickTargets.add(new ClickTarget(x, y, w, TAB_H, 0, () -> selectChestTab(index)));
+			x += w + CHEST_TAB_GAP;
+		}
+		ChestOfferTabs.Tab selected = selectedChestTabValue();
+		String caption = selected == null ? null
+			: selected.state() == ChestOfferTabs.State.OBSERVED && !selected.purchased() ? "Not opened, hypothetical"
+			: null;
+		if (caption != null) {
+			int captionX = tableX + tableW - 2 - font.width(caption);
+			if (captionX >= x + 4) g.text(font, caption, captionX, y + 5, TEXT_MUTED);
+		}
+	}
+
+	private int chestTabsWidth(List<ChestOfferTabs.Tab> tabs, boolean compact) {
+		int total = CHEST_TAB_GAP * Math.max(0, tabs.size() - 1);
+		for (ChestOfferTabs.Tab tab : tabs) total += font.width(compact ? shortChestLabel(tab) : tab.label()) + 12;
+		return total;
+	}
+
+	private static String shortChestLabel(ChestOfferTabs.Tab tab) {
+		String label = tab.label();
+		return label.length() <= 3 ? label : label.substring(0, 3);
+	}
+
+	private String clipToWidth(String text, int maxWidth) {
+		String out = text;
+		while (!out.isEmpty() && font.width(out) > maxWidth) out = out.substring(0, out.length() - 1);
+		return out;
+	}
+
+	private int chestStripH() {
+		return chestTabs().isEmpty() ? 0 : TAB_H + CHEST_TAB_GAP;
+	}
+
+	private int lootPanelY() {
+		return tableY + chestStripH();
+	}
+
+	private int lootPanelH() {
+		return Math.max(ROW_H * 2, tableH - chestStripH());
 	}
 
 	private void drawLootHeaderSegment(GuiGraphicsExtractor g, int mouseX, int mouseY, int x, int y, int w, int h, int textX, int textY, String label, LootSortColumn column, HeaderTextAlign align) {
@@ -544,9 +706,12 @@ public final class DungeonLootScreen extends Screen {
 		return Math.max(minWidth, font.width(displayLabel) + 20);
 	}
 
-	private void addLootRowTargets(DisplayRow row, int rowY) {
-		clickTargets.add(new ClickTarget(tableX, rowY, tableW, ROW_H, GLFW.GLFW_MOUSE_BUTTON_LEFT, () -> focusLootRow(row)));
-		clickTargets.add(new ClickTarget(tableX, rowY, tableW, ROW_H, GLFW.GLFW_MOUSE_BUTTON_RIGHT, () -> copyLootShareMessage(row)));
+	private void addLootRowTargets(DisplayRow row, int rowY, int clipTop, int clipBottom) {
+		int top = Math.max(rowY, clipTop);
+		int h = Math.min(rowY + ROW_H, clipBottom) - top;
+		if (h <= 0) return;
+		clickTargets.add(new ClickTarget(tableX, top, tableW, h, GLFW.GLFW_MOUSE_BUTTON_LEFT, () -> focusLootRow(row)));
+		clickTargets.add(new ClickTarget(tableX, top, tableW, h, GLFW.GLFW_MOUSE_BUTTON_RIGHT, () -> copyLootShareMessage(row)));
 	}
 
 	private void focusLootRow(DisplayRow row) {
@@ -573,11 +738,15 @@ public final class DungeonLootScreen extends Screen {
 
 		RunSelection sel = currentSelection();
 		int statX = ox + MARGIN;
-		statX += drawStatBlock(g, statX, buttonY, "Open Cost", formatCoins(sel.totalCostCoins), TEXT_SECONDARY) + 6;
-		if (sel.totalValueCoins > 0L) {
-			statX += drawStatBlock(g, statX, buttonY, "Loot Value", formatCoins(sel.totalValueCoins), 0xFF9CE3AC) + 6;
+		if (sel.kind() == SelectionKind.LOGGED) {
+			statX += drawStatBlock(g, statX, buttonY, "Open Cost", formatCoins(sel.totalCostCoins), TEXT_SECONDARY) + 6;
+			if (sel.totalValueCoins > 0L) {
+				statX += drawStatBlock(g, statX, buttonY, "Loot Value", formatCoins(sel.totalValueCoins), 0xFF9CE3AC) + 6;
+			}
+			drawStatBlock(g, statX, buttonY, "Profit", formatSigned(sel.totalProfitCoins), profitColor(sel.totalProfitCoins));
+		} else {
+			drawOfferStats(g, statX, buttonY, clearX - 8, sel);
 		}
-		drawStatBlock(g, statX, buttonY, "Profit", formatSigned(sel.totalProfitCoins), profitColor(sel.totalProfitCoins));
 
 		boolean closeHov = contains(closeX, buttonY, closeW, buttonH, mouseX, mouseY);
 		boolean clearHov = contains(clearX, buttonY, clearW, buttonH, mouseX, mouseY);
@@ -644,6 +813,42 @@ public final class DungeonLootScreen extends Screen {
 		return w;
 	}
 
+	/**
+	 * Stats for a chest that was offered but not purchased. Its value never counts towards profit,
+	 * so it is always labelled hypothetical, with shorter labels when the footer is narrow.
+	 */
+	private void drawOfferStats(GuiGraphicsExtractor g, int x, int y, int limitX, RunSelection sel) {
+		String cost = sel.costKnown() ? formatCoins(sel.totalCostCoins) : "Unknown";
+		if (sel.kind() == SelectionKind.NOT_RECORDED) {
+			if (sel.costKnown()) drawStatBlock(g, x, y, "Opening Cost", cost, TEXT_SECONDARY);
+			return;
+		}
+		String value = formatCoins(sel.totalValueCoins);
+		String profit = sel.costKnown() ? formatSigned(sel.totalProfitCoins) : "Unknown";
+		int profitColor = sel.costKnown() ? profitColor(sel.totalProfitCoins) : TEXT_MUTED;
+		String[][] layouts = {
+			{"Opening Cost", "Hypothetical Value", "Hypothetical Profit"},
+			{"Opening Cost", null, "Hypothetical Profit"},
+			{"Cost", null, "Hyp. Profit"}
+		};
+		String[] chosen = layouts[layouts.length - 1];
+		for (String[] layout : layouts) {
+			int w = statBlockWidth(layout[0], cost) + 6 + statBlockWidth(layout[2], profit);
+			if (layout[1] != null) w += statBlockWidth(layout[1], value) + 6;
+			if (x + w <= limitX) {
+				chosen = layout;
+				break;
+			}
+		}
+		x += drawStatBlock(g, x, y, chosen[0], cost, TEXT_SECONDARY) + 6;
+		if (chosen[1] != null) x += drawStatBlock(g, x, y, chosen[1], value, 0xFF9CE3AC) + 6;
+		drawStatBlock(g, x, y, chosen[2], profit, profitColor);
+	}
+
+	private int statBlockWidth(String label, String value) {
+		return font.width(label) + font.width(value) + 18;
+	}
+
 	private int footerBlockWidth(String text) {
 		return font.width(text) + 18;
 	}
@@ -668,6 +873,10 @@ public final class DungeonLootScreen extends Screen {
 			.comparingInt((DungeonRunRecord r) -> r.chestNumber)
 			.reversed()
 			.thenComparing(Comparator.comparingLong((DungeonRunRecord r) -> r.timestampEpochMillis).reversed()));
+		runLinks = RunHistoryLinks.resolve(allHistory, DrtConfigManager.getRunCompletions());
+		chestTabsRecord = null;
+		chestTabs = List.of();
+		selectedChestTab = -1;
 
 		// Build available tabs from floors that have at least one run
 		availableTabs = new ArrayList<>();
@@ -702,41 +911,100 @@ public final class DungeonLootScreen extends Screen {
 	}
 
 	private RunSelection filterSelection() {
-		return new RunSelection(tabHistory, sumCoins(tabHistory, false, true), sumCoins(tabHistory, false, false), sumProfit(tabHistory));
+		return RunSelection.logged(tabHistory, sumCoins(tabHistory, false, true), sumCoins(tabHistory, false, false), sumProfit(tabHistory));
 	}
 
 	private RunSelection currentSelection() {
-		if (selectedRunIndex >= 0 && selectedRunIndex < tabHistory.size()) {
-			DungeonRunRecord r = tabHistory.get(selectedRunIndex);
-			return new RunSelection(List.of(r), shownCost(r), shownValue(r), shownProfit(r));
+		DungeonRunRecord r = selectedRecord();
+		if (r == null) {
+			return RunSelection.logged(tabHistory, sumCoins(tabHistory, false, true), sumCoins(tabHistory, false, false), sumProfit(tabHistory));
 		}
-		return new RunSelection(tabHistory, sumCoins(tabHistory, false, true), sumCoins(tabHistory, false, false), sumProfit(tabHistory));
+		ChestOfferTabs.Tab tab = selectedChestTabValue();
+		if (tab == null) return RunSelection.logged(List.of(r), shownCost(r), shownValue(r), shownProfit(r));
+		boolean costKnown = tab.costCoins() != null;
+		long cost = costKnown ? tab.costCoins() : 0L;
+		return switch (tab.state()) {
+			case PURCHASED_LOGGED -> RunSelection.logged(tab.purchases(), sumCoins(tab.purchases(), true, false), sumCoins(tab.purchases(), false, true), sumProfit(tab.purchases()));
+			case OBSERVED -> {
+				long value = DungeonProfitPricing.calculateLootValue(tab.contents(), DrtConfigManager.getConfig());
+				yield new RunSelection(List.of(), tab.contents(), cost, value, value - cost, costKnown, SelectionKind.HYPOTHETICAL);
+			}
+			case NOT_RECORDED -> new RunSelection(List.of(), List.of(), cost, 0L, 0L, costKnown, SelectionKind.NOT_RECORDED);
+		};
+	}
+
+	private DungeonRunRecord selectedRecord() {
+		return selectedRunIndex >= 0 && selectedRunIndex < tabHistory.size() ? tabHistory.get(selectedRunIndex) : null;
+	}
+
+	/** The selected chest's run tabs, or empty when the run is unknown or offered a single chest. */
+	private List<ChestOfferTabs.Tab> chestTabs() {
+		DungeonRunRecord record = selectedRecord();
+		if (record != chestTabsRecord) {
+			chestTabsRecord = record;
+			chestTabs = record == null ? List.of() : buildChestTabs(record);
+			if (!ChestOfferTabs.showTabs(chestTabs)) chestTabs = List.of();
+			selectedChestTab = chestTabs.isEmpty() ? -1 : ChestOfferTabs.defaultIndex(chestTabs, record.chestTitle);
+		}
+		return chestTabs;
+	}
+
+	private ChestOfferTabs.Tab selectedChestTabValue() {
+		List<ChestOfferTabs.Tab> tabs = chestTabs();
+		return selectedChestTab >= 0 && selectedChestTab < tabs.size() ? tabs.get(selectedChestTab) : null;
+	}
+
+	private List<ChestOfferTabs.Tab> buildChestTabs(DungeonRunRecord record) {
+		RunHistoryLinks.Link link = runLinks.get(record);
+		if (link == null || !link.linked()) return List.of();
+		List<DungeonRunRecord> purchases = new ArrayList<>();
+		for (DungeonRunRecord other : allHistory) {
+			RunHistoryLinks.Link otherLink = runLinks.get(other);
+			if (otherLink != null && otherLink.linked() && link.runId().equals(otherLink.runId())) purchases.add(other);
+		}
+		LuckRunRecord run = null;
+		if ("DUNGEON".equals(link.completion().mode)) {
+			try {
+				run = LuckRunCapture.store().runForSession(link.runId());
+			} catch (RuntimeException ignored) {
+				run = null;
+			}
+		}
+		return ChestOfferTabs.build(run, purchases);
 	}
 
 	private List<DisplayRow> buildDisplayRows() {
-		return buildDisplayRowsForRecords(currentSelection().records);
+		RunSelection selection = currentSelection();
+		if (selection.kind() == SelectionKind.HYPOTHETICAL) return buildDisplayRowsForEntries(selection.entries());
+		return buildDisplayRowsForRecords(selection.records());
 	}
 
 	private List<DisplayRow> buildDisplayRowsForRecords(List<DungeonRunRecord> records) {
-		Map<String, MutableAgg> aggs = new LinkedHashMap<>();
-		var config = DrtConfigManager.getConfig();
+		List<DungeonLootEntry> entries = new ArrayList<>();
 		for (DungeonRunRecord r : records) {
 			if (r == null || r.lootEntries == null) continue;
-			for (DungeonLootEntry e : r.lootEntries) {
-				if (e == null) continue;
-				if (shouldHideLootEntry(e)) continue;
-				String resolvedItemId = e.itemId == null ? "" : e.itemId.trim();
-				if (resolvedItemId.isBlank()) {
-					String raw = e.rawName == null ? "" : e.rawName.trim().toUpperCase(Locale.ROOT).replaceAll("[^A-Z0-9]+", " ").trim().replaceAll("\\s+", " ");
-					if (raw.contains("CRIMSON ESSENCE") || raw.equals("ESSENCE CRIMSON")) resolvedItemId = "ESSENCE_CRIMSON";
-				}
-				final String itemId = resolvedItemId;
-				String key = !itemId.isBlank() ? itemId : e.rawName.trim().toUpperCase(Locale.ROOT);
-				MutableAgg agg = aggs.computeIfAbsent(key, k -> new MutableAgg(displayName(e), itemId));
-				agg.quantity += Math.max(1, e.quantity);
-				if (DungeonProfitPricing.isForcedSalvageValued(e, config)) {
-					agg.forcedSalvage = true;
-				}
+			entries.addAll(r.lootEntries);
+		}
+		return buildDisplayRowsForEntries(entries);
+	}
+
+	private List<DisplayRow> buildDisplayRowsForEntries(List<DungeonLootEntry> entries) {
+		Map<String, MutableAgg> aggs = new LinkedHashMap<>();
+		var config = DrtConfigManager.getConfig();
+		for (DungeonLootEntry e : entries) {
+			if (e == null) continue;
+			if (shouldHideLootEntry(e)) continue;
+			String resolvedItemId = e.itemId == null ? "" : e.itemId.trim();
+			if (resolvedItemId.isBlank()) {
+				String raw = e.rawName == null ? "" : e.rawName.trim().toUpperCase(Locale.ROOT).replaceAll("[^A-Z0-9]+", " ").trim().replaceAll("\\s+", " ");
+				if (raw.contains("CRIMSON ESSENCE") || raw.equals("ESSENCE CRIMSON")) resolvedItemId = "ESSENCE_CRIMSON";
+			}
+			final String itemId = resolvedItemId;
+			String key = !itemId.isBlank() ? itemId : e.rawName.trim().toUpperCase(Locale.ROOT);
+			MutableAgg agg = aggs.computeIfAbsent(key, k -> new MutableAgg(displayName(e), itemId));
+			agg.quantity += Math.max(1, e.quantity);
+			if (DungeonProfitPricing.isForcedSalvageValued(e, config)) {
+				agg.forcedSalvage = true;
 			}
 		}
 		List<DisplayRow> rows = new ArrayList<>();
@@ -821,7 +1089,7 @@ public final class DungeonLootScreen extends Screen {
 
 	private void scrollLootRowIntoView(int rowIndex) {
 		int tableHeaderH = ROW_H;
-		int viewportH = Math.max(ROW_H, tableH - tableHeaderH);
+		int viewportH = Math.max(ROW_H, lootPanelH() - tableHeaderH);
 		int rowTop = rowIndex * ROW_H;
 		int rowBottom = rowTop + ROW_H;
 		if (rowTop < tableScroll) {
@@ -1255,7 +1523,13 @@ public final class DungeonLootScreen extends Screen {
 
 	private record ClickTarget(int x, int y, int w, int h, int button, Runnable action) {}
 	private record DisplayRow(String label, String itemId, int quantity, long unitPrice, long totalPrice, boolean forcedSalvage) {}
-	private record RunSelection(List<DungeonRunRecord> records, long totalCostCoins, long totalValueCoins, long totalProfitCoins) {}
+	private enum SelectionKind { LOGGED, HYPOTHETICAL, NOT_RECORDED }
+
+	private record RunSelection(List<DungeonRunRecord> records, List<DungeonLootEntry> entries, long totalCostCoins, long totalValueCoins, long totalProfitCoins, boolean costKnown, SelectionKind kind) {
+		static RunSelection logged(List<DungeonRunRecord> records, long cost, long value, long profit) {
+			return new RunSelection(records, List.of(), cost, value, profit, true, SelectionKind.LOGGED);
+		}
+	}
 	private enum LootSortColumn { ITEM, QUANTITY, EACH, TOTAL }
 	private enum HeaderTextAlign { LEFT, CENTER }
 

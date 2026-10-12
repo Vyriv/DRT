@@ -111,6 +111,8 @@ public final class DungeonRunTrackerFeature {
 	// Hypixel can fill a reward chest menu over several packets, so loot slots may
 	// arrive before the Open Reward Chest button that marks it as a preview.
 	private static final long REWARD_SCREEN_SETTLE_MS = 500L;
+	/** Reward chests stay in the instance for a short while after the boss; later opens are not tied to the run. */
+	private static final long LIVE_CHEST_LINK_MS = 10 * 60_000L;
 	private static final long REWARD_MODIFIER_SCAN_INTERVAL_MS = 300L;
 	private static final Pattern ESSENCE_PATTERN = Pattern.compile("^(?:\\+\\s*)?(WITHER|UNDEAD|SPIDER|DRAGON|ICE|DIAMOND|GOLD|CRIMSON) ESSENCE(?:\\s*[xX×]\\s*(\\d[\\d,]*))?$");
 	private static final Pattern RECEIVED_PATTERN = Pattern.compile("^YOU RECEIVED\\s+(.+?)(?:\\s*[xX×]\\s*(\\d+))?!?$");
@@ -429,6 +431,14 @@ public final class DungeonRunTrackerFeature {
 	private long lastRewardOpenFailedMillis;
 	private Screen trackedRewardScreen;
 	private long trackedRewardScreenSinceMillis;
+	/** The completion DRT committed for the current instance; reward chests opened in it belong to that run. */
+	private String liveCompletionRunSessionId = "";
+	private String liveCompletionFloor = "";
+	private long liveCompletionAtMillis;
+	private String pendingLootRunLinkSource;
+	private String pendingLootLinkedRunId = "";
+	private final Map<String, String> dungeonPreviewScans = new HashMap<>();
+	private final Set<String> capturedDungeonPreviews = new HashSet<>();
 	/** Incident id waiting for a non-null player so chat notify can be delivered. */
 	private String pendingIncidentChatNotifyId = "";
 	private int openedRewardChestsInLootWindow;
@@ -3522,6 +3532,7 @@ public final class DungeonRunTrackerFeature {
 				armedPreviewRewardChestTitle = canonicalRewardTitle;
 				Long previewCost = parseChestCost(menu.getSlot(findOpenRewardChestSlotIndex(menu)).getItem());
 				armedPreviewRewardChestCost = previewCost == null ? -1L : previewCost;
+				captureDungeonChestPreview(screen, menu, canonicalRewardTitle, previewCost, now);
 				// Keep key-requirement from this preview so the subsequent open can bill a key.
 				lastViewedOpenedRewardChestTitle = "";
 				return;
@@ -3857,6 +3868,7 @@ public final class DungeonRunTrackerFeature {
 			detachPendingLootFromStaleRun(offer.contextFloor);
 		}
 		if (!samePendingChest) {
+			decidePendingRunLink(System.currentTimeMillis());
 			pendingChestSessionId = openTrackingChestSession(displayTitle, containerId, DetectionSource.CONFIRMED_GUI_COMPONENT);
 			pendingChestLootDedupKeys.clear();
 			pendingLootReconcilingGuiChat = false;
@@ -3954,6 +3966,62 @@ public final class DungeonRunTrackerFeature {
 			DetectionSource.CONFIRMED_GUI_COMPONENT
 		);
 		recordContextConflictDiagnostic(handler, "croesus_offer_floor_conflicts_with_pending_context", offerFloor);
+	}
+
+	private boolean hasLiveCompletion(long now) {
+		return !liveCompletionRunSessionId.isBlank() && now - liveCompletionAtMillis <= LIVE_CHEST_LINK_MS;
+	}
+
+	/**
+	 * Stores a reward chest preview seen in the dungeon instance as an offer of the run just
+	 * completed. The contents must read the same on two scans after the screen settled, so a menu
+	 * still filling in is never stored as a short offer.
+	 */
+	private void captureDungeonChestPreview(Screen screen, AbstractContainerMenu menu, String canonicalTitle, Long cost, long now) {
+		if (!insideDungeon || insideKuudra || !hasLiveCompletion(now) || menu == null) return;
+		if (!isCatacombsRewardChest(canonicalTitle) || !rewardScreenSettled(screen, now)) return;
+		String key = liveCompletionRunSessionId + "#" + canonicalTitle + "#" + menu.containerId;
+		if (capturedDungeonPreviews.contains(key)) return;
+		List<DungeonLootEntry> entries = new ArrayList<>();
+		StringBuilder signature = new StringBuilder();
+		var playerInventory = Minecraft.getInstance().player == null ? null : Minecraft.getInstance().player.getInventory();
+		for (int slotIndex = 0; slotIndex < menu.slots.size(); slotIndex++) {
+			Slot slot = menu.getSlot(slotIndex);
+			if (slot == null || slot.container == playerInventory) continue;
+			ItemStack stack = slot.getItem();
+			if (stack.isEmpty() || stackIndicatesOpenRewardChest(stack) || isRewardChestUiStack(stack)) continue;
+			if (canonicalChestTitleFromStack(stack) != null) continue;
+			DungeonLootEntry entry = lootEntryFromRewardChestStack(stack);
+			if (entry == null) continue;
+			entries.add(entry);
+			signature.append(entry.rawName).append('x').append(entry.quantity).append('|');
+		}
+		if (entries.isEmpty()) return;
+		String previous = dungeonPreviewScans.put(key, signature.toString());
+		if (!signature.toString().equals(previous)) return;
+		capturedDungeonPreviews.add(key);
+		LuckRunCapture.onDungeonChestOffer(liveCompletionRunSessionId, liveCompletionFloor, toDisplayChestTitle(canonicalTitle), entries, cost);
+	}
+
+	/**
+	 * Which completed run a newly opened chest belongs to: the run just completed in this instance,
+	 * the run of a Croesus view that matched exactly one recorded run, or none.
+	 */
+	private void decidePendingRunLink(long now) {
+		boolean inInstance = insideDungeon || insideKuudra;
+		if (inInstance && hasLiveCompletion(now)) {
+			pendingLootRunLinkSource = DungeonRunRecord.LINK_LIVE;
+			pendingLootLinkedRunId = liveCompletionRunSessionId;
+			return;
+		}
+		String croesusRun = inInstance ? null : LuckRunCapture.activeCroesusRunSession();
+		if (croesusRun != null) {
+			pendingLootRunLinkSource = DungeonRunRecord.LINK_CROESUS_UNIQUE;
+			pendingLootLinkedRunId = croesusRun;
+			return;
+		}
+		pendingLootRunLinkSource = DungeonRunRecord.LINK_NONE;
+		pendingLootLinkedRunId = "";
 	}
 
 	private boolean rewardScreenSettled(Screen screen, long now) {
@@ -4929,8 +4997,17 @@ public final class DungeonRunTrackerFeature {
 		insideKuudra = false;
 	}
 
+	private void clearLiveCompletion() {
+		liveCompletionRunSessionId = "";
+		liveCompletionFloor = "";
+		liveCompletionAtMillis = 0L;
+		dungeonPreviewScans.clear();
+		capturedDungeonPreviews.clear();
+	}
+
 	private void beginNewDungeonRun(long now) {
 		flushPendingLootRecord();
+		clearLiveCompletion();
 		startCurrentRunTiming(now);
 		RunSession run = trackingSession.startRun(
 			RunMode.DUNGEON,
@@ -4959,6 +5036,7 @@ public final class DungeonRunTrackerFeature {
 
 	private void beginNewKuudraRun(long now, DungeonFloor tier) {
 		flushPendingLootRecord();
+		clearLiveCompletion();
 		startCurrentRunTiming(now);
 		currentRunCompletionFingerprint = "";
 		// Prefer a freshly detected tier. Do not silently inherit a sticky Hot (K2) floor from
@@ -5015,6 +5093,8 @@ public final class DungeonRunTrackerFeature {
 		pendingLootReconcilingGuiChat = false;
 		pendingLootChestAssigned = false;
 		pendingLootChatConfirmed = false;
+		pendingLootRunLinkSource = null;
+		pendingLootLinkedRunId = "";
 		openedRewardChestsInLootWindow = preserveOpenCount ? preservedOpenCount : 0;
 		openedRewardChestTitlesInLootWindow.clear();
 		if (preserveOpenCount) openedRewardChestTitlesInLootWindow.addAll(preservedOpenTitles);
@@ -5050,7 +5130,7 @@ public final class DungeonRunTrackerFeature {
 		String completionFingerprint = record.commitFingerprint == null || record.commitFingerprint.isBlank()
 			? "manual|" + buildLootCommitFingerprint(record)
 			: "manual|" + record.commitFingerprint;
-		DrtConfigManager.addRunCompletionRecord(new DungeonRunCompletionRecord(
+		DungeonRunCompletionRecord manualCompletion = new DungeonRunCompletionRecord(
 			now,
 			configFloor(key).isKuudra() ? RunMode.KUUDRA.name() : RunMode.DUNGEON.name(),
 			key,
@@ -5058,7 +5138,9 @@ public final class DungeonRunTrackerFeature {
 			runTimeMs,
 			record.runSessionId,
 			completionFingerprint
-		));
+		);
+		if (runTimeMs > 0L) manualCompletion.runTimeSource = DungeonRunCompletionRecord.RUN_TIME_MANUAL;
+		DrtConfigManager.addRunCompletionRecord(manualCompletion);
 
 		resyncLifetimeFromConfig();
 		int newCount = floorRunCounts.getOrDefault(key, 0);
@@ -5158,12 +5240,17 @@ public final class DungeonRunTrackerFeature {
 			activeRunSessionId,
 			completionFingerprint
 		);
+		if (currentRunBossTimeMs > 0L) completionRecord.runTimeSource = DungeonRunCompletionRecord.RUN_TIME_OFFICIAL;
+		else if (runTimeMs > 0L) completionRecord.runTimeSource = DungeonRunCompletionRecord.RUN_TIME_MEASURED;
 		var completionCommit = DrtConfigManager.addRunCompletionRecord(completionRecord);
 		if (completionCommit != dev.vy.drt.config.RunRecordCommitDecision.ADD_INCOMING) {
 			recordCompletionPersistenceDiagnostic(completionCommit, completionFingerprint, now, key, g, runTimeMs);
 			runCountedThisDungeon = true;
 			return;
 		}
+		liveCompletionRunSessionId = activeRunSessionId;
+		liveCompletionFloor = key;
+		liveCompletionAtMillis = now;
 		LuckRunCapture.onCompletionRecorded(completionRecord, scoreReading);
 		resyncLifetimeFromConfig();
 		int newCount = floorRunCounts.getOrDefault(key, 0);
@@ -6868,6 +6955,9 @@ public final class DungeonRunTrackerFeature {
 				committedLootEntries
 			);
 			record.runSessionId = orphanCommit ? "" : activeRunSessionId == null ? "" : activeRunSessionId;
+			if (pendingLootRunLinkSource == null) decidePendingRunLink(System.currentTimeMillis());
+			record.runLinkSource = pendingLootRunLinkSource;
+			record.linkedRunId = pendingLootLinkedRunId == null ? "" : pendingLootLinkedRunId;
 			record.chestSessionId = pendingChestSessionId == null ? "" : pendingChestSessionId;
 			record.commitFingerprint = buildLootCommitFingerprint(record);
 			record.applyCostBreakdown(costBreakdown);
@@ -6905,6 +6995,9 @@ public final class DungeonRunTrackerFeature {
 				|| commitDecision == RunRecordCommitDecision.REPLACE_EXISTING) {
 				trackingSession.updateChestCost(record.chestSessionId, costBreakdown);
 				trackingSession.commitChest(record.chestSessionId, record.commitFingerprint);
+				if (DungeonRunRecord.LINK_LIVE.equals(record.runLinkSource)) {
+					LuckRunCapture.onDungeonChestPurchased(record.linkedRunId, record.chestTitle);
+				}
 				if (sessionActive && sessionStartMillis > 0L && record.timestampEpochMillis >= sessionStartMillis) {
 					sessionTotalProfit += chestProfitCoins;
 					sessionFloorProfitTotals.merge(floorName, chestProfitCoins, Long::sum);
@@ -6943,6 +7036,8 @@ public final class DungeonRunTrackerFeature {
 		pendingLootReconcilingGuiChat = false;
 		pendingLootChestAssigned = false;
 		pendingLootChatConfirmed = false;
+		pendingLootRunLinkSource = null;
+		pendingLootLinkedRunId = "";
 		pendingLootEntries.clear();
 		lootGuardWarnedKeys.clear();
 		recentLootMessages.clear();

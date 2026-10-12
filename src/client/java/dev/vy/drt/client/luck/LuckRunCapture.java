@@ -2,8 +2,15 @@ package dev.vy.drt.client.luck;
 
 import dev.vy.drt.DungeonRunTracker;
 import dev.vy.drt.client.tracker.TabReader;
+import dev.vy.drt.config.DungeonLootEntry;
 import dev.vy.drt.config.DungeonRunCompletionRecord;
+import dev.vy.drt.luck.ChestTier;
+import dev.vy.drt.luck.FloorId;
+import dev.vy.drt.luck.capture.CroesusRunViewParser;
 import dev.vy.drt.luck.capture.DungeonPartyRoster;
+import dev.vy.drt.luck.capture.LuckText;
+import dev.vy.drt.luck.data.CatacombsLootDatabase;
+import dev.vy.drt.luck.data.FloorTable;
 import dev.vy.drt.luck.capture.DungeonScoreReading;
 import dev.vy.drt.luck.capture.LuckModifierProfile;
 import dev.vy.drt.luck.capture.LuckRunRecord;
@@ -11,6 +18,7 @@ import dev.vy.drt.luck.capture.LuckTrackingStore;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
@@ -70,6 +78,11 @@ public final class LuckRunCapture {
 			);
 			run.party = readParty();
 			if (run.party != null) run.partySource = LuckRunRecord.PARTY_SOURCE_TAB_LIST;
+			String timeSource = completion.effectiveRunTimeSource();
+			if (timeSource != null) {
+				run.durationMillis = completion.runTimeMs;
+				run.durationSource = timeSource;
+			}
 			LuckTrackingStore.AddResult result = store().addRun(run);
 			if (result == LuckTrackingStore.AddResult.SAVE_FAILED) {
 				DungeonRunTracker.LOGGER.warn("[DRT] Could not save luck capture for {}", completion.completionFingerprint, store().lastSaveError());
@@ -81,6 +94,69 @@ public final class LuckRunCapture {
 		} catch (RuntimeException e) {
 			DungeonRunTracker.LOGGER.warn("[DRT] Luck capture failed for {}", completion.completionFingerprint, e);
 		}
+	}
+
+	/**
+	 * One reward chest screen seen in the dungeon instance for the run DRT just completed. Only what
+	 * the screen showed is stored; an empty or unreadable screen stores nothing.
+	 */
+	public static void onDungeonChestOffer(String runSessionId, String floor, String chestTitle, List<DungeonLootEntry> entries, Long costCoins) {
+		ChestTier tier = LuckText.chestTier(chestTitle);
+		if (tier == null || entries == null || entries.isEmpty() || runSessionId == null || runSessionId.isBlank()) return;
+		try {
+			FloorId floorId = FloorId.parse(floor);
+			CatacombsLootDatabase database = LuckScreenCapture.database();
+			FloorTable table = floorId == null || database == null ? null : database.floor(floorId);
+			List<LuckText.ContentLine> contents = new ArrayList<>();
+			List<String> raw = new ArrayList<>();
+			for (DungeonLootEntry entry : entries) {
+				String text = contentText(entry);
+				if (text.isBlank()) continue;
+				contents.add(LuckText.contentLine(text, table));
+				raw.add(text);
+			}
+			if (contents.isEmpty()) return;
+			String costText = costCoins == null ? null : costCoins == 0L ? "FREE" : String.format(Locale.ROOT, "%,d Coins", costCoins);
+			CroesusRunViewParser.ChestOffer offer = new CroesusRunViewParser.ChestOffer(tier, -1, contents, costCoins, costText, raw);
+			LuckTrackingStore.OfferResult result = store().recordDungeonChestOffer(runSessionId, offer, System.currentTimeMillis());
+			if (result != LuckTrackingStore.OfferResult.UNCHANGED) {
+				DungeonRunTracker.LOGGER.info("[DRT] Dungeon chest offer {} for {}: {} ({} lines)", result, runSessionId, tier, contents.size());
+			}
+		} catch (RuntimeException e) {
+			DungeonRunTracker.LOGGER.warn("[DRT] Could not store dungeon chest offer for {}", runSessionId, e);
+		}
+	}
+
+	/** A chest opened in the dungeon instance for the run DRT just completed. */
+	public static void onDungeonChestPurchased(String runSessionId, String chestTitle) {
+		ChestTier tier = LuckText.chestTier(chestTitle);
+		if (tier == null || runSessionId == null || runSessionId.isBlank()) return;
+		try {
+			store().recordDungeonPurchase(runSessionId, tier);
+		} catch (RuntimeException e) {
+			DungeonRunTracker.LOGGER.warn("[DRT] Could not store dungeon chest purchase for {}", runSessionId, e);
+		}
+	}
+
+	/** The completed run whose Croesus run view is open, when its entry matched exactly one run. */
+	public static String activeCroesusRunSession() {
+		try {
+			return LuckScreenCapture.activeViewRunSession(System.currentTimeMillis());
+		} catch (RuntimeException e) {
+			return null;
+		}
+	}
+
+	/** Content text in the Croesus "Contents" wording, so both sources resolve the same keys. */
+	static String contentText(DungeonLootEntry entry) {
+		String name = entry.rawName == null ? "" : entry.rawName.trim();
+		if (name.isEmpty()) return "";
+		String id = entry.itemId == null ? "" : entry.itemId;
+		if (id.startsWith("ENCHANTMENT_") && !name.toUpperCase(Locale.ROOT).startsWith("ENCHANTED BOOK")) {
+			name = "Enchanted Book (" + name + ")";
+		}
+		int quantity = Math.max(1, entry.quantity);
+		return quantity > 1 ? name + " x" + quantity : name;
 	}
 
 	private static List<String> readParty() {

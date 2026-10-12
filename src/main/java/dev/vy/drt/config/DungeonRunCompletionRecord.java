@@ -1,6 +1,13 @@
 package dev.vy.drt.config;
 
 public final class DungeonRunCompletionRecord {
+	/** Hypixel's "Defeated <boss> in MMm SSs" completion line, second precision. */
+	public static final String RUN_TIME_OFFICIAL = "OFFICIAL_CHAT";
+	/** DRT's wall clock between a detected start and the completion, minus pauses. */
+	public static final String RUN_TIME_MEASURED = "MEASURED";
+	/** Entered by the player in the manual run screen. */
+	public static final String RUN_TIME_MANUAL = "MANUAL";
+
 	public String completionId = "";
 	public String runSessionId = "";
 	public String completionFingerprint = "";
@@ -9,6 +16,8 @@ public final class DungeonRunCompletionRecord {
 	public String floor = "UNKNOWN";
 	public String grade = "?";
 	public long runTimeMs;
+	/** Where {@link #runTimeMs} came from; null for records written before sources were stored. */
+	public String runTimeSource;
 
 	public DungeonRunCompletionRecord() {
 	}
@@ -42,6 +51,7 @@ public final class DungeonRunCompletionRecord {
 			completionFingerprint
 		);
 		copy.completionId = completionId == null ? "" : completionId;
+		copy.runTimeSource = runTimeSource;
 		return copy;
 	}
 
@@ -54,6 +64,29 @@ public final class DungeonRunCompletionRecord {
 		runSessionId = runSessionId == null ? "" : runSessionId;
 		completionFingerprint = completionFingerprint == null ? "" : completionFingerprint;
 		completionId = completionId == null ? "" : completionId;
+		if (runTimeSource != null && runTimeSource.isBlank()) runTimeSource = null;
+	}
+
+	/**
+	 * The stored source, or for older records the source proven by the completion fingerprint:
+	 * live fingerprints end in the official time ("session|floor|grade|millis"), 0 when the chat
+	 * line was not seen. Returns null when nothing proves where the time came from.
+	 */
+	public String effectiveRunTimeSource() {
+		if (runTimeMs <= 0L) return null;
+		if (runTimeSource != null) return runTimeSource;
+		String fingerprint = completionFingerprint == null ? "" : completionFingerprint;
+		if (fingerprint.startsWith("manual|")) return RUN_TIME_MANUAL;
+		String[] parts = fingerprint.split("\\|");
+		if (parts.length != 4) return null;
+		long official;
+		try {
+			official = Long.parseLong(parts[3].trim());
+		} catch (NumberFormatException e) {
+			return null;
+		}
+		if (official > 0L) return official == runTimeMs ? RUN_TIME_OFFICIAL : null;
+		return RUN_TIME_MEASURED;
 	}
 
 	public boolean equivalentTo(DungeonRunCompletionRecord other) {
