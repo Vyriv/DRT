@@ -9,7 +9,9 @@ import java.util.function.Function;
 /**
  * Turns stable Croesus and RNG Meter screens into luck data. A Croesus run view is only linked to
  * a run through the entry clicked on the Croesus page just before it, and only when that entry was
- * matched to exactly one captured run; everything else is kept as an unmatched observation.
+ * matched to exactly one captured run; everything else is kept as an unmatched observation. The one
+ * exception is a run view seen inside the dungeon instance of a run DRT just completed, which can
+ * only belong to that run.
  */
 public final class LuckCaptureCoordinator {
 	/** How long after clicking a Croesus entry its run view may open. */
@@ -19,6 +21,8 @@ public final class LuckCaptureCoordinator {
 
 	public static final String REASON_NO_CLICKED_ENTRY = "NO_CLICKED_ENTRY";
 	public static final String REASON_VIEW_ENTRY_MISMATCH = "VIEW_ENTRY_MISMATCH";
+	public static final String REASON_LIVE_FLOOR_MISMATCH = "LIVE_FLOOR_MISMATCH";
+	public static final String REASON_LIVE_RUN_NOT_FOUND = "LIVE_RUN_NOT_FOUND";
 
 	private final LuckTrackingStore store;
 	private final Function<FloorId, FloorTable> floors;
@@ -57,12 +61,49 @@ public final class LuckCaptureCoordinator {
 		pendingClick = new ViewContext(entry, lastMatches == null ? null : lastMatches.forSlot(slot), lastMenuAt, now);
 	}
 
+	/**
+	 * A click on a Croesus page slot, read from the page as it is at the click. The page may not
+	 * have stayed open long enough to be captured as stable, so the clicked entry and its matches
+	 * come from this snapshot under the same strict rules. A click that is not on a run entry of
+	 * this page arms nothing, even if an older page had an entry in that slot.
+	 *
+	 * @return the clicked entry's match, or null when the click armed nothing
+	 */
+	public CroesusRunMatcher.EntryMatch onCroesusClick(LuckProbeRecorder.ScreenSample pageAtClick, int slot, long now) {
+		CroesusMenuParser.Menu menu = CroesusMenuParser.parse(pageAtClick);
+		if (menu == null) return null;
+		CroesusMenuParser.RunEntry entry = menu.entryAt(slot);
+		if (entry == null) return null;
+		CroesusRunMatcher.Result matches = CroesusRunMatcher.match(menu, store.runs(), now);
+		store.applyCroesusMenu(menu, matches, now);
+		lastMenu = menu;
+		lastMatches = matches;
+		lastMenuAt = now;
+		activeView = null;
+		CroesusRunMatcher.EntryMatch match = matches.forSlot(slot);
+		pendingClick = new ViewContext(entry, match, now, now);
+		return match;
+	}
+
 	/** Result of handling one run view snapshot. */
-	public record ViewOutcome(String luckRunId, LuckTrackingStore.OfferResult offerResult, String unmatchedReason, int chests) {
+	public record ViewOutcome(String luckRunId, LuckTrackingStore.OfferResult offerResult, String unmatchedReason, int chests, boolean live) {
+		public ViewOutcome(String luckRunId, LuckTrackingStore.OfferResult offerResult, String unmatchedReason, int chests) {
+			this(luckRunId, offerResult, unmatchedReason, chests, false);
+		}
 	}
 
 	public ViewOutcome onCroesusRunView(LuckProbeRecorder.ScreenSample screen, long now) {
+		return onCroesusRunView(screen, now, null);
+	}
+
+	/**
+	 * @param live the run just completed in the instance the player is still in, or null. When
+	 *     present it is the only run this view can belong to, so no Croesus entry is needed; it
+	 *     must never be passed for a view opened outside that instance.
+	 */
+	public ViewOutcome onCroesusRunView(LuckProbeRecorder.ScreenSample screen, long now, LiveRewardSession live) {
 		if (screen == null || !CroesusRunViewParser.isRunViewTitle(screen.title())) return null;
+		if (live != null && !live.drtRunSessionId().isBlank()) return onLiveRunView(screen, now, live);
 		ViewContext context = currentContext(now);
 		CroesusMenuParser.RunEntry entry = context == null ? null : context.entry();
 		FloorId floor = entry == null ? null : entry.floor();
@@ -85,6 +126,28 @@ public final class LuckCaptureCoordinator {
 		}
 		store.recordUnmatchedCroesus(unmatched(view, context, reason, now));
 		return new ViewOutcome(null, null, reason, view.chests().size());
+	}
+
+	private ViewOutcome onLiveRunView(LuckProbeRecorder.ScreenSample screen, long now, LiveRewardSession live) {
+		pendingClick = null;
+		FloorId floor = FloorId.parse(live.floor());
+		CroesusRunViewParser.RunView view = CroesusRunViewParser.parse(screen,
+			number -> floor != null && floor.number() == number ? floors.apply(floor) : null);
+		if (view == null) return null;
+		LuckRunRecord run = store.runForSession(live.drtRunSessionId());
+		String reason = null;
+		if (floor == null || floor.number() != view.floorNumber()
+			|| (view.masterMode() != null && view.masterMode() != floor.masterMode())) {
+			reason = REASON_LIVE_FLOOR_MISMATCH;
+		} else if (run == null) {
+			reason = REASON_LIVE_RUN_NOT_FOUND;
+		}
+		if (reason == null) {
+			LuckTrackingStore.OfferResult result = store.recordCroesusOffers(run.luckRunId, view, now);
+			return new ViewOutcome(run.luckRunId, result, null, view.chests().size(), true);
+		}
+		store.recordUnmatchedCroesus(unmatched(view, null, reason, now));
+		return new ViewOutcome(null, null, reason, view.chests().size(), true);
 	}
 
 	/**

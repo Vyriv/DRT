@@ -58,14 +58,22 @@ public final class LuckScreenCapture {
 		}
 	}
 
-	/** Called on every container click before other handlers; remembers which Croesus entry was clicked. */
+	/**
+	 * Called on every container click before other handlers; remembers which Croesus entry was
+	 * clicked, read from the page at the click so a quick click is not lost.
+	 */
 	public static void onMouseClick(Minecraft client, Screen screen) {
 		if (client.player == null || !(screen instanceof AbstractContainerScreen<?> container)) return;
 		if (!CroesusMenuParser.isMenuTitle(LuckProbeClient.clean(container.getTitle().getString()))) return;
 		try {
 			Slot slot = ((AbstractContainerScreenAccessor) container).drt$getHoveredSlot();
 			if (slot == null || slot.container == client.player.getInventory()) return;
-			coordinator().onCroesusClick(slot.index, System.currentTimeMillis());
+			CroesusRunMatcher.EntryMatch match = coordinator().onCroesusClick(LuckProbeClient.sample(client, container), slot.index, System.currentTimeMillis());
+			if (match != null) {
+				DungeonRunTracker.LOGGER.info("[DRT] Luck Croesus entry clicked: {}", match.matched()
+					? "linked to " + match.luckRunId() + " (" + match.method() + ")"
+					: "not linked (" + match.reason() + ")");
+			}
 		} catch (RuntimeException e) {
 			DungeonRunTracker.LOGGER.warn("[DRT] Luck capture could not read the clicked Croesus entry", e);
 		}
@@ -88,9 +96,10 @@ public final class LuckScreenCapture {
 				DungeonRunTracker.LOGGER.info("[DRT] Luck Croesus page: {} entries, {} linked to captured runs", result.bySlot().size(), matched);
 			}
 		} else if (CroesusRunViewParser.isRunViewTitle(title)) {
-			LuckCaptureCoordinator.ViewOutcome outcome = capture.onCroesusRunView(sample, now);
+			LuckCaptureCoordinator.ViewOutcome outcome = capture.onCroesusRunView(sample, now, LuckRunCapture.liveRewardSession());
 			if (outcome != null && outcome.luckRunId() != null) {
-				DungeonRunTracker.LOGGER.info("[DRT] Luck chest offers {} for {} ({} chests)", outcome.offerResult(), outcome.luckRunId(), outcome.chests());
+				DungeonRunTracker.LOGGER.info("[DRT] Luck chest offers {} for {} ({} chests{})", outcome.offerResult(), outcome.luckRunId(), outcome.chests(),
+					outcome.live() ? ", in the run's instance" : "");
 			} else if (outcome != null) {
 				DungeonRunTracker.LOGGER.info("[DRT] Luck chest offers kept unmatched: {} ({} chests)", outcome.unmatchedReason(), outcome.chests());
 			}

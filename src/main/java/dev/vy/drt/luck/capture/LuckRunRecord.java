@@ -114,6 +114,8 @@ public final class LuckRunRecord {
 	public static final String SOURCE_CROESUS_MENU = "CROESUS_MENU";
 	/** A reward chest screen in the dungeon instance, right after the run's completion. */
 	public static final String SOURCE_DUNGEON_CHEST = "DUNGEON_CHEST";
+	/** A chest opened from a Croesus run view linked to this run, once its rewards were received. */
+	public static final String SOURCE_CROESUS_CHEST = "CROESUS_CHEST";
 	public static final String PARTY_SOURCE_TAB_LIST = "TAB_LIST";
 
 	/**
