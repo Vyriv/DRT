@@ -347,6 +347,18 @@ class LuckCaptureCoordinatorTest {
 	}
 
 	@Test
+	void chestOpenedFromTheOverlayWithoutAHoveredSlotStillReadsTheRunView() {
+		LuckRunRecord run = addM5Run(NOW - 96_000L, "live-x-run-3");
+		assertTrue(coordinator.onCroesusScreenClick(m5Page("1 min ago"), 11, NOW, null).entry().matched());
+		assertNull(coordinator.activeViewRunSession(NOW + 300L), "an entry click alone never owns a chest");
+		LuckCaptureCoordinator.ViewOutcome outcome = coordinator.onCroesusScreenClick(m5View(), -1, NOW + 300L, null).view();
+		assertEquals(run.luckRunId, outcome.luckRunId());
+		assertEquals(LuckTrackingStore.OfferResult.ADDED, outcome.offerResult());
+		assertEquals("live-x-run-3", coordinator.activeViewRunSession(NOW + 1_000L), "the chest opened 0.3 s after the entry click is linked");
+		assertNull(coordinator.onCroesusScreenClick(m5Page("1 min ago"), -1, NOW + 2_000L, null), "a page click needs the clicked entry");
+	}
+
+	@Test
 	void unopenedChestOffersAreStoredWithoutAnyRewardMessage() {
 		LuckRunRecord run = addM5Run(NOW - 96_000L, "live-x-run-3");
 		LuckProbeRecorder.ScreenSample unopened = m5Page("1 min ago");

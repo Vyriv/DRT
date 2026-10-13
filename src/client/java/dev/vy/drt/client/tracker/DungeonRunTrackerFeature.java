@@ -43,6 +43,7 @@ import dev.vy.drt.tracking.ChestSession;
 import dev.vy.drt.tracking.ChestState;
 import dev.vy.drt.tracking.ResolvedLoot;
 import dev.vy.drt.tracking.RewardChatBlock;
+import dev.vy.drt.tracking.RewardOpenRefusal;
 import dev.vy.drt.tracking.RunMode;
 import dev.vy.drt.tracking.RunSession;
 import dev.vy.drt.tracking.RunState;
@@ -5487,14 +5488,14 @@ public final class DungeonRunTrackerFeature {
 		boolean rewardBlockLine = rewardChatBlock.acceptLine(untrimmedText);
 		if (isDrtClientMessage(cleaned) || isDrtClientMessage(rawText)) return;
 		if (isPartyRareDropAnnouncement(cleaned) || isPartyRareDropAnnouncement(rawText)) return;
+		if (RewardOpenRefusal.refusesOpen(cleaned)) {
+			cancelUnconfirmedOpenedChest(now);
+			return;
+		}
 		if ((lootWindowUntilMillis <= 0L || now > lootWindowUntilMillis) && isLootHeader(cleaned)) {
 			startLateOwnedOrAdHocLootWindow(now, rewardContextFloorFromTitle(cleaned));
 		}
 		if (lootWindowUntilMillis <= 0L || now > lootWindowUntilMillis) return;
-		if (cleaned.equals("YOU CANNOT AFFORD THIS!")) {
-			cancelUnconfirmedOpenedChest(now);
-			return;
-		}
 		if (handleModifierMessage(cleaned)) return;
 		if (cleaned.startsWith("YOU RECEIVED ")) {
 			lootCollectionUntilMillis = now + LOOT_COLLECTION_MS;
@@ -5542,10 +5543,12 @@ public final class DungeonRunTrackerFeature {
 		lootCollectionUntilMillis = now + LOOT_COLLECTION_MS;
 	}
 
-	// "You cannot afford this!" means the open failed; the preview contents must not be saved.
+	// A refused open ("You cannot afford this!", or no key for another chest) leaves the chest closed;
+	// the preview contents must not be saved.
 	private void cancelUnconfirmedOpenedChest(long now) {
 		lastRewardOpenFailedMillis = now;
 		if (!pendingLootChestAssigned || pendingLootChatConfirmed) return;
+		DungeonRunTracker.LOGGER.info("[DRT] Reward chest open refused by Hypixel; discarded pending {}", pendingLootChestTitle);
 		openedRewardChestTitlesInLootWindow.remove(pendingLootChestTitle.toUpperCase(Locale.ROOT));
 		openedRewardChestsInLootWindow = Math.max(0, openedRewardChestsInLootWindow - 1);
 		resetPendingChestState();
