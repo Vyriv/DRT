@@ -102,6 +102,8 @@ public final class LuckCaptureCoordinator {
 	 * arms the clicked entry, and a run view click reads the view at once so its offers are stored
 	 * and the chest opened from it is linked under the same strict rules as a stable view.
 	 *
+	 * @param slot the clicked container slot, or -1 when no slot is hovered; only a page click
+	 *     uses it
 	 * @return what the click recorded, or null when it recorded nothing
 	 */
 	public ClickOutcome onCroesusScreenClick(LuckProbeRecorder.ScreenSample screenAtClick, int slot, long now, LiveRewardSession live) {

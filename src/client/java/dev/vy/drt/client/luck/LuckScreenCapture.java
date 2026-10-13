@@ -60,17 +60,21 @@ public final class LuckScreenCapture {
 
 	/**
 	 * Called on every container click before other handlers. Croesus pages and run views are read
-	 * at the click, so a click made before the screen was captured as stable is not lost.
+	 * at the click, so a click made before the screen was captured as stable is not lost. A run
+	 * view is read on any click, including clicks on the DRT Croesus overlay outside the container,
+	 * which open a chest without hovering a slot.
 	 */
 	public static void onMouseClick(Minecraft client, Screen screen) {
 		if (client.player == null || !(screen instanceof AbstractContainerScreen<?> container)) return;
 		String title = LuckProbeClient.clean(container.getTitle().getString());
-		if (!CroesusMenuParser.isMenuTitle(title) && !CroesusRunViewParser.isRunViewTitle(title)) return;
+		boolean menu = CroesusMenuParser.isMenuTitle(title);
+		if (!menu && !CroesusRunViewParser.isRunViewTitle(title)) return;
 		try {
 			Slot slot = ((AbstractContainerScreenAccessor) container).drt$getHoveredSlot();
-			if (slot == null || slot.container == client.player.getInventory()) return;
+			boolean menuSlot = slot != null && slot.container != client.player.getInventory();
+			if (menu && !menuSlot) return;
 			LuckCaptureCoordinator.ClickOutcome outcome = coordinator().onCroesusScreenClick(
-				LuckProbeClient.sample(client, container), slot.index, System.currentTimeMillis(), LuckRunCapture.liveRewardSession());
+				LuckProbeClient.sample(client, container), menuSlot ? slot.index : -1, System.currentTimeMillis(), LuckRunCapture.liveRewardSession());
 			if (outcome == null) {
 				if (CroesusRunViewParser.isRunViewTitle(title)) {
 					DungeonRunTracker.LOGGER.info("[DRT] Luck click on '{}' found no chest offers (a chest preview, or a view still loading)", title);
