@@ -136,6 +136,8 @@ public final class LuckCaptureCoordinator {
 		CroesusRunViewParser.RunView view = CroesusRunViewParser.parse(screen,
 			number -> floor != null && floor.number() == number ? floors.apply(floor) : null);
 		if (view == null) return null;
+		pendingClick = null;
+		if (context == null) activeView = null;
 
 		String reason = null;
 		if (context == null) {
@@ -227,15 +229,13 @@ public final class LuckCaptureCoordinator {
 		return store.recordMeterReading(toReading(menu.header(), LuckMeterReading.SOURCE_FLOOR_MENU, selected, now));
 	}
 
+	/**
+	 * The clicked entry or open view a run view belongs to. Only read here: it is consumed once the
+	 * view parses, so a view whose items have not arrived yet keeps the click for its next read.
+	 */
 	private ViewContext currentContext(long now) {
-		if (pendingClick != null && now - pendingClick.at() <= CLICK_TO_VIEW_MILLIS) {
-			ViewContext context = pendingClick;
-			pendingClick = null;
-			return context;
-		}
-		pendingClick = null;
+		if (pendingClick != null && now - pendingClick.at() <= CLICK_TO_VIEW_MILLIS) return pendingClick;
 		if (activeView != null && now - activeView.at() <= VIEW_CONTEXT_MILLIS) return activeView;
-		activeView = null;
 		return null;
 	}
 

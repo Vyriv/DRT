@@ -10,12 +10,13 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Parses the Croesus chest list for one run ({@code Catacombs - Floor V}). Each chest button lists
- * its full contents, including essence, and its cost. Only the Floor V title has been seen in game;
- * a title without a Master Mode marker leaves the mode unknown rather than assuming Normal.
+ * Parses the Croesus chest list for one run ({@code Catacombs - Floor V}, or
+ * {@code Master Catacombs - Floor V} for Master Mode). Each chest button lists its full contents,
+ * including essence, and its cost. A title without a Master marker leaves the mode unknown rather
+ * than assuming Normal.
  */
 public final class CroesusRunViewParser {
-	private static final Pattern TITLE = Pattern.compile("^(Master Mode\\s+)?(?:The\\s+)?Catacombs\\s+-\\s+Floor\\s+([IVXL]+|\\d+)$",
+	private static final Pattern TITLE = Pattern.compile("^(Master(?:\\s+Mode)?\\s+)?(?:The\\s+)?Catacombs\\s+-\\s+Floor\\s+([IVXL]+|\\d+)$",
 		Pattern.CASE_INSENSITIVE);
 	private static final Pattern COINS = Pattern.compile("^(\\d[\\d,]*)\\s+Coins$");
 

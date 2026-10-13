@@ -151,6 +151,18 @@ class CroesusParsersTest {
 		assertNull(master.chests().get(5).contents().get(1).key(), "item names stay unresolved without a floor table");
 	}
 
+	@Test
+	void hypixelMasterCatacombsTitleIsAMasterModeRunView() {
+		assertTrue(CroesusRunViewParser.isRunViewTitle("Master Catacombs - Floor V"));
+		assertTrue(CroesusRunViewParser.isRunViewTitle("Master Catacombs - Floor VII"));
+		assertFalse(CroesusRunViewParser.isRunViewTitle("Master Catacombs RNG Meter"));
+		CroesusRunViewParser.RunView master = CroesusRunViewParser.parse(
+			ProbeFixtures.retitled(ProbeFixtures.screen(ProbeFixtures.CROESUS_RUN_VIEW_F5), "Master Catacombs - Floor V"), number -> null);
+		assertEquals(5, master.floorNumber());
+		assertEquals(Boolean.TRUE, master.masterMode());
+		assertEquals(6, master.chests().size(), "every chest offer is read, opened or not");
+	}
+
 	private static List<String> keys(CroesusRunViewParser.ChestOffer offer) {
 		return offer.contents().stream().map(LuckText.ContentLine::key).toList();
 	}
