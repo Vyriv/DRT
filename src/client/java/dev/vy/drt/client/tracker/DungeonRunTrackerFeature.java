@@ -273,6 +273,7 @@ public final class DungeonRunTrackerFeature {
 	private static final String TEX_ESSENCE_UNDEAD  = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvNzFkN2M4MTZmYzhjNjM2ZDdmNTBhOTNhMGJhN2FhZWZmMDZjOTZhNTYxNjQ1ZTllYjFiZWYzOTE2NTVjNTMxIn19fQ==";
 	private static final String TEX_ESSENCE_CRIMSON = "ewogICJ0aW1lc3RhbXAiIDogMTY0NDc4ODQzMzE5NSwKICAicHJvZmlsZUlkIiA6ICIxZjEyNTNhYTVkYTQ0ZjU5YWU1YWI1NmFhZjRlNTYxNyIsCiAgInByb2ZpbGVOYW1lIiA6ICJOb3RNaUt5IiwKICAic2lnbmF0dXJlUmVxdWlyZWQiIDogdHJ1ZSwKICAidGV4dHVyZXMiIDogewogICAgIlNLSU4iIDogewogICAgICAidXJsIiA6ICJodHRwOi8vdGV4dHVyZXMubWluZWNyYWZ0Lm5ldC90ZXh0dXJlLzY3YzQxOTMwZjhmZjBmMmIwNDMwZTE2OWFlNWYzOGU5ODRkZjEyNDQyMTU3MDVjNmYxNzM4NjI4NDQ1NDNlOWQiLAogICAgICAibWV0YWRhdGEiIDogewogICAgICAgICJtb2RlbCIgOiAic2xpbSIKICAgICAgfQogICAgfQogIH0KfQ==";
 	private static final String TEX_SHADOW_ASSASSIN_HELMET = "ewogICJ0aW1lc3RhbXAiIDogMTYxOTM0NjY3MzMxNCwKICAicHJvZmlsZUlkIiA6ICJiMGQ3MzJmZTAwZjc0MDdlOWU3Zjc0NjMwMWNkOThjYSIsCiAgInByb2ZpbGVOYW1lIiA6ICJPUHBscyIsCiAgInNpZ25hdHVyZVJlcXVpcmVkIiA6IHRydWUsCiAgInRleHR1cmVzIiA6IHsKICAgICJTS0lOIiA6IHsKICAgICAgInVybCIgOiAiaHR0cDovL3RleHR1cmVzLm1pbmVjcmFmdC5uZXQvdGV4dHVyZS9hMWFhMTRkZTljMTU4ZDM1MTM5NDljODVjYWJiOWUzNzg0OGI5ODRlYzNmYjViNDRhMzIxOWY0ZmI1OGEwMGRhIgogICAgfQogIH0KfQ==";
+	private static final String TEX_SHADOW_ASSASSIN_CLOAK = "ewogICJ0aW1lc3RhbXAiIDogMTY5MjI5ODIwNzA1MywKICAicHJvZmlsZUlkIiA6ICIzZWUxYWRlMzljZDI0ZjFkOWYwODliYjA2ZTkzNTY5YSIsCiAgInByb2ZpbGVOYW1lIiA6ICJSdXNvR01SIiwKICAic2lnbmF0dXJlUmVxdWlyZWQiIDogdHJ1ZSwKICAidGV4dHVyZXMiIDogewogICAgIlNLSU4iIDogewogICAgICAidXJsIiA6ICJodHRwOi8vdGV4dHVyZXMubWluZWNyYWZ0Lm5ldC90ZXh0dXJlL2ZhMjQzMTE0ODU3MmZlZDdiYzFlYWNmMGQyMjlkZGIyMTE1ZDFhMmNhMTgxZDMyM2QzZmNhNTIyNmU1MTZhMWQiCiAgICB9CiAgfQp9";
 	private static final String TEX_NECROMANCER_LORD_HELMET = "ewogICJ0aW1lc3RhbXAiIDogMTcyMDA0NDAxNDg2MiwKICAicHJvZmlsZUlkIiA6ICJlY2Q0ZTI4NjdkMmE0MTE2OTljYzlkMjMzYmM1YmEyMyIsCiAgInByb2ZpbGVOYW1lIiA6ICJSYXRlZEtub3QiLAogICJzaWduYXR1cmVSZXF1aXJlZCIgOiB0cnVlLAogICJ0ZXh0dXJlcyIgOiB7CiAgICAiU0tJTiIgOiB7CiAgICAgICJ1cmwiIDogImh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvN2RhZGU4YmFlNTY3YTA2NzBmYmViMDI1ZTYzNTA2YTA2ZTQwMTBlZjY2NDRmZjdiNTU2YmRmOTNkMjYwODk1NCIKICAgIH0KICB9Cn0=";
 	private static final String TEX_WITHER_HELMET = "ewogICJ0aW1lc3RhbXAiIDogMTY4OTY4MzY3MDM4NywKICAicHJvZmlsZUlkIiA6ICJkNzU2OTc4MWUyYjY0OWIyYjVlMjVlYTJhNDZkOGQxOSIsCiAgInByb2ZpbGVOYW1lIiA6ICJEckthcGRvciIsCiAgInNpZ25hdHVyZVJlcXVpcmVkIiA6IHRydWUsCiAgInRleHR1cmVzIiA6IHsKICAgICJTS0lOIiA6IHsKICAgICAgInVybCIgOiAiaHR0cDovL3RleHR1cmVzLm1pbmVjcmFmdC5uZXQvdGV4dHVyZS82OTExMjk0MDk3ODk1ODlhZTFiNDNlMWQ4MjhjMDZmYzlhMjEzYjc4MzQ4YTY4YjczMTNiZGQ0MDFkNzQ4NWNjIiwKICAgICAgIm1ldGFkYXRhIiA6IHsKICAgICAgICAibW9kZWwiIDogInNsaW0iCiAgICAgIH0KICAgIH0KICB9Cn0=";
 
@@ -291,6 +292,7 @@ public final class DungeonRunTrackerFeature {
 		loaded &= cacheSkull(ITEM_ICON_CACHE, "ESSENCE_UNDEAD", TEX_ESSENCE_UNDEAD);
 		loaded &= cacheSkull(ITEM_ICON_CACHE, "ESSENCE_CRIMSON", TEX_ESSENCE_CRIMSON);
 		loaded &= cacheSkull(ITEM_ICON_CACHE, "SHADOW_ASSASSIN_HELMET", TEX_SHADOW_ASSASSIN_HELMET);
+		loaded &= cacheSkull(ITEM_ICON_CACHE, "SHADOW_ASSASSIN_CLOAK", TEX_SHADOW_ASSASSIN_CLOAK);
 		loaded &= cacheSkull(ITEM_ICON_CACHE, "NECROMANCER_LORD_HELMET", TEX_NECROMANCER_LORD_HELMET);
 		loaded &= cacheSkull(ITEM_ICON_CACHE, "WITHER_HELMET", TEX_WITHER_HELMET);
 		if (!loaded) {
@@ -4045,12 +4047,14 @@ public final class DungeonRunTrackerFeature {
 	 * the run of a Croesus view that matched exactly one recorded run, or none.
 	 */
 	private void decidePendingRunLink(long now) {
-		boolean inInstance = insideDungeon || insideKuudra;
+		boolean inInstance = (insideDungeon || insideKuudra) && !inDungeonHub;
 		if (inLiveCompletionInstance(now)) {
 			pendingLootRunLinkSource = DungeonRunRecord.LINK_LIVE;
 			pendingLootLinkedRunId = liveCompletionRunSessionId;
 		} else {
-			String croesusRun = inInstance ? null : LuckRunCapture.activeCroesusRunSession();
+			// Not gated on the instance flags: they still read the instance for a few seconds after
+			// warping to the Dungeon Hub, and Croesus views are dropped on every world change.
+			String croesusRun = LuckRunCapture.activeCroesusRunSession();
 			pendingLootRunLinkSource = croesusRun != null ? DungeonRunRecord.LINK_CROESUS_UNIQUE : DungeonRunRecord.LINK_NONE;
 			pendingLootLinkedRunId = croesusRun != null ? croesusRun : "";
 		}

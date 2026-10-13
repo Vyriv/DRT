@@ -194,6 +194,17 @@ public final class LuckCaptureCoordinator {
 		return run == null || run.drtRunSessionId.isBlank() ? null : run.drtRunSessionId;
 	}
 
+	/**
+	 * The player moved to another world. Croesus is only in the Dungeon Hub, so a page, click or run
+	 * view from an earlier world never describes a chest opened in this one.
+	 */
+	public void onWorldChange() {
+		lastMenu = null;
+		lastMatches = null;
+		pendingClick = null;
+		activeView = null;
+	}
+
 	/** Readings from the Catacombs RNG Meters overview. */
 	public List<LuckTrackingStore.MeterAttachment> onMeterOverview(LuckProbeRecorder.ScreenSample screen, long now) {
 		RngMeterParser.Overview overview = RngMeterParser.parseOverview(screen);

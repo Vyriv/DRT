@@ -359,6 +359,20 @@ class LuckCaptureCoordinatorTest {
 	}
 
 	@Test
+	void aWorldChangeForgetsTheCroesusViewSoItCannotClaimAChestElsewhere() {
+		addM5Run(NOW - 96_000L, "live-x-run-3");
+		coordinator.onCroesusScreenClick(m5Page("1 min ago"), 11, NOW, null);
+		coordinator.onCroesusScreenClick(m5View(), -1, NOW + 300L, null);
+		assertEquals("live-x-run-3", coordinator.activeViewRunSession(NOW + 1_000L));
+
+		coordinator.onWorldChange();
+		assertNull(coordinator.activeViewRunSession(NOW + 2_000L), "a view from the previous world owns no chest here");
+		LuckCaptureCoordinator.ViewOutcome again = coordinator.onCroesusRunView(m5View(), NOW + 3_000L);
+		assertEquals(LuckCaptureCoordinator.REASON_NO_CLICKED_ENTRY, again.unmatchedReason(), "the old entry click is gone too");
+		assertNull(coordinator.activeViewRunSession(NOW + 3_500L));
+	}
+
+	@Test
 	void unopenedChestOffersAreStoredWithoutAnyRewardMessage() {
 		LuckRunRecord run = addM5Run(NOW - 96_000L, "live-x-run-3");
 		LuckProbeRecorder.ScreenSample unopened = m5Page("1 min ago");
