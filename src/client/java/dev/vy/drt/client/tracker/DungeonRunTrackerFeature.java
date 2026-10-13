@@ -4048,16 +4048,14 @@ public final class DungeonRunTrackerFeature {
 		if (inLiveCompletionInstance(now)) {
 			pendingLootRunLinkSource = DungeonRunRecord.LINK_LIVE;
 			pendingLootLinkedRunId = liveCompletionRunSessionId;
-			return;
+		} else {
+			String croesusRun = inInstance ? null : LuckRunCapture.activeCroesusRunSession();
+			pendingLootRunLinkSource = croesusRun != null ? DungeonRunRecord.LINK_CROESUS_UNIQUE : DungeonRunRecord.LINK_NONE;
+			pendingLootLinkedRunId = croesusRun != null ? croesusRun : "";
 		}
-		String croesusRun = inInstance ? null : LuckRunCapture.activeCroesusRunSession();
-		if (croesusRun != null) {
-			pendingLootRunLinkSource = DungeonRunRecord.LINK_CROESUS_UNIQUE;
-			pendingLootLinkedRunId = croesusRun;
-			return;
-		}
-		pendingLootRunLinkSource = DungeonRunRecord.LINK_NONE;
-		pendingLootLinkedRunId = "";
+		boolean unlinked = pendingLootLinkedRunId == null || pendingLootLinkedRunId.isBlank();
+		DungeonRunTracker.LOGGER.info("[DRT] Chest run link: {}{}", pendingLootRunLinkSource,
+			unlinked ? (inInstance ? " (in an instance without its completion)" : " (no linked Croesus run view open)") : " -> " + pendingLootLinkedRunId);
 	}
 
 	private boolean rewardScreenSettled(Screen screen, long now) {

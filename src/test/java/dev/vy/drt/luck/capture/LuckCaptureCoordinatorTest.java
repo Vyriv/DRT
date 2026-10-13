@@ -12,6 +12,7 @@ import dev.vy.drt.luck.LuckTestData;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -258,6 +259,111 @@ class LuckCaptureCoordinatorTest {
 		LuckProbeRecorder.ScreenSample other = new LuckProbeRecorder.ScreenSample("Large Chest", menu.containerSlots(), menu.slots());
 		assertNull(coordinator.onCroesusScreenClick(other, 10, NOW + 2_000L, null));
 		assertNull(coordinator.onCroesusScreenClick(null, 10, NOW + 2_000L, null));
+	}
+
+	private static final String M5_VIEW_TITLE = "Master Catacombs - Floor V";
+
+	private LuckRunRecord addM5Run(long completedAt, String session) {
+		LuckRunRecord run = LuckRunRecord.forCompletion(session, "fp-m5-" + completedAt, completedAt, "M5", "S+", new DungeonScoreReading(301, "S+"));
+		run.party = List.of("Teammate_A", "Teammate_B", "Teammate_C", "Teammate_D", "LocalPlayer");
+		run.partySource = LuckRunRecord.PARTY_SOURCE_TAB_LIST;
+		assertEquals(LuckTrackingStore.AddResult.ADDED, store.addRun(run));
+		return store.runs().get(store.runs().size() - 1);
+	}
+
+	/** The recorded page with its Master Mode entry copied into slots 11 onward, one per age, no chests opened. */
+	private static LuckProbeRecorder.ScreenSample m5Page(String... ages) {
+		LuckProbeRecorder.ScreenSample page = ProbeFixtures.screen(ProbeFixtures.CROESUS_MENU);
+		LuckProbeRecorder.SlotSample template = page.slots().stream().filter(slot -> slot.slot() == 11).findFirst().orElseThrow();
+		List<LuckProbeRecorder.SlotSample> slots = new ArrayList<>(page.slots().stream()
+			.filter(slot -> slot.slot() < 10 || slot.slot() > 10 + ages.length).toList());
+		for (int i = 0; i < ages.length; i++) {
+			String age = ages[i];
+			List<String> lore = template.lore().stream().map(line -> {
+				if (line.startsWith("Completed:")) return "Completed: " + age;
+				if (line.startsWith("Opened Chest:")) return "No chests opened yet!";
+				if (line.startsWith("Chests expire")) return "Chests expire in 2d 23h!";
+				return line;
+			}).toList();
+			slots.add(new LuckProbeRecorder.SlotSample(11 + i, template.itemId(), template.count(), template.name(), lore));
+		}
+		return new LuckProbeRecorder.ScreenSample(page.title(), page.containerSlots(), slots);
+	}
+
+	private static LuckProbeRecorder.ScreenSample m5View() {
+		return ProbeFixtures.retitled(ProbeFixtures.screen(ProbeFixtures.CROESUS_RUN_VIEW_F5), M5_VIEW_TITLE);
+	}
+
+	/** The chest preview and a view whose items have not arrived share the run view's title but have no chest buttons. */
+	private static LuckProbeRecorder.ScreenSample m5ViewWithoutChests() {
+		return new LuckProbeRecorder.ScreenSample(M5_VIEW_TITLE, m5View().containerSlots(), List.of());
+	}
+
+	@Test
+	void threeMasterRunsOpenedQuicklyFromCroesusEachStoreEveryOfferUnderTheirOwnRun() {
+		LuckRunRecord run1 = addM5Run(NOW - 390_000L, "live-x-run-1");
+		LuckRunRecord run2 = addM5Run(NOW - 244_000L, "live-x-run-2");
+		LuckRunRecord run3 = addM5Run(NOW - 96_000L, "live-x-run-3");
+		LuckProbeRecorder.ScreenSample page = m5Page("1 min ago", "4 mins ago", "6 mins ago");
+
+		CroesusRunMatcher.EntryMatch newest = coordinator.onCroesusScreenClick(page, 11, NOW, null).entry();
+		assertEquals(run3.luckRunId, newest.luckRunId(), newest.reason());
+		assertEquals(run3.luckRunId, coordinator.onCroesusScreenClick(m5View(), 13, NOW + 400L, null).view().luckRunId(),
+			"the Bedrock chest clicked straight away still reads the Master Mode view");
+		assertNull(coordinator.onCroesusScreenClick(m5ViewWithoutChests(), 31, NOW + 1_200L, null));
+		assertEquals("live-x-run-3", coordinator.activeViewRunSession(NOW + 2_000L), "the opened chest belongs to the newest run");
+
+		assertEquals(run2.luckRunId, coordinator.onCroesusScreenClick(page, 12, NOW + 4_000L, null).entry().luckRunId());
+		assertNull(coordinator.activeViewRunSession(NOW + 4_100L), "the previous run's view no longer owns new chests");
+		coordinator.onCroesusScreenClick(m5View(), 11, NOW + 4_300L, null);
+		assertEquals("live-x-run-2", coordinator.activeViewRunSession(NOW + 5_000L));
+
+		assertEquals(run1.luckRunId, coordinator.onCroesusScreenClick(page, 13, NOW + 6_000L, null).entry().luckRunId());
+		coordinator.onCroesusScreenClick(m5View(), 11, NOW + 6_300L, null);
+		assertEquals("live-x-run-1", coordinator.activeViewRunSession(NOW + 7_000L));
+
+		for (LuckRunRecord run : List.of(run1, run2, run3)) {
+			LuckRunRecord stored = store.run(run.luckRunId);
+			assertEquals(6, stored.chests.size(), "every available chest is stored, opened or not");
+			assertTrue(stored.chests.stream().allMatch(chest -> chest.offers.size() == 1));
+		}
+
+		assertEquals(run3.luckRunId, coordinator.onCroesusScreenClick(page, 11, NOW + 30_000L, null).entry().luckRunId());
+		LuckCaptureCoordinator.ViewOutcome reopened = coordinator.onCroesusScreenClick(m5View(), 13, NOW + 30_300L, null).view();
+		assertEquals(LuckTrackingStore.OfferResult.UNCHANGED, reopened.offerResult(), "reopening the menu stores nothing twice");
+		assertEquals(6, store.run(run3.luckRunId).chests.size());
+		assertTrue(store.run(run3.luckRunId).chests.stream().allMatch(chest -> chest.offers.size() == 1));
+	}
+
+	@Test
+	void runViewWhoseChestsArriveLateKeepsTheClickedEntry() {
+		LuckRunRecord run = addM5Run(NOW - 96_000L, "live-x-run-3");
+		assertTrue(coordinator.onCroesusScreenClick(m5Page("1 min ago"), 11, NOW, null).entry().matched());
+		assertNull(coordinator.onCroesusRunView(m5ViewWithoutChests(), NOW + 200L), "nothing to read yet");
+		LuckCaptureCoordinator.ViewOutcome outcome = coordinator.onCroesusRunView(m5View(), NOW + 900L);
+		assertEquals(run.luckRunId, outcome.luckRunId());
+		assertEquals(LuckTrackingStore.OfferResult.ADDED, outcome.offerResult());
+		assertEquals("live-x-run-3", coordinator.activeViewRunSession(NOW + 2_000L));
+	}
+
+	@Test
+	void unopenedChestOffersAreStoredWithoutAnyRewardMessage() {
+		LuckRunRecord run = addM5Run(NOW - 96_000L, "live-x-run-3");
+		LuckProbeRecorder.ScreenSample unopened = m5Page("1 min ago");
+		LuckProbeRecorder.ScreenSample page = new LuckProbeRecorder.ScreenSample(unopened.title(), unopened.containerSlots(),
+			unopened.slots().stream().map(slot -> slot.slot() != 11 ? slot : new LuckProbeRecorder.SlotSample(slot.slot(), slot.itemId(), slot.count(), slot.name(),
+				slot.lore().stream().map(line -> line.equals("No chests opened yet!") ? "Opened Chest: Bedrock" : line).toList())).toList());
+		CroesusRunMatcher.EntryMatch entry = coordinator.onCroesusScreenClick(page, 11, NOW, null).entry();
+		assertEquals(run.luckRunId, entry.luckRunId(), "the entry that already opened its Bedrock chest: " + entry.reason());
+		coordinator.onCroesusScreenClick(m5View(), 13, NOW + 500L, null);
+
+		LuckRunRecord stored = store.run(run.luckRunId);
+		assertEquals(6, stored.chests.size());
+		for (LuckRunRecord.LuckChestRecord chest : stored.chests) {
+			assertEquals(1, chest.offers.size(), chest.tier + " offer stored");
+			assertFalse(chest.offers.get(0).contents.isEmpty(), chest.tier + " contents kept as shown");
+			assertEquals(chest.tier.equals("BEDROCK"), Boolean.TRUE.equals(chest.purchased), chest.tier + " purchase comes only from the opened-chest evidence");
+		}
 	}
 
 	@Test

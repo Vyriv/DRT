@@ -71,7 +71,12 @@ public final class LuckScreenCapture {
 			if (slot == null || slot.container == client.player.getInventory()) return;
 			LuckCaptureCoordinator.ClickOutcome outcome = coordinator().onCroesusScreenClick(
 				LuckProbeClient.sample(client, container), slot.index, System.currentTimeMillis(), LuckRunCapture.liveRewardSession());
-			if (outcome == null) return;
+			if (outcome == null) {
+				if (CroesusRunViewParser.isRunViewTitle(title)) {
+					DungeonRunTracker.LOGGER.info("[DRT] Luck click on '{}' found no chest offers (a chest preview, or a view still loading)", title);
+				}
+				return;
+			}
 			CroesusRunMatcher.EntryMatch match = outcome.entry();
 			if (match != null) {
 				DungeonRunTracker.LOGGER.info("[DRT] Luck Croesus entry clicked: {}", match.matched()
