@@ -150,6 +150,8 @@ Loot history (`/drt loot`) and the luck store share runs through the DRT run ses
 | `CROESUS_UNIQUE` | Opened from a Croesus run view whose entry the evidence linked to one run |
 | `UNLINKED` | Anything else |
 
+Croesus pages, clicks and run views are forgotten on every world change, so a view only links chests opened in the world it was read in. The `CROESUS_UNIQUE` check does not depend on the scoreboard or tab list, which still show the instance for a few seconds after a warp to the Dungeon Hub.
+
 A `CROESUS_UNIQUE` chest is also marked purchased in the luck store (source `CROESUS_CHEST`), but only after its "CHEST REWARDS" chat arrived and the record was saved; viewing an offer never marks it. A purchase already proven by the Croesus page or in the instance is not overwritten.
 
 Opened chest contents come from a scan of the opened chest and from the indented lines under the "CHEST REWARDS" header, merged by item. The opened chest is scanned on its first frame when it follows that tier's preview, because it can close, or its chat can arrive, within the 500 ms settle delay used for other reward screens. Chat lines only count while they follow the header without a blank or unindented line in between, so other chat is never read as loot.

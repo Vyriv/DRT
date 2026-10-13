@@ -35,6 +35,12 @@ public final class NeuItemResolver {
 		"https://raw.githubusercontent.com/NotEnoughUpdates/NotEnoughUpdates-REPO/master/items/";
 	private static final String NEU_CONSTANTS_BASE =
 		"https://raw.githubusercontent.com/NotEnoughUpdates/NotEnoughUpdates-REPO/master/constants/";
+	/**
+	 * The repo just before the 2026-10-06 update that turned many skull items (Shadow Assassin Cloak,
+	 * Wither Blood, reforge stones) into paper drawn by Hypixel-only models.
+	 */
+	private static final String NEU_SKULL_ERA_BASE =
+		"https://raw.githubusercontent.com/NotEnoughUpdates/NotEnoughUpdates-REPO/ba66b9f80a09211330ff65f4890c2da7438ffa6e/items/";
 	private static final Duration TIMEOUT = Duration.ofSeconds(8);
 
 	private static final Pattern TEXTURE_VALUE = Pattern.compile("Value:\"([A-Za-z0-9+/=]+)\"");
@@ -172,10 +178,39 @@ public final class NeuItemResolver {
 			RESOLVED_COLORS.put(itemId, color);
 
 			ItemStack stack = buildStack(neuItemId, damage, nbttag);
+			if (stack.is(Items.PAPER) && hasHypixelOnlyModel(nbttag)) {
+				ItemStack skull = fetchSkullEraStack(itemId);
+				if (skull != null) stack = skull;
+			}
 			RESOLVED_STACKS.put(itemId, stack);
 
 		} catch (Exception e) {
 			DungeonRunTracker.LOGGER.warn("[NEU] Failed to resolve {}: {}", itemId, e.getMessage());
+		}
+	}
+
+	private static boolean hasHypixelOnlyModel(String nbttag) {
+		String model = extractItemModel(nbttag);
+		return model != null && model.startsWith("hypixel_skyblock:");
+	}
+
+	private static ItemStack fetchSkullEraStack(String itemId) {
+		try {
+			HttpRequest req = HttpRequest.newBuilder(URI.create(NEU_SKULL_ERA_BASE + itemId + ".json"))
+				.timeout(TIMEOUT).GET().build();
+			HttpResponse<String> resp = HTTP.send(req, HttpResponse.BodyHandlers.ofString());
+			if (resp.statusCode() < 200 || resp.statusCode() >= 300) return null;
+			JsonObject json = JsonParser.parseString(resp.body()).getAsJsonObject();
+			String neuItemId = json.has("itemid") ? json.get("itemid").getAsString() : null;
+			int damage = json.has("damage") ? json.get("damage").getAsInt() : 0;
+			if (!isSkullItem(neuItemId, damage)) return null;
+			String texture = extractSkullTexture(json.has("nbttag") ? json.get("nbttag").getAsString() : null);
+			if (texture == null || texture.isBlank()) return null;
+			ItemStack skull = skullFromTexture(texture);
+			return skull.isEmpty() ? null : skull;
+		} catch (Exception e) {
+			DungeonRunTracker.LOGGER.warn("[NEU] Failed to resolve skull icon for {}: {}", itemId, e.getMessage());
+			return null;
 		}
 	}
 

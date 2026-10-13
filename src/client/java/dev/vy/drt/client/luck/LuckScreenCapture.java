@@ -36,11 +36,16 @@ public final class LuckScreenCapture {
 	private static LuckCaptureCoordinator coordinator;
 	private static CatacombsLootDatabase database;
 	private static boolean databaseFailed;
+	private static Object lastLevel;
 
 	private LuckScreenCapture() {
 	}
 
 	public static void tick(Minecraft client) {
+		if (client.level != lastLevel) {
+			lastLevel = client.level;
+			if (coordinator != null) coordinator.onWorldChange();
+		}
 		if (client.player == null || !(client.screen instanceof AbstractContainerScreen<?> screen)) {
 			GATE.reset();
 			return;
