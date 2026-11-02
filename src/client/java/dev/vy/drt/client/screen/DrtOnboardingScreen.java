@@ -17,7 +17,8 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.util.Util;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
-import org.lwjgl.glfw.GLFW;
+import dev.vy.drt.client.DrtInputKeys;
+import dev.vy.drt.client.DrtPlatformLinks;
 
 public final class DrtOnboardingScreen extends Screen {
 	private static final int PANEL_BG = 0xF00D0D18;
@@ -187,28 +188,28 @@ public final class DrtOnboardingScreen extends Screen {
 	@Override
 	public boolean keyPressed(KeyEvent event) {
 		if (petLevelFocused) {
-			if (event.key() == GLFW.GLFW_KEY_BACKSPACE) {
+			if (event.key() == DrtInputKeys.KEY_BACKSPACE) {
 				if (!kuudraPetLevelText.isEmpty()) {
 					kuudraPetLevelText = kuudraPetLevelText.substring(0, kuudraPetLevelText.length() - 1);
 				}
 				return true;
 			}
-			if (event.key() == GLFW.GLFW_KEY_DELETE) {
+			if (event.key() == DrtInputKeys.KEY_DELETE) {
 				kuudraPetLevelText = "";
 				return true;
 			}
-			if (event.key() == GLFW.GLFW_KEY_ENTER || event.key() == GLFW.GLFW_KEY_KP_ENTER) {
+			if (event.key() == DrtInputKeys.KEY_ENTER || event.key() == DrtInputKeys.KEY_KP_ENTER) {
 				commitPetLevelInput();
 				petLevelFocused = false;
 				return true;
 			}
 		}
-		if (event.key() == GLFW.GLFW_KEY_ESCAPE) {
+		if (event.key() == DrtInputKeys.KEY_ESCAPE) {
 			saveSettings(false);
 			super.onClose();
 			return true;
 		}
-		if (event.key() == GLFW.GLFW_KEY_ENTER || event.key() == GLFW.GLFW_KEY_KP_ENTER) {
+		if (event.key() == DrtInputKeys.KEY_ENTER || event.key() == DrtInputKeys.KEY_KP_ENTER) {
 			saveSettings(true);
 			super.onClose();
 			return true;
@@ -277,7 +278,7 @@ public final class DrtOnboardingScreen extends Screen {
 		drawSmallButton(g, buttonX, y + 3, 78, 16, "Edit Overlay", false, () -> {
 			saveSettings(false);
 			Minecraft client = Minecraft.getInstance();
-			client.setScreen(new DrtOverlayEditorScreen(trackerFeature, this));
+			client.gui.setScreen(new DrtOverlayEditorScreen(trackerFeature, this));
 		}, "Choose overlay preset, custom layout, or move HUD");
 	}
 
@@ -405,7 +406,7 @@ public final class DrtOnboardingScreen extends Screen {
 	}
 
 	private void openDiscordInvite() {
-		Util.getPlatform().openUri(URI.create(DISCORD_INVITE_URL));
+		DrtPlatformLinks.openUri(URI.create(DISCORD_INVITE_URL));
 	}
 
 	private void drawDropdownMenus(GuiGraphicsExtractor g, int mouseX, int mouseY) {

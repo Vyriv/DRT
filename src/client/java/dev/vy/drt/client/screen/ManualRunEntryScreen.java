@@ -20,7 +20,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.Style;
 import net.minecraft.network.chat.TextColor;
 import net.minecraft.world.item.ItemStack;
-import org.lwjgl.glfw.GLFW;
+import dev.vy.drt.client.DrtInputKeys;
 
 public final class ManualRunEntryScreen extends Screen {
 	private static final int WIN_W = 460;
@@ -503,7 +503,7 @@ public final class ManualRunEntryScreen extends Screen {
 		int my = (int) event.y();
 		int button = event.button();
 
-		if (button == GLFW.GLFW_MOUSE_BUTTON_RIGHT || button == 1) {
+		if (button == DrtInputKeys.MOUSE_BUTTON_RIGHT || button == 1) {
 			for (int i = 0; i < lootSlots.size(); i++) {
 				int sx = ox + MARGIN + i * (lootSlotW + LOOT_GAP);
 				if (contains(sx, lootRowY, lootSlotW, FIELD_H, mx, my)) {
@@ -761,7 +761,7 @@ public final class ManualRunEntryScreen extends Screen {
 
 	@Override
 	public boolean keyPressed(KeyEvent event) {
-		if (event.key() == GLFW.GLFW_KEY_BACKSPACE) {
+		if (event.key() == DrtInputKeys.KEY_BACKSPACE) {
 			if (activeInput == 1 && !timeStr.isEmpty()) timeStr = timeStr.substring(0, timeStr.length() - 1);
 			else if (activeInput == 2 && !costStr.isEmpty()) costStr = costStr.substring(0, costStr.length() - 1);
 			else if (activeInput == 3 && !itemSearchQuery.isEmpty()) {
@@ -777,7 +777,7 @@ public final class ManualRunEntryScreen extends Screen {
 			}
 			return true;
 		}
-		if (event.key() == GLFW.GLFW_KEY_ESCAPE) {
+		if (event.key() == DrtInputKeys.KEY_ESCAPE) {
 			if (openDropdown != OpenDropdown.NONE) {
 				openDropdown = OpenDropdown.NONE;
 				return true;
@@ -924,7 +924,7 @@ public final class ManualRunEntryScreen extends Screen {
 	@Override
 	public void onClose() {
 		if (minecraft != null) {
-			minecraft.setScreen(parent);
+			minecraft.gui.setScreen(parent);
 		}
 	}
 

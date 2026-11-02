@@ -40,13 +40,13 @@ You can also click the HUD directly:
 
 ## Installation
 
-1. Install [Fabric Loader](https://fabricmc.net/use/installer/) for Minecraft 1.21.11 or 26.1.2
+1. Install [Fabric Loader](https://fabricmc.net/use/installer/) for Minecraft 26.2 or 26.3
 2. Install [Fabric API](https://modrinth.com/mod/fabric-api)
 3. Drop the matching `DungeonRunTracker` jar into your `mods/` folder
 
 ## Requirements
 
-- Minecraft 1.21.11 or 26.1.2
-- Fabric Loader 0.19.2+ for 1.21.11, or 0.19.3+ for 26.1.2
+- Minecraft 26.2 or 26.3
+- Fabric Loader 0.19.3+ for 26.2, or 0.19.5+ for 26.3
 - Fabric API
-- Java 21+ for 1.21.11, or Java 25+ for 26.1.2
+- Java 25+

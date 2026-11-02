@@ -20,7 +20,7 @@ import net.minecraft.client.input.CharacterEvent;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
-import org.lwjgl.glfw.GLFW;
+import dev.vy.drt.client.DrtInputKeys;
 
 public final class DrtCustomOverlayEditorScreen extends Screen {
 	private static final int PANEL_BG = 0xF00D0D18;
@@ -615,7 +615,7 @@ public final class DrtCustomOverlayEditorScreen extends Screen {
 
 	private void goBack() {
 		if (minecraft != null && parent != null) {
-			minecraft.setScreen(parent);
+			minecraft.gui.setScreen(parent);
 			return;
 		}
 		super.onClose();
@@ -632,7 +632,7 @@ public final class DrtCustomOverlayEditorScreen extends Screen {
 			return;
 		}
 		if (minecraft != null) {
-			minecraft.setScreen(null);
+			minecraft.gui.setScreen(null);
 			return;
 		}
 		super.onClose();
@@ -668,48 +668,48 @@ public final class DrtCustomOverlayEditorScreen extends Screen {
 	public boolean keyPressed(KeyEvent event) {
 		if (editorFocused) {
 			int key = event.key();
-			if (key == GLFW.GLFW_KEY_BACKSPACE) {
+			if (key == DrtInputKeys.KEY_BACKSPACE) {
 				deleteBefore();
 				return true;
 			}
-			if (key == GLFW.GLFW_KEY_DELETE) {
+			if (key == DrtInputKeys.KEY_DELETE) {
 				deleteAfter();
 				return true;
 			}
-			if (key == GLFW.GLFW_KEY_LEFT) {
+			if (key == DrtInputKeys.KEY_LEFT) {
 				moveLeft();
 				return true;
 			}
-			if (key == GLFW.GLFW_KEY_RIGHT) {
+			if (key == DrtInputKeys.KEY_RIGHT) {
 				moveRight();
 				return true;
 			}
-			if (key == GLFW.GLFW_KEY_UP) {
+			if (key == DrtInputKeys.KEY_UP) {
 				moveUp();
 				return true;
 			}
-			if (key == GLFW.GLFW_KEY_DOWN) {
+			if (key == DrtInputKeys.KEY_DOWN) {
 				moveDown();
 				return true;
 			}
-			if (key == GLFW.GLFW_KEY_HOME) {
+			if (key == DrtInputKeys.KEY_HOME) {
 				moveHome();
 				return true;
 			}
-			if (key == GLFW.GLFW_KEY_END) {
+			if (key == DrtInputKeys.KEY_END) {
 				moveEnd();
 				return true;
 			}
-			if (key == GLFW.GLFW_KEY_ENTER || key == GLFW.GLFW_KEY_KP_ENTER) {
+			if (key == DrtInputKeys.KEY_ENTER || key == DrtInputKeys.KEY_KP_ENTER) {
 				insertText("\n");
 				return true;
 			}
-			if (key == GLFW.GLFW_KEY_ESCAPE) {
+			if (key == DrtInputKeys.KEY_ESCAPE) {
 				closeFully();
 				return true;
 			}
 		}
-		if (event.key() == GLFW.GLFW_KEY_ESCAPE) {
+		if (event.key() == DrtInputKeys.KEY_ESCAPE) {
 			closeFully();
 			return true;
 		}

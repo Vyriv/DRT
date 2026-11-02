@@ -23,7 +23,7 @@ public final class TabReader {
 		ClientPacketListener connection = client.getConnection();
 		if (connection == null) return List.of();
 
-		PlayerTabOverlay overlay = client.gui.getTabList();
+		PlayerTabOverlay overlay = client.gui.hud.getTabList();
 		PlayerTabOverlayAccessor accessor = (PlayerTabOverlayAccessor) overlay;
 		List<String> lines = new ArrayList<>();
 		appendComponentLines(lines, accessor.drt$getHeader());
