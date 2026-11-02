@@ -7,7 +7,7 @@ import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
-import org.lwjgl.glfw.GLFW;
+import dev.vy.drt.client.DrtInputKeys;
 
 public final class DungeonTrackerPositionScreen extends Screen {
 	private final DungeonRunTrackerFeature trackerFeature;
@@ -119,7 +119,7 @@ public final class DungeonTrackerPositionScreen extends Screen {
 	public void onClose() {
 		trackerFeature.setHudPosition(Minecraft.getInstance(), trackerFeature.getHudX(), trackerFeature.getHudY(), true);
 		if (minecraft != null && parent != null) {
-			minecraft.setScreen(parent);
+			minecraft.gui.setScreen(parent);
 			return;
 		}
 		super.onClose();
@@ -136,7 +136,7 @@ public final class DungeonTrackerPositionScreen extends Screen {
 			return;
 		}
 		if (minecraft != null) {
-			minecraft.setScreen(null);
+			minecraft.gui.setScreen(null);
 			return;
 		}
 		super.onClose();
@@ -144,23 +144,23 @@ public final class DungeonTrackerPositionScreen extends Screen {
 
 	@Override
 	public boolean keyPressed(KeyEvent event) {
-		if (event.key() == GLFW.GLFW_KEY_EQUAL || event.key() == GLFW.GLFW_KEY_KP_ADD) {
+		if (event.key() == DrtInputKeys.KEY_EQUAL || event.key() == DrtInputKeys.KEY_KP_ADD) {
 			trackerFeature.growHudScale(Minecraft.getInstance(), true, false);
 			return true;
 		}
-		if (event.key() == GLFW.GLFW_KEY_MINUS || event.key() == GLFW.GLFW_KEY_KP_SUBTRACT) {
+		if (event.key() == DrtInputKeys.KEY_MINUS || event.key() == DrtInputKeys.KEY_KP_SUBTRACT) {
 			trackerFeature.shrinkHudScale(Minecraft.getInstance(), true, false);
 			return true;
 		}
-		if (event.key() == GLFW.GLFW_KEY_0 || event.key() == GLFW.GLFW_KEY_KP_0) {
+		if (event.key() == DrtInputKeys.KEY_0 || event.key() == DrtInputKeys.KEY_KP_0) {
 			trackerFeature.setHudScale(Minecraft.getInstance(), 1.0F, true, false);
 			return true;
 		}
-		if (event.key() == GLFW.GLFW_KEY_ESCAPE) {
+		if (event.key() == DrtInputKeys.KEY_ESCAPE) {
 			closeFully();
 			return true;
 		}
-		if (event.key() == GLFW.GLFW_KEY_ENTER || event.key() == GLFW.GLFW_KEY_KP_ENTER) {
+		if (event.key() == DrtInputKeys.KEY_ENTER || event.key() == DrtInputKeys.KEY_KP_ENTER) {
 			closeFully();
 			return true;
 		}

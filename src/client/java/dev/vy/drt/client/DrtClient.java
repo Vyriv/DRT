@@ -63,7 +63,7 @@ public final class DrtClient implements ClientModInitializer {
 
 			if (!autoOpenedOnboardingThisSession
 				&& client.player != null
-				&& client.screen == null
+				&& client.gui.screen() == null
 				&& !DrtConfigManager.getConfig().onboardingComplete) {
 				autoOpenedOnboardingThisSession = true;
 				openOnboardingNextTick = true;
@@ -86,7 +86,7 @@ public final class DrtClient implements ClientModInitializer {
 
 			if (openOnboardingNextTick) {
 				openOnboardingNextTick = false;
-				client.setScreen(new DrtOnboardingScreen(tracker));
+				client.gui.setScreen(new DrtOnboardingScreen(tracker));
 				return;
 			}
 
@@ -94,12 +94,12 @@ public final class DrtClient implements ClientModInitializer {
 				openLootScreenNextTick = false;
 				DungeonFloor f = tracker.getPendingLootScreenFloorFilter();
 				String s = tracker.getPendingLootScreenSearchFilter();
-				client.setScreen(new DungeonLootScreen(f, s));
+				client.gui.setScreen(new DungeonLootScreen(f, s));
 			}
 
 			if (openMoveBoxNextTick) {
 				openMoveBoxNextTick = false;
-				client.setScreen(new DungeonTrackerPositionScreen(tracker));
+				client.gui.setScreen(new DungeonTrackerPositionScreen(tracker));
 			}
 		});
 

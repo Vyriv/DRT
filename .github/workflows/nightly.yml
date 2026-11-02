@@ -28,31 +28,31 @@ jobs:
       - name: Set nightly mod_version
         run: |
           STAMP="${{ steps.stamp.outputs.value }}"
-          sed -i "s/^mod_version=.*/mod_version=nightly-${STAMP}+26.1.2/" versions/26.1.2/gradle.properties
           sed -i "s/^mod_version=.*/mod_version=nightly-${STAMP}+26.2/" versions/26.2/gradle.properties
-          echo "mod_version -> nightly-${STAMP}+26.1.2 / nightly-${STAMP}+26.2"
+          sed -i "s/^mod_version=.*/mod_version=nightly-${STAMP}+26.3/" versions/26.3/gradle.properties
+          echo "mod_version -> nightly-${STAMP}+26.2 / nightly-${STAMP}+26.3"
 
       - name: Build active targets
         run: |
           chmod +x gradlew
-          ./gradlew :26.1.2:build :26.2:build --no-daemon
+          ./gradlew :26.2:build :26.3:build --no-daemon
 
       - name: Resolve jar paths
         id: jars
         run: |
           STAMP="${{ steps.stamp.outputs.value }}"
-          J261="versions/26.1.2/build/libs/DungeonRunTracker-nightly-${STAMP}+26.1.2.jar"
           J262="versions/26.2/build/libs/DungeonRunTracker-nightly-${STAMP}+26.2.jar"
-          test -f "$J261"
+          J263="versions/26.3/build/libs/DungeonRunTracker-nightly-${STAMP}+26.3.jar"
           test -f "$J262"
-          echo "j261=$J261" >> "$GITHUB_OUTPUT"
+          test -f "$J263"
           echo "j262=$J262" >> "$GITHUB_OUTPUT"
+          echo "j263=$J263" >> "$GITHUB_OUTPUT"
 
       - name: Upload Actions artifacts
         uses: actions/upload-artifact@v4
         with:
           name: drt-nightly
           path: |
-            ${{ steps.jars.outputs.j261 }}
             ${{ steps.jars.outputs.j262 }}
+            ${{ steps.jars.outputs.j263 }}
           if-no-files-found: error

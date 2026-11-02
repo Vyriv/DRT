@@ -711,7 +711,7 @@ public final class DungeonRunTrackerFeature {
 			pose.popMatrix();
 		}
 
-		if (client.screen != null && !moveMode) {
+		if (client.gui.screen() != null && !moveMode) {
 			OverlayLayout.HitResult hit = hitTestHud(client, mouseX, mouseY, shouldShowResetLine(client, false));
 			if (hit.hit()) {
 				switch (hit.hover()) {
@@ -903,7 +903,7 @@ public final class DungeonRunTrackerFeature {
 		// Fancy Menu is Croesus reward-chest presentation only. Do not replace mid-dungeon
 		// chests, Kuudra free/paid, or unrelated container screens.
 		if (!isHubCroesusRewardBrowsing()) return false;
-		if (!(client.screen instanceof AbstractContainerScreen<?> screen)) return false;
+		if (!(client.gui.screen() instanceof AbstractContainerScreen<?> screen)) return false;
 		String normalizedTitle = normalize(screen.getTitle().getString());
 		String canonicalTitle = canonicalRewardChestTitle(normalizedTitle);
 		if (canonicalTitle == null || !isCatacombsRewardChest(canonicalTitle)) return false;
@@ -1235,7 +1235,7 @@ public final class DungeonRunTrackerFeature {
 
 	/** True when the DRT HUD overlay should consume mouse clicks. */
 	private boolean isHudClickScreen(Minecraft client) {
-		return client != null && client.screen instanceof InventoryScreen;
+		return client != null && client.gui.screen() instanceof InventoryScreen;
 	}
 
 	private boolean handleChestKeyModifierClick(Minecraft client, int mouseX, int mouseY) {
@@ -1304,7 +1304,7 @@ public final class DungeonRunTrackerFeature {
 			long now = System.currentTimeMillis();
 			if (now - lastChestTitleClickMillis < 500 && data.chestTitle.equals(lastChestTitleClicked)) {
 				// Double click: Open chest
-				if (client.screen instanceof AbstractContainerScreen<?> screen) {
+				if (client.gui.screen() instanceof AbstractContainerScreen<?> screen) {
 					String normalizedTitle = normalize(screen.getTitle().getString());
 					if (isCroesusChestListTitle(normalizedTitle)) {
 						List<CroesusChestRow> rows = currentCroesusChestRows(client);
@@ -1384,7 +1384,7 @@ public final class DungeonRunTrackerFeature {
 			cancelAutoOpenRewardChest();
 			return;
 		}
-		if (!(client.screen instanceof AbstractContainerScreen<?> screen) || client.player == null || client.gameMode == null) return;
+		if (!(client.gui.screen() instanceof AbstractContainerScreen<?> screen) || client.player == null || client.gameMode == null) return;
 		if (resolveCanonicalRewardChestTitle(normalize(screen.getTitle().getString()), client.player.containerMenu) == null) return;
 
 		int slotIndex = findOpenRewardChestSlotIndex(client.player.containerMenu);
@@ -1447,7 +1447,7 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private CroesusChestRow croesusOverlayRowAt(Minecraft client, int mouseX, int mouseY) {
-		if (!(client.screen instanceof AbstractContainerScreen<?> screen)) return null;
+		if (!(client.gui.screen() instanceof AbstractContainerScreen<?> screen)) return null;
 		String normalizedTitle = normalize(screen.getTitle().getString());
 		if (!isCroesusChestListTitle(normalizedTitle)) return null;
 
@@ -1800,7 +1800,7 @@ public final class DungeonRunTrackerFeature {
 		clearFancyMenuHitTargets();
 		if (!isFancyRewardMenuActive(client)) return false;
 
-		AbstractContainerScreen<?> screen = (AbstractContainerScreen<?>) client.screen;
+		AbstractContainerScreen<?> screen = (AbstractContainerScreen<?>) client.gui.screen();
 		String normalizedTitle = normalize(screen.getTitle().getString());
 		String canonicalTitle = canonicalRewardChestTitle(normalizedTitle);
 		OverlayChestData data = currentOverlayChestData(client);
@@ -2147,7 +2147,7 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private boolean extractRenderStateCroesusChestOverlay(Minecraft client, GuiGraphicsExtractor g, int mouseX, int mouseY) {
-		if (!(client.screen instanceof AbstractContainerScreen<?> screen)) return false;
+		if (!(client.gui.screen() instanceof AbstractContainerScreen<?> screen)) return false;
 		String normalizedTitle = normalize(screen.getTitle().getString());
 		if (!isCroesusChestListTitle(normalizedTitle)) return false;
 
@@ -2214,7 +2214,7 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private void extractRenderStateCroesusChestSlotHighlights(Minecraft client, GuiGraphicsExtractor g) {
-		if (!(client.screen instanceof AbstractContainerScreen<?> screen)) return;
+		if (!(client.gui.screen() instanceof AbstractContainerScreen<?> screen)) return;
 		if (!isCroesusChestListTitle(normalize(screen.getTitle().getString()))) return;
 		List<CroesusChestRow> rows = currentCroesusChestRows(client);
 		if (rows.isEmpty()) return;
@@ -2272,7 +2272,7 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private List<CroesusChestRow> currentCroesusChestRows(Minecraft client) {
-		if (!(client.screen instanceof AbstractContainerScreen<?> screen) || client.player == null) return List.of();
+		if (!(client.gui.screen() instanceof AbstractContainerScreen<?> screen) || client.player == null) return List.of();
 		AbstractContainerMenu menu = client.player.containerMenu;
 		if (menu == null) return List.of();
 
@@ -2544,7 +2544,7 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private ScreenBounds currentContainerBounds(Minecraft client) {
-		if (!(client.screen instanceof AbstractContainerScreen<?> screen)) {
+		if (!(client.gui.screen() instanceof AbstractContainerScreen<?> screen)) {
 			int width = 176;
 			int height = 166;
 			return new ScreenBounds((client.getWindow().getGuiScaledWidth() - width) / 2, (client.getWindow().getGuiScaledHeight() - height) / 2, width, height);
@@ -2576,7 +2576,7 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private List<CroesusMainMenuRunSlot> currentCroesusMainMenuRunSlots(Minecraft client) {
-		if (!(client.screen instanceof AbstractContainerScreen<?> screen) || client.player == null) return List.of();
+		if (!(client.gui.screen() instanceof AbstractContainerScreen<?> screen) || client.player == null) return List.of();
 		String normalizedTitle = normalize(screen.getTitle().getString());
 		if (!isCroesusMainMenuTitle(normalizedTitle)) return List.of();
 
@@ -2822,13 +2822,13 @@ public final class DungeonRunTrackerFeature {
 	/** Glass panes, terracotta fillers, Close / Go Back, Eyes of Ender / arrows for paging. */
 	private boolean isCroesusMainMenuChromeStack(ItemStack stack) {
 		if (stack == null || stack.isEmpty()) return true;
-		if (stack.is(Items.LIGHT_GRAY_STAINED_GLASS_PANE)
-				|| stack.is(Items.GRAY_STAINED_GLASS_PANE)
-				|| stack.is(Items.BLACK_STAINED_GLASS_PANE)
+		if (stack.is(Items.STAINED_GLASS_PANE.lightGray())
+				|| stack.is(Items.STAINED_GLASS_PANE.gray())
+				|| stack.is(Items.STAINED_GLASS_PANE.black())
 				|| stack.is(Items.BARRIER)
 				|| stack.is(Items.ARROW)
 				|| stack.is(Items.ENDER_EYE)
-				|| stack.is(Items.RED_TERRACOTTA)
+				|| stack.is(Items.DYED_TERRACOTTA.red())
 				|| stack.is(Items.TERRACOTTA)
 				|| stack.is(Items.AIR)) {
 			return true;
@@ -2847,7 +2847,7 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private OverlayChestData currentOverlayChestData(Minecraft client) {
-		if (!(client.screen instanceof AbstractContainerScreen<?> screen)) return null;
+		if (!(client.gui.screen() instanceof AbstractContainerScreen<?> screen)) return null;
 		String normalizedTitle = normalize(screen.getTitle().getString());
 		AbstractContainerMenu liveMenu = client.player == null ? null : client.player.containerMenu;
 		String canonicalTitle = resolveCanonicalRewardChestTitle(normalizedTitle, liveMenu);
@@ -3473,7 +3473,7 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private void captureRewardChestCosts(Minecraft client) {
-		if (!(client.screen instanceof AbstractContainerScreen<?> screen) || client.player == null) return;
+		if (!(client.gui.screen() instanceof AbstractContainerScreen<?> screen) || client.player == null) return;
 
 		String normalizedTitle = normalize(screen.getTitle().getString());
 		AbstractContainerMenu menu = client.player.containerMenu;
@@ -3687,7 +3687,7 @@ public final class DungeonRunTrackerFeature {
 		// Prefix matching "GOLD " false-positives Gold Ingot / Emerald Blade / etc.
 		if (TIER_NAME_TO_CHEST_TITLE.containsKey(chestTitle)) {
 			Minecraft client = Minecraft.getInstance();
-			if (client.screen instanceof AbstractContainerScreen<?> screen) {
+			if (client.gui.screen() instanceof AbstractContainerScreen<?> screen) {
 				String screenTitle = normalize(screen.getTitle().getString());
 				if (isCroesusChestListTitle(screenTitle) || isRewardsMenuTitle(screenTitle)) {
 					return TIER_NAME_TO_CHEST_TITLE.get(chestTitle);
@@ -3944,8 +3944,8 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private void captureOpenedRewardChestLootIfViewing(Minecraft client, long now) {
-		if (!(client.screen instanceof AbstractContainerScreen<?>) || client.player == null) return;
-		String canonical = canonicalRewardChestTitle(normalize(client.screen.getTitle().getString()));
+		if (!(client.gui.screen() instanceof AbstractContainerScreen<?>) || client.player == null) return;
+		String canonical = canonicalRewardChestTitle(normalize(client.gui.screen().getTitle().getString()));
 		if (canonical == null || !pendingLootChestAssigned) return;
 		if (isRewardChestPreviewScreen(client.player.containerMenu)) return;
 		// Same chest session only: do not merge a different title into pending.
@@ -3957,8 +3957,8 @@ public final class DungeonRunTrackerFeature {
 
 	private void captureOpenedRewardChestLoot(Minecraft client, AbstractContainerMenu menu, long now) {
 		if (client == null || client.player == null || menu == null || !pendingLootChestAssigned) return;
-		if (client.screen instanceof AbstractContainerScreen<?>) {
-			String canonical = canonicalRewardChestTitle(normalize(client.screen.getTitle().getString()));
+		if (client.gui.screen() instanceof AbstractContainerScreen<?>) {
+			String canonical = canonicalRewardChestTitle(normalize(client.gui.screen().getTitle().getString()));
 			if (canonical == null) return;
 			if (!toDisplayChestTitle(canonical).equalsIgnoreCase(pendingLootChestTitle)) return;
 		}
@@ -3989,8 +3989,8 @@ public final class DungeonRunTrackerFeature {
 
 	private boolean isRewardChestUiStack(ItemStack stack) {
 		if (stack == null || stack.isEmpty()) return true;
-		if (stack.is(Items.LIGHT_GRAY_STAINED_GLASS_PANE) || stack.is(Items.GRAY_STAINED_GLASS_PANE)
-				|| stack.is(Items.BLACK_STAINED_GLASS_PANE) || stack.is(Items.BARRIER)
+		if (stack.is(Items.STAINED_GLASS_PANE.lightGray()) || stack.is(Items.STAINED_GLASS_PANE.gray())
+				|| stack.is(Items.STAINED_GLASS_PANE.black()) || stack.is(Items.BARRIER)
 				|| stack.is(Items.AIR)) return true;
 		String name = normalize(cleanText(stack.getHoverName().getString()));
 		return name.contains("STAINED GLASS")
@@ -4120,7 +4120,7 @@ public final class DungeonRunTrackerFeature {
 	// Mage/Barbarian shop key offers show the player's real price (emissary, Seal, etc.).
 	// Slots can fill a moment after the shop opens, so keep rescanning while it stays open.
 	private void captureKuudraKeyShopCosts(Minecraft client, long now) {
-		if (!(client.screen instanceof AbstractContainerScreen<?> screen) || client.player == null) return;
+		if (!(client.gui.screen() instanceof AbstractContainerScreen<?> screen) || client.player == null) return;
 		String title = normalize(screen.getTitle().getString());
 		if (!title.equals("MAGE SHOP") && !title.equals("BARBARIAN SHOP")) return;
 		if (now - lastKuudraKeyShopScanMillis < KUUDRA_KEY_SHOP_SCAN_INTERVAL_MS) return;
@@ -4452,7 +4452,7 @@ public final class DungeonRunTrackerFeature {
 			return;
 		}
 
-		if (!(client.screen instanceof InventoryScreen)) {
+		if (!(client.gui.screen() instanceof InventoryScreen)) {
 			if (!leftMouseDown && dragging && positionDirty) saveHudPosition();
 			dragging = false;
 			positionDirty = false;
@@ -4518,7 +4518,7 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private boolean shouldShowResetLine(Minecraft client, boolean moveMode) {
-		return !moveMode && client != null && client.screen instanceof InventoryScreen;
+		return !moveMode && client != null && client.gui.screen() instanceof InventoryScreen;
 	}
 
 	private double toHudLocalX(double mouseX) {
@@ -5785,7 +5785,7 @@ public final class DungeonRunTrackerFeature {
 		sb.append('\n');
 		sb.append("timeUtc=").append(java.time.Instant.ofEpochMilli(now)).append('\n');
 		sb.append("modVersion=").append(drtModVersion()).append('\n');
-		sb.append("minecraft=").append(client.getVersionType()).append(' ').append(minecraftVersionName()).append('\n');
+		sb.append("minecraft=").append(net.minecraft.SharedConstants.getCurrentVersion().stable() ? "release" : "snapshot").append(' ').append(minecraftVersionName()).append('\n');
 		sb.append("server=").append(connectedServerLabel(client)).append('\n');
 		sb.append("player=").append(playerName(client)).append('\n');
 		sb.append('\n');

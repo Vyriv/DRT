@@ -14,7 +14,7 @@ import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
-import org.lwjgl.glfw.GLFW;
+import dev.vy.drt.client.DrtInputKeys;
 
 public final class DrtOverlayEditorScreen extends Screen {
 	private static final int PANEL_BG = 0xF00D0D18;
@@ -234,12 +234,12 @@ public final class DrtOverlayEditorScreen extends Screen {
 		x += backW + gap;
 		drawButton(g, x, y, moveW, BTN_H, "Move Overlay", false, () -> {
 			Minecraft client = Minecraft.getInstance();
-			client.setScreen(new DungeonTrackerPositionScreen(trackerFeature, this));
+			client.gui.setScreen(new DungeonTrackerPositionScreen(trackerFeature, this));
 		}, "Move the active overlay on screen");
 		x += moveW + gap;
 		drawButton(g, x, y, customW, BTN_H, "Custom Layout", trackerFeature.getOverlayPreset() == OverlayPreset.CUSTOM, () -> {
 			Minecraft client = Minecraft.getInstance();
-			client.setScreen(new DrtCustomOverlayEditorScreen(trackerFeature, this));
+			client.gui.setScreen(new DrtCustomOverlayEditorScreen(trackerFeature, this));
 		}, "Open the custom overlay text editor");
 
 		int applyX = ox + winW - PAD - applyW;
@@ -311,7 +311,7 @@ public final class DrtOverlayEditorScreen extends Screen {
 
 	private void goBack() {
 		if (minecraft != null && parent != null) {
-			minecraft.setScreen(parent);
+			minecraft.gui.setScreen(parent);
 			return;
 		}
 		super.onClose();
@@ -324,7 +324,7 @@ public final class DrtOverlayEditorScreen extends Screen {
 			return;
 		}
 		if (minecraft != null) {
-			minecraft.setScreen(null);
+			minecraft.gui.setScreen(null);
 			return;
 		}
 		super.onClose();
@@ -346,7 +346,7 @@ public final class DrtOverlayEditorScreen extends Screen {
 
 	@Override
 	public boolean keyPressed(KeyEvent event) {
-		if (event.key() == GLFW.GLFW_KEY_ESCAPE) {
+		if (event.key() == DrtInputKeys.KEY_ESCAPE) {
 			closeFully();
 			return true;
 		}

@@ -26,7 +26,7 @@ import net.minecraft.world.item.Items;
 import net.minecraft.world.item.component.DyedItemColor;
 import net.minecraft.network.chat.Style;
 import net.minecraft.network.chat.TextColor;
-import org.lwjgl.glfw.GLFW;
+import dev.vy.drt.client.DrtInputKeys;
 
 public final class DungeonLootScreen extends Screen {
 	private static final double PANEL_W_RATIO = 0.72D;
@@ -171,7 +171,7 @@ public final class DungeonLootScreen extends Screen {
 
 	@Override
 	public boolean keyPressed(KeyEvent event) {
-		if (event.key() == GLFW.GLFW_KEY_ESCAPE) {
+		if (event.key() == DrtInputKeys.KEY_ESCAPE) {
 			if (isDeleteConfirming()) {
 				clearDeleteConfirm();
 				return true;
@@ -179,7 +179,7 @@ public final class DungeonLootScreen extends Screen {
 			onClose();
 			return true;
 		}
-		if (!selectedLootKey.isBlank() && event.key() == GLFW.GLFW_KEY_BACKSPACE && !lootSearchBuffer.isEmpty()) {
+		if (!selectedLootKey.isBlank() && event.key() == DrtInputKeys.KEY_BACKSPACE && !lootSearchBuffer.isEmpty()) {
 			lootSearchBuffer = lootSearchBuffer.substring(0, lootSearchBuffer.length() - 1);
 			searchLootRows();
 			return true;
@@ -304,7 +304,7 @@ public final class DungeonLootScreen extends Screen {
 		drawButton(g, addX, addY, addSize, addSize, addHov, "+");
 		clickTargets.add(new ClickTarget(addX, addY, addSize, addSize, 0, () -> {
 			if (minecraft != null) {
-				minecraft.setScreen(new ManualRunEntryScreen(this));
+				minecraft.gui.setScreen(new ManualRunEntryScreen(this));
 			}
 		}));
 
@@ -317,7 +317,7 @@ public final class DungeonLootScreen extends Screen {
 				if (minecraft == null) return;
 				DungeonRunRecord record = tabHistory.get(selectedRunIndex);
 				if (record != null) {
-					minecraft.setScreen(new ManualRunEntryScreen(this, record));
+					minecraft.gui.setScreen(new ManualRunEntryScreen(this, record));
 				}
 			}));
 		}
@@ -402,7 +402,7 @@ public final class DungeonLootScreen extends Screen {
 			tableScroll = 0;
 		}));
 		if (idx >= 0) {
-			clickTargets.add(new ClickTarget(listX, rowY, listW, ROW_H, GLFW.GLFW_MOUSE_BUTTON_RIGHT, () -> handleRunRowRightClick(idx)));
+			clickTargets.add(new ClickTarget(listX, rowY, listW, ROW_H, DrtInputKeys.MOUSE_BUTTON_RIGHT, () -> handleRunRowRightClick(idx)));
 		}
 	}
 
@@ -545,8 +545,8 @@ public final class DungeonLootScreen extends Screen {
 	}
 
 	private void addLootRowTargets(DisplayRow row, int rowY) {
-		clickTargets.add(new ClickTarget(tableX, rowY, tableW, ROW_H, GLFW.GLFW_MOUSE_BUTTON_LEFT, () -> focusLootRow(row)));
-		clickTargets.add(new ClickTarget(tableX, rowY, tableW, ROW_H, GLFW.GLFW_MOUSE_BUTTON_RIGHT, () -> copyLootShareMessage(row)));
+		clickTargets.add(new ClickTarget(tableX, rowY, tableW, ROW_H, DrtInputKeys.MOUSE_BUTTON_LEFT, () -> focusLootRow(row)));
+		clickTargets.add(new ClickTarget(tableX, rowY, tableW, ROW_H, DrtInputKeys.MOUSE_BUTTON_RIGHT, () -> copyLootShareMessage(row)));
 	}
 
 	private void focusLootRow(DisplayRow row) {
