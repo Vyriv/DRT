@@ -3,6 +3,8 @@
 	"package": "dev.vy.drt.mixin",
 	"compatibilityLevel": "JAVA_21",
 	"client": [
+    "ConnectScreenSessionAuthMixin",
+    "ClientHandshakeSessionAuthMixin",
 		"AbstractContainerScreenAccessor",
 		"AbstractContainerScreenCroesusHighlightMixin",
 		"AbstractContainerScreenFancyMenuMixin",

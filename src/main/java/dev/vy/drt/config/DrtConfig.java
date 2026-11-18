@@ -12,7 +12,7 @@ public final class DrtConfig {
 	public boolean trackingEnabled = true;
 	/** Croesus chest overlay and slot highlights. */
 	public boolean croesusOverlayEnabled = true;
-	/** Replaces Wood–Bedrock reward chest inventories with DRT's fancy reward panel. Default off. */
+	/** Replaces Wood-Bedrock reward chest inventories with DRT's fancy reward panel. Default off. */
 	public boolean fancyMenuEnabled = false;
 	/** When false, essence items contribute 0 to profit calculations. */
 	public boolean essenceCountsTowardProfit = true;
@@ -30,7 +30,13 @@ public final class DrtConfig {
 	public List<DungeonRunRecord> runHistory = new ArrayList<>();
 	/** Idempotent committed run completions; floorRunCounts is the compatibility cache. */
 	public List<DungeonRunCompletionRecord> runCompletions = new ArrayList<>();
+	/** Offers received before their completion event, keyed by the stable run session id. */
+	public Map<String, List<DungeonChestOffer>> pendingChestOffers = new LinkedHashMap<>();
 	public int nextChestLogNumber = 1;
+	/**
+	 * HUD / loot floor filter. null or blank = All, {@code AUTO} = follow last run,
+	 * otherwise a {@link DungeonFloor} name (F1-K5).
+	 */
 	public String selectedFloor = null;
 	public int witherEssenceValuePer = 2600;
 	public int undeadEssenceValuePer = 722;
@@ -52,4 +58,22 @@ public final class DrtConfig {
 	public boolean coolForgedEnabled = false;
 	public int coolForgedLevel = 1;
 	public String bazaarPriceMode = "INSTANT";
+	/** Uploads completed runs and opened chests to api.vyriv.dev. On by default; a stored choice always wins. */
+	public boolean statsSyncEnabled = true;
+	/** When stats sync was last turned on; older records only upload through an explicit history import. */
+	public long statsSyncSinceEpochMillis = 0L;
+	/** Selected theme name for the future theme engine. Custom themes are discovery-only for now. */
+	public String selectedTheme = "Default";
+
+	/**
+	 * A config without a stored sync choice gets the default (on) and syncs from the moment it is
+	 * loaded, so history saved before that only uploads through an explicit import.
+	 *
+	 * @return true when the boundary was set and the config needs saving
+	 */
+	public boolean startStatsSyncBoundary(long nowMillis) {
+		if (!statsSyncEnabled || statsSyncSinceEpochMillis > 0L) return false;
+		statsSyncSinceEpochMillis = nowMillis;
+		return true;
+	}
 }

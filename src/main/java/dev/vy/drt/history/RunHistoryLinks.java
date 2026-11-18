@@ -20,8 +20,9 @@ import java.util.Set;
 public final class RunHistoryLinks {
 	/** One normal open plus one with a Dungeon Chest Key. */
 	public static final int MAX_CHESTS_PER_RUN = 2;
+	private static final long RECENT_REATTACH_WINDOW_MS = 15L * 60L * 1000L;
 
-	public enum Source { LIVE, CROESUS_UNIQUE, LEGACY_EXACT, MANUAL, NONE }
+	public enum Source { LIVE, CROESUS_UNIQUE, RECOVERED, LEGACY_EXACT, MANUAL, NONE }
 
 	public enum TimeSource { OFFICIAL, MEASURED, MANUAL }
 
@@ -76,12 +77,37 @@ public final class RunHistoryLinks {
 		Source source = switch (record.runLinkSource) {
 			case DungeonRunRecord.LINK_LIVE -> Source.LIVE;
 			case DungeonRunRecord.LINK_CROESUS_UNIQUE -> Source.CROESUS_UNIQUE;
+			case DungeonRunRecord.LINK_RECOVERED -> Source.RECOVERED;
 			default -> Source.NONE;
 		};
-		if (source == Source.NONE) return Link.none("Recorded without a provable run");
+		if (source == Source.NONE) {
+			Link reattached = replacementSessionLink(record, bySession.values());
+			return reattached == null ? Link.none("Recorded without a provable run") : reattached;
+		}
 		DungeonRunCompletionRecord completion = bySession.get(nullToEmpty(record.linkedRunId));
 		if (completion == null) return Link.none("Linked run is no longer recorded");
 		return new Link(source, completion.runSessionId, completion, null);
+	}
+
+	private static Link replacementSessionLink(DungeonRunRecord record, java.util.Collection<DungeonRunCompletionRecord> completions) {
+		String instance = trackingInstance(record.runSessionId);
+		if (instance.isBlank() || record.timestampEpochMillis <= 0L) return null;
+		DungeonRunCompletionRecord match = null;
+		for (DungeonRunCompletionRecord completion : completions) {
+			if (completion == null || !instance.equals(trackingInstance(completion.runSessionId))) continue;
+			if (!sameFloor(record.floor, completion.floor)) continue;
+			long age = record.timestampEpochMillis - completion.completedAtEpochMillis;
+			if (age < 0L || age > RECENT_REATTACH_WINDOW_MS) continue;
+			if (match != null) return null;
+			match = completion;
+		}
+		return match == null ? null : new Link(Source.LIVE, match.runSessionId, match, "Recovered replacement runtime session");
+	}
+
+	private static String trackingInstance(String runSessionId) {
+		String value = nullToEmpty(runSessionId);
+		int marker = value.lastIndexOf("-run-");
+		return marker <= 0 ? "" : value.substring(0, marker);
 	}
 
 	/**
@@ -111,7 +137,11 @@ public final class RunHistoryLinks {
 	private static void rejectOverfullRuns(Map<DungeonRunRecord, Link> links) {
 		Map<String, List<DungeonRunRecord>> byRun = new HashMap<>();
 		for (Map.Entry<DungeonRunRecord, Link> entry : links.entrySet()) {
-			if (entry.getValue().linked()) byRun.computeIfAbsent(entry.getValue().runId(), key -> new ArrayList<>()).add(entry.getKey());
+			// Stored Croesus/live/manual links are authoritative, including multiple purchased tiers.
+			// Only inferred legacy attachments are limited to the in-dungeon two-chest rule.
+			if (entry.getValue().linked() && entry.getValue().source() == Source.LEGACY_EXACT) {
+				byRun.computeIfAbsent(entry.getValue().runId(), key -> new ArrayList<>()).add(entry.getKey());
+			}
 		}
 		for (List<DungeonRunRecord> group : byRun.values()) {
 			if (group.size() <= MAX_CHESTS_PER_RUN && !hasDuplicateTier(group)) continue;

@@ -28,20 +28,22 @@ public abstract class AbstractContainerScreenCroesusHighlightMixin {
 		CallbackInfo ci
 	) {
 		DrtClient.extractCroesusSlotHighlights(Minecraft.getInstance(), graphics, mouseX, mouseY);
+		DrtClient.extractChestOverlay(Minecraft.getInstance(), graphics, mouseX, mouseY);
 	}
 	//? } else {
 	/*@Inject(
-		method = "renderContents(Lnet/minecraft/client/gui/GuiGraphics;IIF)V",
+		method = "renderContents(Lnet/minecraft/client/gui/GuiGraphicsExtractor;IIF)V",
 		at = @At("TAIL")
 	)
 	private void drt$extractCroesusSlotHighlights(
-		GuiGraphics graphics,
+		GuiGraphicsExtractor graphics,
 		int mouseX,
 		int mouseY,
 		float delta,
 		CallbackInfo ci
 	) {
 		DrtClient.extractCroesusSlotHighlights(Minecraft.getInstance(), graphics, mouseX, mouseY);
+		DrtClient.extractChestOverlay(Minecraft.getInstance(), graphics, mouseX, mouseY);
 	}
 	*///?}
 }

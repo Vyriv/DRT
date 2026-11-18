@@ -23,7 +23,7 @@ public final class TabReader {
 		ClientPacketListener connection = client.getConnection();
 		if (connection == null) return List.of();
 
-		PlayerTabOverlay overlay = client.gui.getTabList();
+		PlayerTabOverlay overlay = client.gui.hud.getTabList();
 		PlayerTabOverlayAccessor accessor = (PlayerTabOverlayAccessor) overlay;
 		List<String> lines = new ArrayList<>();
 		appendComponentLines(lines, accessor.drt$getHeader());
@@ -35,8 +35,27 @@ public final class TabReader {
 		return List.copyOf(lines);
 	}
 
+	/**
+	 * Tab entries as the server sent them. Party parsing reads this instead of getNameForDisplay, which
+	 * cosmetic and SkyBlock mods are free to rewrite.
+	 */
+	public static List<String> readServerLines(Minecraft client) {
+		if (client == null || client.gui == null) return List.of();
+		if (client.getConnection() == null) return List.of();
+		PlayerTabOverlayAccessor accessor = (PlayerTabOverlayAccessor) client.gui.hud.getTabList();
+		List<String> lines = new ArrayList<>();
+		for (PlayerInfo playerInfo : accessor.drt$getPlayerInfos()) {
+			Component display = playerInfo.getTabListDisplayName();
+			appendComponentLines(lines, display != null ? display : accessor.drt$getNameForDisplay(playerInfo));
+		}
+		return List.copyOf(lines);
+	}
+
 	public static List<String> readNormalizedLines(Minecraft client) {
-		List<String> rawLines = readRawLines(client);
+		return normalizeLines(readRawLines(client));
+	}
+
+	public static List<String> normalizeLines(List<String> rawLines) {
 		if (rawLines.isEmpty()) return List.of();
 		List<String> normalizedLines = new ArrayList<>(rawLines.size());
 		for (String rawLine : rawLines) {

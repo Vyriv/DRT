@@ -1,9 +1,9 @@
 package dev.vy.drt.client.tracker;
 
+import dev.vy.drt.client.render.DrtUiText;
 import dev.vy.drt.DungeonRunTracker;
 import dev.vy.drt.config.ChestCostBreakdown;
 import dev.vy.drt.config.ClearConfirmation;
-import dev.vy.drt.client.luck.LuckRunCapture;
 import dev.vy.drt.client.overlay.OverlayColors;
 import dev.vy.drt.client.overlay.OverlayFormat;
 import dev.vy.drt.client.overlay.OverlayLayout;
@@ -19,15 +19,22 @@ import dev.vy.drt.config.DrtConfigManager;
 import dev.vy.drt.config.DungeonChestOffer;
 import dev.vy.drt.config.DungeonFloor;
 import dev.vy.drt.config.DungeonLootEntry;
+import dev.vy.drt.config.DungeonPartyMember;
 import dev.vy.drt.config.DungeonRunCompletionRecord;
 import dev.vy.drt.config.DungeonRunRecord;
 import dev.vy.drt.config.KuudraKeyShopCost;
+import dev.vy.drt.config.PartyMemberReconciler;
 import dev.vy.drt.config.RunRecordCommitDecision;
 import dev.vy.drt.config.RunRecordDeduplicator;
-import dev.vy.drt.luck.capture.DungeonScoreReading;
-import dev.vy.drt.luck.capture.LiveRewardSession;
+import dev.vy.drt.history.CroesusChestLore;
+import dev.vy.drt.history.CroesusPartyParser;
+import dev.vy.drt.history.CroesusPartyRecovery;
+import dev.vy.drt.history.CroesusRunSelection;
+import dev.vy.drt.history.DungeonPartyTabParser;
+import dev.vy.drt.history.RunOwnership;
 import dev.vy.drt.mixin.AbstractContainerScreenAccessor;
 import dev.vy.drt.price.DungeonProfitPricing;
+import dev.vy.drt.price.KuudraKeyShopLore;
 import dev.vy.drt.price.LootFloorGuards;
 import dev.vy.drt.price.PriceCache;
 import dev.vy.drt.tracking.DetectionEvent;
@@ -37,18 +44,23 @@ import dev.vy.drt.tracking.DiagnosticIncident;
 import dev.vy.drt.tracking.DiagnosticRecorder;
 import dev.vy.drt.tracking.DiagnosticSeverity;
 import dev.vy.drt.tracking.EvidenceStrength;
+import dev.vy.drt.tracking.EnchantedBookIdentity;
+import dev.vy.drt.tracking.KuudraChatLines;
 import dev.vy.drt.tracking.LootIdentityStrength;
 import dev.vy.drt.tracking.LootObservation;
 import dev.vy.drt.tracking.ChestSession;
+import dev.vy.drt.tracking.ChestCostParser;
 import dev.vy.drt.tracking.ChestState;
+import dev.vy.drt.tracking.KismetChargeLedger;
 import dev.vy.drt.tracking.ResolvedLoot;
+import dev.vy.drt.tracking.RewardChestCapture;
+import dev.vy.drt.tracking.RewardMenuTitles;
 import dev.vy.drt.tracking.RewardChatBlock;
 import dev.vy.drt.tracking.RewardOpenRefusal;
 import dev.vy.drt.tracking.RunMode;
 import dev.vy.drt.tracking.RunSession;
 import dev.vy.drt.tracking.RunState;
 import dev.vy.drt.tracking.SlotOwner;
-import dev.vy.drt.tracking.SyntheticDiagnosticIncidentFactory;
 import dev.vy.drt.tracking.TrackingSession;
 import dev.vy.drt.tracking.TrackerInvariant;
 import java.awt.Desktop;
@@ -89,11 +101,13 @@ import net.minecraft.network.chat.Style;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.NbtOps;
+import net.minecraft.nbt.Tag;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.component.ItemLore;
+import net.minecraft.world.item.component.CustomData;
 import net.minecraft.world.item.component.ResolvableProfile;
 import net.minecraft.world.scores.DisplaySlot;
 import net.minecraft.world.scores.Objective;
@@ -110,13 +124,10 @@ public final class DungeonRunTrackerFeature {
 	private static final long LATE_LOOT_REATTACH_MS = 15 * 60_000L;
 	private static final long LOOT_COLLECTION_MS = 3_000L;
 	private static final long KUUDRA_KEY_SHOP_SCAN_INTERVAL_MS = 500L;
-	private static final Pattern KUUDRA_KEY_SHOP_MATERIAL_PATTERN = Pattern.compile("^(.+?)\\s+[xX×]\\s*(\\d[\\d,]*)$");
 	private static final long REWARD_OPEN_FAILED_GRACE_MS = 1_500L;
 	// Hypixel can fill a reward chest menu over several packets, so loot slots may
 	// arrive before the Open Reward Chest button that marks it as a preview.
 	private static final long REWARD_SCREEN_SETTLE_MS = 500L;
-	/** Reward chests stay in the instance for a short while after the boss; later opens are not tied to the run. */
-	private static final long LIVE_CHEST_LINK_MS = 10 * 60_000L;
 	private static final long REWARD_MODIFIER_SCAN_INTERVAL_MS = 300L;
 	private static final Pattern ESSENCE_PATTERN = Pattern.compile("^(?:\\+\\s*)?(WITHER|UNDEAD|SPIDER|DRAGON|ICE|DIAMOND|GOLD|CRIMSON) ESSENCE(?:\\s*[xX×]\\s*(\\d[\\d,]*))?$");
 	private static final Pattern RECEIVED_PATTERN = Pattern.compile("^YOU RECEIVED\\s+(.+?)(?:\\s*[xX×]\\s*(\\d+))?!?$");
@@ -140,6 +151,7 @@ public final class DungeonRunTrackerFeature {
 	private static final Pattern KUUDRA_TIER_WORD_PATTERN = Pattern.compile("\\bTIER\\s*(?:-|:)?\\s*(I{1,3}|IV|V|[1-5])\\b", Pattern.CASE_INSENSITIVE);
 	private static final Pattern KUUDRA_PAREN_TIER_PATTERN = Pattern.compile("\\(\\s*[KT]\\s*([1-5])\\s*\\)", Pattern.CASE_INSENSITIVE);
 	private static final Pattern SCORE_GRADE_PATTERN = Pattern.compile("\\bSCORE\\b.*(?:\\((S\\+|S|A|B|C|D)\\)|(?:^|\\s)(S\\+|S|A|B|C|D)\\s*$)", Pattern.CASE_INSENSITIVE);
+	private static final Pattern SCORE_VALUE_PATTERN = Pattern.compile("\\bSCORE\\b\\s*:?\\s*(\\d{1,3})", Pattern.CASE_INSENSITIVE);
 	/** Hypixel paginated Croesus title, e.g. "(1/3) CROESUS". */
 	private static final Pattern CROESUS_PAGED_TITLE_PATTERN = Pattern.compile("^\\(\\d+/\\d+\\)\\s+CROESUS$");
 	/** Croesus run lore: "Opened Chest: Wood" or "Opened Chests: 1". */
@@ -341,7 +353,11 @@ public final class DungeonRunTrackerFeature {
 	private final Map<String, Integer> floorRunCounts = new LinkedHashMap<>();
 	private final Map<String, Long> floorRunTimeMs = new LinkedHashMap<>();
 	private final Map<String, Long> floorProfitTotals = new LinkedHashMap<>();
+	/** Fixed floor filter when {@link #selectedFloorAuto} is false. null = All. */
 	private DungeonFloor selectedFloor = null;
+	/** When true, overlay stats follow {@link #autoHudFloor()}. */
+	private boolean selectedFloorAuto = false;
+	private static final String HUD_FLOOR_AUTO = "AUTO";
 	private final ClearConfirmation hudResetConfirm = new ClearConfirmation();
 	private final DiagnosticRecorder diagnostics = new DiagnosticRecorder(
 		new dev.vy.drt.tracking.SystemTrackerClock(),
@@ -405,7 +421,8 @@ public final class DungeonRunTrackerFeature {
 	private boolean awaitingExtraStatsScore;
 	private DungeonFloor awaitingExtraStatsFloor = DungeonFloor.UNKNOWN;
 	private String pendingScoreGrade = null;
-	private DungeonScoreReading pendingScoreReading = null;
+	private int pendingScoreValue;
+	private boolean pendingScoreRecorded;
 	private String lastRecordedGrade = "?";
 	private DungeonFloor pendingSPlusFloor = DungeonFloor.UNKNOWN;
 	private long pendingSPlusUntilMillis;
@@ -413,6 +430,7 @@ public final class DungeonRunTrackerFeature {
 	private long lastRunRecordMillis;
 	private DungeonFloor lastRunRecordFloor = DungeonFloor.UNKNOWN;
 	private String lastRunRecordGrade = "?";
+	private String lastPersistedCompletionRunSessionId = "";
 	private Object lastLevelIdentity;
 	private String activeRunSessionId = "";
 	private String currentRunCompletionFingerprint = "";
@@ -428,6 +446,8 @@ public final class DungeonRunTrackerFeature {
 	private String pendingLootChestTitle = "";
 	private ChestCostBreakdown pendingLootCostBreakdown = new ChestCostBreakdown();
 	private DungeonFloor pendingLootFloor = DungeonFloor.UNKNOWN;
+	/** Floor named by the Croesus run view the player last opened in the Dungeon Hub. */
+	private DungeonFloor croesusRunViewFloor = DungeonFloor.UNKNOWN;
 	private boolean pendingLootOrphaned;
 	private boolean pendingLootSeededFromGui;
 	private boolean pendingLootReconcilingGuiChat;
@@ -436,29 +456,20 @@ public final class DungeonRunTrackerFeature {
 	private long lastRewardOpenFailedMillis;
 	private Screen trackedRewardScreen;
 	private long trackedRewardScreenSinceMillis;
-	/** The completion DRT committed for the current instance; reward chests opened in it belong to that run. */
-	private String liveCompletionRunSessionId = "";
-	private String liveCompletionFloor = "";
-	private long liveCompletionAtMillis;
-	/** The world the completion happened in; a server transfer replaces it, so a different world is a different instance. */
-	private Object liveCompletionLevel;
+	/** The one persisted completion that owns all current reward data. */
+	private RunOwnership.Owner rewardRunOwner = RunOwnership.Owner.none();
 	private final RewardChatBlock rewardChatBlock = new RewardChatBlock();
-	private String pendingLootRunLinkSource;
-	private String pendingLootLinkedRunId = "";
-	private final Map<String, String> dungeonPreviewScans = new HashMap<>();
-	private final Set<String> capturedDungeonPreviews = new HashSet<>();
+	/** Immutable owner snapshot for the chest currently being collected. */
+	private RunOwnership.Owner pendingChestOwner = RunOwnership.Owner.none();
 	/** Incident id waiting for a non-null player so chat notify can be delivered. */
 	private String pendingIncidentChatNotifyId = "";
 	private int openedRewardChestsInLootWindow;
 	/** Canonical titles already counted in the current loot window (used to ignore Croesus re-views). */
 	private final Set<String> openedRewardChestTitlesInLootWindow = new HashSet<>();
 	private boolean nextOpenedChestUsesDungeonChestKey;
-	private boolean nextOpenedChestUsesKismetFeather;
 	private boolean nextOpenedChestUsesWheelOfFate;
-	private boolean rewardMenuKismetRerollPending;
-	private String rewardMenuKismetRerolledChestTitle = "";
-	/** At most one kismet charge per loot window (Hypixel allows one reroll per dungeon run). */
-	private boolean kismetChargedThisLootWindow;
+	/** One feather per chest. Several chests in one loot window can each be rerolled. */
+	private final KismetChargeLedger kismetCharges = new KismetChargeLedger();
 	private long lastContextConflictNotifyMillis;
 	/** Compatibility overlay buffer; ChestSession LootObservations/ResolvedLoot are authoritative at commit. */
 	private final List<DungeonLootEntry> pendingLootEntries = new ArrayList<>();
@@ -466,6 +477,8 @@ public final class DungeonRunTrackerFeature {
 	private final Set<String> ignoredPlayerInventoryDiagnosticKeys = new HashSet<>();
 	private final Map<String, DungeonChestOffer> cachedChestOffersByTitle = new HashMap<>();
 	private final Map<String, Integer> cachedChestOfferFingerprintsByTitle = new HashMap<>();
+	private final Map<String, String> stableDungeonPreviewScans = new HashMap<>();
+	private final Set<String> capturedDungeonPreviews = new HashSet<>();
 	private final Set<String> scannedRewardScreens = new HashSet<>();
 	private String lastRewardModifierScanKey = "";
 	private long lastRewardModifierScanMillis;
@@ -480,6 +493,12 @@ public final class DungeonRunTrackerFeature {
 	/** Last Croesus chest row the player hovered; used when Hypixel opens "Master Catacombs - Floor X". */
 	private String lastHoveredCroesusChestTitle = "";
 	private String lastSelectedCroesusChestTitle = "";
+	private Screen selectedCroesusSourceScreen;
+	private boolean selectedCroesusRunBound;
+	private boolean croesusNavigationActive;
+	private String lastHoveredCroesusPartyFingerprint = "";
+	private String lastCroesusPartyScanFingerprint = "";
+	private long lastHoveredCroesusPartyScanMillis;
 	/** Chest tiers the player actually opened a preview/GUI for this Croesus visit. */
 	private final Set<String> viewedCroesusChestTitles = new HashSet<>();
 
@@ -498,8 +517,14 @@ public final class DungeonRunTrackerFeature {
 	private long currentRunPauseStartMillis;
 	private long currentRunUnavailablePauseStartMillis;
 	private long currentRunBossTimeMs;
+	private String currentRunBossTimeEvidence;
 	private long lastFinishedRunTimeMs;
 	private boolean currentRunActive;
+	private List<DungeonPartyMember> observedDungeonParty = List.of();
+	/** Client level the observed party was seen in; a different level is a different instance. */
+	private Object observedPartyLevel;
+	/** Completed run in the current instance that later tab sightings may still complete. */
+	private String observedPartyCompletionRunId = "";
 
 	private final Map<String, Integer> gradeRunCounts = new LinkedHashMap<>();
 	private final Map<String, Integer> sessionGradeRuns = new LinkedHashMap<>();
@@ -530,12 +555,7 @@ public final class DungeonRunTrackerFeature {
 		hudX = Math.max(0, config.hudX);
 		hudY = Math.max(0, config.hudY);
 		hudScale = clampHudScale(config.hudScale);
-		String savedFloor = config.selectedFloor;
-		if (savedFloor != null && !savedFloor.isBlank()) {
-			try { selectedFloor = DungeonFloor.valueOf(savedFloor); } catch (IllegalArgumentException ignored) { selectedFloor = null; }
-		} else {
-			selectedFloor = null;
-		}
+		applySavedHudFloor(config.selectedFloor);
 		rebuildLifetimeMaps(config);
 	}
 
@@ -669,6 +689,7 @@ public final class DungeonRunTrackerFeature {
 		// Assign / switch pending chest title before GUI loot merge so a new chest
 		// cannot bleed into the previous pending session.
 		captureRewardChestCosts(client);
+		scanCroesusMenuParties(client);
 		captureKuudraKeyShopCosts(client, now);
 		captureOpenedRewardChestLootIfViewing(client, now);
 		if (lootCollectionUntilMillis > 0L && now > lootCollectionUntilMillis) {
@@ -738,20 +759,19 @@ public final class DungeonRunTrackerFeature {
 			pose.popMatrix();
 		}
 
-		if (client.screen != null && !moveMode) {
+		if (client.gui.screen() != null && !moveMode) {
 			OverlayLayout.HitResult hit = hitTestHud(client, mouseX, mouseY, shouldShowResetLine(client, false));
 			if (hit.hit()) {
 				switch (hit.hover()) {
 					case MODE -> drawTooltip(client, guiGraphics, "Mode: " + hudVisibilityMode.displayName, mouseX, mouseY);
-					case FLOOR -> drawTooltip(client, guiGraphics, "Left/right click to cycle floors", mouseX, mouseY);
+					case FLOOR -> drawTooltip(client, guiGraphics, floorCycleTooltip(), mouseX, mouseY);
 					case RUNS_HR -> drawTooltip(client, guiGraphics, runsPerHrPaused ? "Click to resume /hr timer" : "Click to pause /hr timer", mouseX, mouseY);
 					case RUNS -> drawTooltip(client, guiGraphics, buildRunsHoverTooltip(), mouseX, mouseY);
 					case PROFIT -> drawTooltip(client, guiGraphics, buildProfitHoverTooltip(), mouseX, mouseY);
 					case RESET -> {
-						String floorTag = selectedFloor == null ? "All" : selectedFloor.name();
 						String tip = hudResetConfirmArmed(System.currentTimeMillis())
-							? "Click again to permanently wipe " + floorTag
-							: "Click to reset " + floorTag + " tracker";
+							? "Click again to permanently wipe " + hudResetScopeLabel()
+							: "Click to reset " + hudResetScopeLabel() + " tracker";
 						drawTooltip(client, guiGraphics, tip, mouseX, mouseY);
 					}
 					case HIDE_UI -> drawTooltip(client, guiGraphics, "Click to hide the DRT overlay", mouseX, mouseY);
@@ -773,7 +793,9 @@ public final class DungeonRunTrackerFeature {
 	 * afterExtract is too late and covers lore, which is why hover-skip used to flash.
 	 */
 	public void extractCroesusSlotHighlights(Minecraft client, GuiGraphicsExtractor guiGraphics, int mouseX, int mouseY) {
-		if (!croesusOverlayEnabled || client == null) return;
+		if (client == null) return;
+		observeHoveredCroesusParty(client, mouseX, mouseY);
+		if (!croesusOverlayEnabled) return;
 		if (isFancyRewardMenuActive(client)) return;
 		extractRenderStateCroesusChestSlotHighlights(client, guiGraphics);
 		extractRenderStateCroesusMainMenuHighlights(client, guiGraphics);
@@ -830,8 +852,9 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private List<String> buildProfitHoverTooltip() {
+		String lootScope = lootHistoryScopeLabel();
 		if (overlayPreset == OverlayPreset.LEGACY) {
-			return List.of("Click to view " + (selectedFloor == null ? "all" : selectedFloor.name()) + " loot history");
+			return List.of("Click to view " + lootScope + " loot history");
 		}
 		OverlayStats stats = currentOverlayStats();
 		List<String> lines = new ArrayList<>();
@@ -839,7 +862,7 @@ public final class DungeonRunTrackerFeature {
 		if (stats.totalRuns > 0) {
 			lines.add("Total profit per run: " + OverlayFormat.coins(stats.lifetimeProfitPerRun));
 		}
-		lines.add("Click to view " + (selectedFloor == null ? "all" : selectedFloor.name()) + " loot history");
+		lines.add("Click to view " + lootScope + " loot history");
 		return lines;
 	}
 
@@ -862,11 +885,15 @@ public final class DungeonRunTrackerFeature {
 	private void hideHudFromOverlay() {
 		hudResetConfirm.reset();
 		setEnabled(false);
-		sendDrtSystemMessage(Minecraft.getInstance(), Component.literal("§a[DRT] Overlay hidden, run /drt toggle UI to show it again"));
+		sendDrtSystemMessage(Minecraft.getInstance(), Component.literal("§a[DRT] Overlay hidden. To show it again, open /drt, select Overlay and turn HUD Overlay on"));
 	}
 
 	public boolean isTrackingEnabled() {
 		return trackingEnabled;
+	}
+
+	public synchronized boolean isRunInProgress() {
+		return currentRunActive || insideDungeon || insideKuudra;
 	}
 
 	public void setTrackingEnabled(boolean trackingEnabled) {
@@ -930,7 +957,7 @@ public final class DungeonRunTrackerFeature {
 		// Fancy Menu is Croesus reward-chest presentation only. Do not replace mid-dungeon
 		// chests, Kuudra free/paid, or unrelated container screens.
 		if (!isHubCroesusRewardBrowsing()) return false;
-		if (!(client.screen instanceof AbstractContainerScreen<?> screen)) return false;
+		if (!(client.gui.screen() instanceof AbstractContainerScreen<?> screen)) return false;
 		String normalizedTitle = normalize(screen.getTitle().getString());
 		String canonicalTitle = canonicalRewardChestTitle(normalizedTitle);
 		if (canonicalTitle == null || !isCatacombsRewardChest(canonicalTitle)) return false;
@@ -976,10 +1003,12 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	public OverlayStats currentOverlayStats() {
-		String floorTag = selectedFloor == null ? "All" : selectedFloor.name();
-		long lifetimeProfit = selectedFloor == null
+		syncHudFloorFromConfig();
+		String floorTag = hudFloorTag();
+		DungeonFloor statsFloor = hudStatsFloor();
+		long lifetimeProfit = statsFloor == null
 				? totalLifetimeProfit
-				: floorProfitTotals.getOrDefault(selectedFloor.name(), 0L);
+				: floorProfitTotals.getOrDefault(statsFloor.name(), 0L);
 		int sessionRunCount = displaySessionRuns();
 		long sessionProfit = displaySessionProfit();
 		long sessionRunTimeMs = displaySessionRunTimeMs();
@@ -990,9 +1019,9 @@ public final class DungeonRunTrackerFeature {
 		double runsPerHr = hoursElapsed > 0.001 ? sessionRunCount / hoursElapsed : 0.0;
 		long avgRunTimeMs = sessionRunCount > 0 ? sessionRunTimeMs / sessionRunCount : 0L;
 		long avgProfitPerRun = sessionRunCount > 0 ? sessionProfit / sessionRunCount : 0L;
-		int totalRuns = selectedFloor == null
+		int totalRuns = statsFloor == null
 				? totalRunsCompleted()
-				: floorRunCounts.getOrDefault(selectedFloor.name(), 0);
+				: floorRunCounts.getOrDefault(statsFloor.name(), 0);
 		return new OverlayStats(
 				floorTag,
 				totalRuns,
@@ -1008,7 +1037,7 @@ public final class DungeonRunTrackerFeature {
 				avgProfitPerRun,
 				profitPerHr,
 				runsPerHrPaused,
-				hudResetLabel(floorTag)
+				hudResetLabel(hudResetScopeLabel())
 		);
 	}
 
@@ -1049,20 +1078,24 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private int displaySessionRuns() {
-		return selectedFloor == null ? sessionRuns : sessionFloorRuns.getOrDefault(selectedFloor.name(), 0);
+		DungeonFloor statsFloor = hudStatsFloor();
+		return statsFloor == null ? sessionRuns : sessionFloorRuns.getOrDefault(statsFloor.name(), 0);
 	}
 
 	private long displaySessionProfit() {
-		return selectedFloor == null ? sessionTotalProfit : sessionFloorProfitTotals.getOrDefault(selectedFloor.name(), 0L);
+		DungeonFloor statsFloor = hudStatsFloor();
+		return statsFloor == null ? sessionTotalProfit : sessionFloorProfitTotals.getOrDefault(statsFloor.name(), 0L);
 	}
 
 	private long displaySessionRunTimeMs() {
-		return selectedFloor == null ? sessionTotalRunTimeMs : sessionFloorRunTimeTotals.getOrDefault(selectedFloor.name(), 0L);
+		DungeonFloor statsFloor = hudStatsFloor();
+		return statsFloor == null ? sessionTotalRunTimeMs : sessionFloorRunTimeTotals.getOrDefault(statsFloor.name(), 0L);
 	}
 
 	private long displayTotalRunTimeMs() {
-		if (selectedFloor != null) {
-			return floorRunTimeMs.getOrDefault(selectedFloor.name(), 0L);
+		DungeonFloor statsFloor = hudStatsFloor();
+		if (statsFloor != null) {
+			return floorRunTimeMs.getOrDefault(statsFloor.name(), 0L);
 		}
 		long total = 0L;
 		for (long value : floorRunTimeMs.values()) total += Math.max(0L, value);
@@ -1083,11 +1116,11 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private boolean hudResetConfirmArmed(long now) {
-		return hudResetConfirm.isArmed(selectedFloor == null ? null : selectedFloor.name(), now);
+		return hudResetConfirm.isArmed(hudResetConfirmKey(), now);
 	}
 
 	private void resetSelectedFloor() {
-		String key = selectedFloor == null ? null : selectedFloor.name();
+		String key = hudResetConfirmKey();
 		if (hudResetConfirm.click(key, System.currentTimeMillis()) != ClearConfirmation.Result.CONFIRMED) return;
 		if (key == null) {
 			if (!DrtConfigManager.clearAllData("HUD reset")) {
@@ -1109,8 +1142,10 @@ public final class DungeonRunTrackerFeature {
 			floorRunCounts.remove(key);
 			floorRunTimeMs.remove(key);
 			floorProfitTotals.remove(key);
-			selectedFloor = null;
-			DrtConfigManager.updateSelectedFloor(null);
+			if (!selectedFloorAuto) {
+				selectedFloor = null;
+				persistHudFloorSelection();
+			}
 		}
 	}
 
@@ -1128,21 +1163,163 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private void cycleSelectedFloor(int direction) {
-		List<DungeonFloor> available = new ArrayList<>();
-		available.add(null);
-		for (DungeonFloor f : DungeonFloor.values()) {
-			if (f != DungeonFloor.UNKNOWN) available.add(f);
-		}
-		int idx = available.indexOf(selectedFloor);
+		List<String> modes = hudFloorCycleModes();
+		String current = selectedFloorAuto
+			? HUD_FLOOR_AUTO
+			: (selectedFloor == null ? "ALL" : selectedFloor.name());
+		int idx = modes.indexOf(current);
 		if (idx < 0) idx = 0;
-		int next = Math.floorMod(idx + direction, available.size());
-		selectedFloor = available.get(next);
+		applyHudFloorMode(modes.get(Math.floorMod(idx + direction, modes.size())));
 		hudResetConfirm.reset();
-		DrtConfigManager.updateSelectedFloor(selectedFloor == null ? null : selectedFloor.name());
+	}
+
+	private List<String> hudFloorCycleModes() {
+		List<String> modes = new ArrayList<>();
+		modes.add("ALL");
+		modes.add(HUD_FLOOR_AUTO);
+		for (DungeonFloor f : DungeonFloor.values()) {
+			if (f != DungeonFloor.UNKNOWN) modes.add(f.name());
+		}
+		return modes;
+	}
+
+	private void applySavedHudFloor(String savedFloor) {
+		if (savedFloor != null && savedFloor.equalsIgnoreCase(HUD_FLOOR_AUTO)) {
+			selectedFloorAuto = true;
+			selectedFloor = null;
+			return;
+		}
+		selectedFloorAuto = false;
+		if (savedFloor != null && !savedFloor.isBlank()) {
+			try {
+				selectedFloor = DungeonFloor.valueOf(savedFloor);
+				if (selectedFloor == DungeonFloor.UNKNOWN) selectedFloor = null;
+			} catch (IllegalArgumentException ignored) {
+				selectedFloor = null;
+			}
+		} else {
+			selectedFloor = null;
+		}
+	}
+
+	/** Loot history tabs write the same config key; keep the HUD mode aligned. */
+	private void syncHudFloorFromConfig() {
+		String saved = DrtConfigManager.getDungeonSelectedFloor();
+		String current = selectedFloorAuto
+			? HUD_FLOOR_AUTO
+			: (selectedFloor == null ? null : selectedFloor.name());
+		boolean same = selectedFloorAuto
+			? saved != null && saved.equalsIgnoreCase(HUD_FLOOR_AUTO)
+			: (saved == null || saved.isBlank()) ? current == null : saved.equals(current);
+		if (!same) applySavedHudFloor(saved);
+	}
+
+	private void applyHudFloorMode(String mode) {
+		if (mode != null && mode.equalsIgnoreCase(HUD_FLOOR_AUTO)) {
+			selectedFloorAuto = true;
+			selectedFloor = null;
+		} else if (mode == null || mode.isBlank() || mode.equalsIgnoreCase("ALL")) {
+			selectedFloorAuto = false;
+			selectedFloor = null;
+		} else {
+			selectedFloorAuto = false;
+			try {
+				DungeonFloor floor = DungeonFloor.valueOf(mode);
+				selectedFloor = floor == DungeonFloor.UNKNOWN ? null : floor;
+			} catch (IllegalArgumentException ignored) {
+				selectedFloor = null;
+			}
+		}
+		persistHudFloorSelection();
+	}
+
+	private void persistHudFloorSelection() {
+		if (selectedFloorAuto) {
+			DrtConfigManager.updateSelectedFloor(HUD_FLOOR_AUTO);
+		} else {
+			DrtConfigManager.updateSelectedFloor(selectedFloor == null ? null : selectedFloor.name());
+		}
+	}
+
+	/** Tag shown in the HUD brackets: All, Auto, or a floor name. */
+	private String hudFloorTag() {
+		if (selectedFloorAuto) return "Auto";
+		return selectedFloor == null ? "All" : selectedFloor.name();
+	}
+
+	/**
+	 * Floor used for overlay totals. Auto follows the last/active run; when none is known,
+	 * falls back to All aggregates.
+	 */
+	private DungeonFloor hudStatsFloor() {
+		if (selectedFloorAuto) {
+			DungeonFloor auto = autoHudFloor();
+			return auto == DungeonFloor.UNKNOWN ? null : auto;
+		}
+		return selectedFloor;
+	}
+
+	/** Resolved floor used by Auto for both HUD statistics and loot history navigation. */
+	public DungeonFloor currentHudStatsFloor() {
+		syncHudFloorFromConfig();
+		return hudStatsFloor();
+	}
+
+	/** Last floor the player ran, preferring an active instance floor over the last completion. */
+	private DungeonFloor autoHudFloor() {
+		if (currentRunActive || insideDungeon || insideKuudra) {
+			DungeonFloor active = activeRunFloorProjection();
+			if (active != null && active != DungeonFloor.UNKNOWN) return active;
+			if (currentFloor != null && currentFloor != DungeonFloor.UNKNOWN) return currentFloor;
+			if (lastKnownKuudraFloor != null && lastKnownKuudraFloor.isKuudra()) return lastKnownKuudraFloor;
+		}
+		if (lastRunRecordFloor != null && lastRunRecordFloor != DungeonFloor.UNKNOWN) return lastRunRecordFloor;
+		DungeonRunCompletionRecord recent = mostRecentPersistedCompletion(System.currentTimeMillis());
+		if (recent != null) {
+			DungeonFloor recorded = configFloor(recent.floor);
+			if (recorded != DungeonFloor.UNKNOWN) return recorded;
+		}
+		return DungeonFloor.UNKNOWN;
+	}
+
+	private String hudResetConfirmKey() {
+		DungeonFloor statsFloor = hudStatsFloor();
+		return statsFloor == null ? null : statsFloor.name();
+	}
+
+	private String hudResetScopeLabel() {
+		if (selectedFloorAuto) {
+			DungeonFloor auto = autoHudFloor();
+			return auto == DungeonFloor.UNKNOWN ? "Auto" : auto.name();
+		}
+		return selectedFloor == null ? "All" : selectedFloor.name();
+	}
+
+	private String lootHistoryScopeLabel() {
+		DungeonFloor statsFloor = hudStatsFloor();
+		return statsFloor == null ? "all" : statsFloor.name();
+	}
+
+	private List<String> floorCycleTooltip() {
+		if (selectedFloorAuto) {
+			DungeonFloor auto = autoHudFloor();
+			String following = auto == DungeonFloor.UNKNOWN ? "no recent run yet" : "following " + auto.name();
+			return List.of("Auto: " + following, "Left/right click to cycle floors");
+		}
+		return List.of("Left/right click to cycle floors");
 	}
 
 	private void cycleHudVisibilityMode() {
 		hudVisibilityMode = hudVisibilityMode.next();
+		DrtConfigManager.updateHudVisibilityMode(hudVisibilityMode.name());
+	}
+
+	public String getHudVisibilityMode() {
+		return hudVisibilityMode.name();
+	}
+
+	public void setHudVisibilityMode(String mode) {
+		hudVisibilityMode = HudVisibilityMode.fromConfig(mode);
 		DrtConfigManager.updateHudVisibilityMode(hudVisibilityMode.name());
 	}
 
@@ -1203,7 +1380,7 @@ public final class DungeonRunTrackerFeature {
 			case CYCLE_MODE -> { cycleHudVisibilityMode(); return true; }
 			case CYCLE_FLOOR -> { cycleSelectedFloor(); return true; }
 			case TOGGLE_RUNS_HR -> { toggleRunsPerHrPause(); return true; }
-			case OPEN_LOOT -> { requestOpenLootScreen(selectedFloor, null); return true; }
+			case OPEN_LOOT -> { requestOpenLootScreen(hudStatsFloor(), null); return true; }
 			case RESET -> { resetSelectedFloor(); return true; }
 			case HIDE_UI -> { hideHudFromOverlay(); return true; }
 			case NONE -> { return false; }
@@ -1236,6 +1413,7 @@ public final class DungeonRunTrackerFeature {
 	public boolean handleScreenMouseClick(Minecraft client, double mouseX, double mouseY, int button, boolean moveMode) {
 		int mx = (int) mouseX;
 		int my = (int) mouseY;
+		if (!moveMode && button == 0) observeCroesusRunSelection(client, mx, my);
 		if (!moveMode && (button == 0 || button == 1) && handleFancyMenuClick(client, mx, my, button)) return true;
 		if (button == 0 && !moveMode && handleChestTitleClick(client, mx, my)) return true;
 		if (button == 0 && !moveMode && handleChestKeyModifierClick(client, mx, my)) return true;
@@ -1259,7 +1437,7 @@ public final class DungeonRunTrackerFeature {
 
 	/** True when the DRT HUD overlay should consume mouse clicks. */
 	private boolean isHudClickScreen(Minecraft client) {
-		return client != null && client.screen instanceof InventoryScreen;
+		return client != null && client.gui.screen() instanceof InventoryScreen;
 	}
 
 	private boolean handleChestKeyModifierClick(Minecraft client, int mouseX, int mouseY) {
@@ -1328,7 +1506,7 @@ public final class DungeonRunTrackerFeature {
 			long now = System.currentTimeMillis();
 			if (now - lastChestTitleClickMillis < 500 && data.chestTitle.equals(lastChestTitleClicked)) {
 				// Double click: Open chest
-				if (client.screen instanceof AbstractContainerScreen<?> screen) {
+				if (client.gui.screen() instanceof AbstractContainerScreen<?> screen) {
 					String normalizedTitle = normalize(screen.getTitle().getString());
 					if (isCroesusChestListTitle(normalizedTitle)) {
 						List<CroesusChestRow> rows = currentCroesusChestRows(client);
@@ -1347,7 +1525,7 @@ public final class DungeonRunTrackerFeature {
 			// Single click: View history (or first part of double click)
 			lastChestTitleClickMillis = now;
 			lastChestTitleClicked = data.chestTitle;
-			pendingLootScreenFloorFilter = selectedFloor;
+			pendingLootScreenFloorFilter = hudStatsFloor();
 			pendingLootScreenSearchFilter = shortChestName(data.chestTitle);
 			lootScreenPendingMillis = now + 500;
 			return true;
@@ -1408,7 +1586,7 @@ public final class DungeonRunTrackerFeature {
 			cancelAutoOpenRewardChest();
 			return;
 		}
-		if (!(client.screen instanceof AbstractContainerScreen<?> screen) || client.player == null || client.gameMode == null) return;
+		if (!(client.gui.screen() instanceof AbstractContainerScreen<?> screen) || client.player == null || client.gameMode == null) return;
 		if (resolveCanonicalRewardChestTitle(normalize(screen.getTitle().getString()), client.player.containerMenu) == null) return;
 
 		int slotIndex = findOpenRewardChestSlotIndex(client.player.containerMenu);
@@ -1471,7 +1649,7 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private CroesusChestRow croesusOverlayRowAt(Minecraft client, int mouseX, int mouseY) {
-		if (!(client.screen instanceof AbstractContainerScreen<?> screen)) return null;
+		if (!(client.gui.screen() instanceof AbstractContainerScreen<?> screen)) return null;
 		String normalizedTitle = normalize(screen.getTitle().getString());
 		if (!isCroesusChestListTitle(normalizedTitle)) return null;
 
@@ -1534,10 +1712,6 @@ public final class DungeonRunTrackerFeature {
 		return false;
 	}
 
-	public void requestOpenLootScreen() {
-		requestOpenLootScreen(selectedFloor, null);
-	}
-
 	public void requestOpenLootScreen(DungeonFloor floorFilter, String searchFilter) {
 		pendingLootScreenFloorFilter = floorFilter;
 		pendingLootScreenSearchFilter = searchFilter;
@@ -1574,6 +1748,7 @@ public final class DungeonRunTrackerFeature {
 		currentRunPauseStartMillis = 0L;
 		currentRunUnavailablePauseStartMillis = 0L;
 		currentRunBossTimeMs = 0L;
+		currentRunBossTimeEvidence = null;
 		lastFinishedRunTimeMs = 0L;
 		currentRunActive = false;
 		runsPerHrPaused = false;
@@ -1675,9 +1850,10 @@ public final class DungeonRunTrackerFeature {
 
 		expirePendingCompletionState(now);
 		List<String> rawLines = splitMessageLines(rawText);
+		boolean multilineSummary = rawLines.size() > 1;
 		for (String rawLine : rawLines) {
 			String cleanedLine = normalize(rawLine);
-			if (!cleanedLine.isEmpty()) handleCompletionLine(rawLine.trim(), cleanedLine, now);
+			if (!cleanedLine.isEmpty()) handleCompletionLine(rawLine.trim(), cleanedLine, now, multilineSummary);
 		}
 
 		if (rawLines.size() > 1) {
@@ -1728,7 +1904,7 @@ public final class DungeonRunTrackerFeature {
 		return true;
 	}
 
-	private void handleCompletionLine(String rawLine, String cleaned, long now) {
+	private void handleCompletionLine(String rawLine, String cleaned, long now, boolean multilineSummary) {
 		if (handleKuudraLine(cleaned, now)) return;
 
 		if (isDungeonEntryMessage(cleaned)) {
@@ -1738,11 +1914,21 @@ public final class DungeonRunTrackerFeature {
 			insideDungeon = true;
 		}
 
-		Matcher bossTimeMatcher = BOSS_TIME_PATTERN.matcher(rawLine == null ? cleaned : rawLine);
-		if (bossTimeMatcher.find()) {
-			long minutes = parsePositiveInt(bossTimeMatcher.group(1), 0);
-			long seconds = parsePositiveInt(bossTimeMatcher.group(2), 0);
-			currentRunBossTimeMs = (minutes * 60L + seconds) * 1000L;
+		Long officialRunTime = parseOfficialDungeonRunTimeMillis(rawLine == null ? cleaned : rawLine);
+		if (officialRunTime != null) {
+			String evidence = multilineSummary
+				? DungeonRunCompletionRecord.TIME_EVIDENCE_MULTILINE
+				: DungeonRunCompletionRecord.TIME_EVIDENCE_SINGLE_LINE;
+			if (runTimeEvidenceRank(evidence) >= runTimeEvidenceRank(currentRunBossTimeEvidence)) {
+				currentRunBossTimeMs = officialRunTime;
+				currentRunBossTimeEvidence = evidence;
+			}
+			String durationOwner = rewardRunOwner.valid()
+				? rewardRunOwner.runSessionId()
+				: (now - lastRunRecordMillis <= EXTRA_STATS_TIMEOUT_MS ? lastPersistedCompletionRunSessionId : "");
+			if (!durationOwner.isBlank()) {
+				correctPersistedCompletionDuration(durationOwner, officialRunTime, evidence);
+			}
 		}
 
 		DungeonFloor lineFloor = detectFloorFromLine(cleaned);
@@ -1751,10 +1937,13 @@ public final class DungeonRunTrackerFeature {
 		}
 
 		String preGrade = extractScoreGrade(cleaned);
-		DungeonScoreReading lineScore = preGrade == null ? null : DungeonScoreReading.parse(cleaned).orElse(null);
+		Integer scoreValue = extractScoreValue(cleaned);
+		if (scoreValue != null) {
+			pendingScoreValue = scoreValue;
+			pendingScoreRecorded = true;
+		}
 		if (preGrade != null && pendingScoreGrade == null) {
 			pendingScoreGrade = preGrade;
-			pendingScoreReading = lineScore;
 			trackingSession.updateActiveRunGrade(preGrade, EvidenceStrength.STRUCTURED_CHAT, DetectionSource.STRUCTURED_CHAT);
 			pendingSPlusFloor = lineFloor != DungeonFloor.UNKNOWN ? lineFloor : currentFloor;
 			pendingSPlusUntilMillis = now + EXTRA_STATS_TIMEOUT_MS;
@@ -1762,7 +1951,7 @@ public final class DungeonRunTrackerFeature {
 
 		if (pendingScoreGrade != null && currentRunBossTimeMs > 0L && !runCountedThisDungeon) {
 			DungeonFloor scoreFloor = bestCompletionFloor(lineFloor);
-			recordCompletedRun(now, scoreFloor, pendingScoreGrade, pendingScoreReading);
+			recordCompletedRun(now, scoreFloor, pendingScoreGrade);
 			clearPendingCompletionScore();
 			return;
 		}
@@ -1770,7 +1959,7 @@ public final class DungeonRunTrackerFeature {
 		if (isExtraStatsHeader(cleaned)) {
 			if (pendingScoreGrade != null && !runCountedThisDungeon) {
 				DungeonFloor f = bestCompletionFloor(lineFloor);
-				recordCompletedRun(now, f, pendingScoreGrade, pendingScoreReading);
+				recordCompletedRun(now, f, pendingScoreGrade);
 				clearPendingCompletionScore();
 			} else {
 				DungeonFloor projectedFloor = activeRunFloorProjection();
@@ -1791,7 +1980,7 @@ public final class DungeonRunTrackerFeature {
 			if (postGrade != null) {
 				if (!runCountedThisDungeon) {
 					DungeonFloor scoreFloor = awaitingExtraStatsFloor != DungeonFloor.UNKNOWN ? awaitingExtraStatsFloor : activeRunFloorProjection();
-					recordCompletedRun(now, scoreFloor, postGrade, lineScore);
+					recordCompletedRun(now, scoreFloor, postGrade);
 				}
 				awaitingExtraStatsScore = false;
 				awaitingExtraStatsFloor = DungeonFloor.UNKNOWN;
@@ -1800,6 +1989,46 @@ public final class DungeonRunTrackerFeature {
 			}
 		}
 
+	}
+
+	static Long parseOfficialDungeonRunTimeMillis(String line) {
+		if (line == null || line.isBlank()) return null;
+		Matcher matcher = BOSS_TIME_PATTERN.matcher(line);
+		if (!matcher.find()) return null;
+		try {
+			long minutes = Long.parseLong(matcher.group(1));
+			long seconds = Long.parseLong(matcher.group(2));
+			if (minutes < 0L || seconds < 0L || seconds >= 60L) return null;
+			return (minutes * 60L + seconds) * 1000L;
+		} catch (NumberFormatException ignored) {
+			return null;
+		}
+	}
+
+	private static int runTimeEvidenceRank(String evidence) {
+		if (DungeonRunCompletionRecord.TIME_EVIDENCE_MULTILINE.equals(evidence)) return 40;
+		if (DungeonRunCompletionRecord.TIME_EVIDENCE_SINGLE_LINE.equals(evidence)) return 30;
+		if (DungeonRunCompletionRecord.TIME_EVIDENCE_MANUAL.equals(evidence)) return 20;
+		if (DungeonRunCompletionRecord.TIME_EVIDENCE_MEASURED.equals(evidence)) return 10;
+		return 0;
+	}
+
+	private void correctPersistedCompletionDuration(String runSessionId, long runTimeMs, String evidence) {
+		DungeonRunCompletionRecord before = DrtConfigManager.getRunCompletion(runSessionId);
+		if (before == null || !DrtConfigManager.updateRunCompletionDuration(runSessionId, runTimeMs, evidence)) return;
+		long delta = runTimeMs - before.runTimeMs;
+		if (sessionActive && before.completedAtEpochMillis >= sessionStartMillis && delta != 0L) {
+			sessionTotalRunTimeMs = Math.max(0L, sessionTotalRunTimeMs + delta);
+			sessionFloorRunTimeTotals.merge(before.floor, delta, (oldValue, change) -> Math.max(0L, oldValue + change));
+		}
+		resyncLifetimeFromConfig();
+		DungeonRunTracker.LOGGER.info(
+			"[DRT] Updated persisted completion duration: runSessionId={} oldMs={} newMs={} evidence={}",
+			runSessionId,
+			before.runTimeMs,
+			runTimeMs,
+			evidence
+		);
 	}
 
 	private static final int FANCY_PAD = 10;
@@ -1841,7 +2070,7 @@ public final class DungeonRunTrackerFeature {
 		clearFancyMenuHitTargets();
 		if (!isFancyRewardMenuActive(client)) return false;
 
-		AbstractContainerScreen<?> screen = (AbstractContainerScreen<?>) client.screen;
+		AbstractContainerScreen<?> screen = (AbstractContainerScreen<?>) client.gui.screen();
 		String normalizedTitle = normalize(screen.getTitle().getString());
 		String canonicalTitle = canonicalRewardChestTitle(normalizedTitle);
 		OverlayChestData data = currentOverlayChestData(client);
@@ -2103,7 +2332,7 @@ public final class DungeonRunTrackerFeature {
 		long totalPrice = DungeonProfitPricing.resolveTotalPrice(entry, config);
 		ItemStack icon = overlayIconOrFallback(entry.itemId);
 
-		int textY = rowY + Math.max(0, (FANCY_ROW_H - client.font.lineHeight) / 2);
+		int textY = DrtUiText.centeredTextY(client.font, rowY, FANCY_ROW_H);
 		int iconY = rowY + Math.max(0, (FANCY_ROW_H - FANCY_ICON) / 2);
 		g.item(icon, contentLeft, iconY);
 
@@ -2137,7 +2366,7 @@ public final class DungeonRunTrackerFeature {
 		g.fill(x, y, x + 1, y + h, borderColor);
 		g.fill(x + w - 1, y, x + w, y + h, borderColor);
 		int labelW = client.font.width(label);
-		drawOverlayText(client, g, label, x + (w - labelW) / 2, y + (h - client.font.lineHeight) / 2, OVERLAY_TEXT, true);
+		drawOverlayText(client, g, label, x + (w - labelW) / 2, DrtUiText.centeredTextY(client.font, y, h), OVERLAY_TEXT, true);
 	}
 
 	/**
@@ -2188,12 +2417,15 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private boolean extractRenderStateCroesusChestOverlay(Minecraft client, GuiGraphicsExtractor g, int mouseX, int mouseY) {
-		if (!(client.screen instanceof AbstractContainerScreen<?> screen)) return false;
+		if (!(client.gui.screen() instanceof AbstractContainerScreen<?> screen)) return false;
 		String normalizedTitle = normalize(screen.getTitle().getString());
 		if (!isCroesusChestListTitle(normalizedTitle)) return false;
 
 		List<CroesusChestRow> rows = currentCroesusChestRows(client);
-		if (rows.isEmpty()) return false;
+		boolean floorOverlay = RewardMenuTitles.shouldDrawProfitOverlay(croesusOverlayEnabled, normalizedTitle, rows.size());
+		boolean namedOverlay = croesusOverlayEnabled && !rows.isEmpty()
+			&& (normalizedTitle.contains("CROESUS") || normalizedTitle.contains("VESUVIUS"));
+		if (!floorOverlay && !namedOverlay) return false;
 
 		int screenW = client.getWindow().getGuiScaledWidth();
 		ScreenBounds bounds = currentContainerBounds(client);
@@ -2255,7 +2487,7 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private void extractRenderStateCroesusChestSlotHighlights(Minecraft client, GuiGraphicsExtractor g) {
-		if (!(client.screen instanceof AbstractContainerScreen<?> screen)) return;
+		if (!(client.gui.screen() instanceof AbstractContainerScreen<?> screen)) return;
 		if (!isCroesusChestListTitle(normalize(screen.getTitle().getString()))) return;
 		List<CroesusChestRow> rows = currentCroesusChestRows(client);
 		if (rows.isEmpty()) return;
@@ -2313,7 +2545,7 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private List<CroesusChestRow> currentCroesusChestRows(Minecraft client) {
-		if (!(client.screen instanceof AbstractContainerScreen<?> screen) || client.player == null) return List.of();
+		if (!(client.gui.screen() instanceof AbstractContainerScreen<?> screen) || client.player == null) return List.of();
 		AbstractContainerMenu menu = client.player.containerMenu;
 		if (menu == null) return List.of();
 
@@ -2367,7 +2599,6 @@ public final class DungeonRunTrackerFeature {
 			List<DungeonLootEntry> entries = offer.lootEntries == null ? List.of() : offer.lootEntries;
 			long value = offerValueCoins(canonicalKey, entries, offer.valueCoins);
 			ChestCostBreakdown breakdown = offer.costBreakdown == null ? new ChestCostBreakdown() : offer.costBreakdown.copy();
-			if (breakdown.usedKuudraKey) breakdown.kuudraKeyCostCoins = 0L;
 			applyKuudraChestCostHint(canonicalKey, breakdown, cleanLoreLines(stack));
 			populateKnownModifierCosts(breakdown);
 			suppressDungeonChestKeyForKuudra(canonicalKey, breakdown);
@@ -2585,7 +2816,7 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private ScreenBounds currentContainerBounds(Minecraft client) {
-		if (!(client.screen instanceof AbstractContainerScreen<?> screen)) {
+		if (!(client.gui.screen() instanceof AbstractContainerScreen<?> screen)) {
 			int width = 176;
 			int height = 166;
 			return new ScreenBounds((client.getWindow().getGuiScaledWidth() - width) / 2, (client.getWindow().getGuiScaledHeight() - height) / 2, width, height);
@@ -2617,7 +2848,7 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private List<CroesusMainMenuRunSlot> currentCroesusMainMenuRunSlots(Minecraft client) {
-		if (!(client.screen instanceof AbstractContainerScreen<?> screen) || client.player == null) return List.of();
+		if (!(client.gui.screen() instanceof AbstractContainerScreen<?> screen) || client.player == null) return List.of();
 		String normalizedTitle = normalize(screen.getTitle().getString());
 		if (!isCroesusMainMenuTitle(normalizedTitle)) return List.of();
 
@@ -2642,6 +2873,150 @@ public final class DungeonRunTrackerFeature {
 			));
 		}
 		return slots;
+	}
+
+	private void observeCroesusRunSelection(Minecraft client, int mouseX, int mouseY) {
+		if (!(client.gui.screen() instanceof AbstractContainerScreen<?> screen) || client.player == null) return;
+		if (!isCroesusMainMenuTitle(normalize(screen.getTitle().getString()))) return;
+		AbstractContainerMenu menu = client.player.containerMenu;
+		if (menu == null) return;
+		ScreenBounds bounds = currentContainerBounds(client);
+		for (Slot slot : menu.slots) {
+			if (!isServerOwnedSlot(slot) || !pointInRect(mouseX, mouseY, bounds.left + slot.x, bounds.top + slot.y, 16, 16)) continue;
+			ItemStack stack = slot.getItem();
+			if (stack.isEmpty() || isCroesusMainMenuChromeStack(stack)) return;
+
+			croesusNavigationActive = true;
+			selectedCroesusSourceScreen = screen;
+			long selectedAtMillis = System.currentTimeMillis();
+			selectedCroesusRunBound = false;
+			rewardRunOwner = RunOwnership.Owner.none();
+			cachedChestOffersByTitle.clear();
+			cachedChestOfferFingerprintsByTitle.clear();
+			stableDungeonPreviewScans.clear();
+			capturedDungeonPreviews.clear();
+			scannedRewardScreens.clear();
+
+			List<String> runLore = cleanLoreLines(stack);
+			CroesusRunSelection.Evidence evidence = CroesusRunSelection.parse(
+				cleanText(stack.getHoverName().getString()),
+				runLore,
+				selectedAtMillis,
+				java.time.ZoneId.systemDefault()
+			);
+			RunOwnership.Resolution direct = RunOwnership.resolveCroesus(
+				evidence,
+				DrtConfigManager.getRunCompletions(),
+				selectedAtMillis,
+				DrtConfigManager.getCurrentAccountUuid()
+			);
+			RunOwnership.Resolution ordered = null;
+			boolean newestVisibleRow = true;
+			if (direct.owner().source() != RunOwnership.Source.CROESUS_HISTORICAL || !direct.matched()) {
+				List<CroesusRunSelection.Evidence> visible = new ArrayList<>();
+				int selectedRow = -1;
+				for (Slot visibleSlot : menu.slots) {
+					if (!isServerOwnedSlot(visibleSlot)) continue;
+					ItemStack visibleStack = visibleSlot.getItem();
+					if (visibleStack.isEmpty() || isCroesusMainMenuChromeStack(visibleStack)) continue;
+					if (visibleSlot.index < slot.index) newestVisibleRow = false;
+					if (visibleSlot.index == slot.index) selectedRow = visible.size();
+					visible.add(CroesusRunSelection.parse(cleanText(visibleStack.getHoverName().getString()),
+						cleanLoreLines(visibleStack), selectedAtMillis, java.time.ZoneId.systemDefault()));
+				}
+				ordered = RunOwnership.resolveCroesusMenuOrder(visible, selectedRow,
+					DrtConfigManager.getRunCompletions(), selectedAtMillis, DrtConfigManager.getCurrentAccountUuid());
+			}
+			RunOwnership.Resolution resolution = RunOwnership.finishCroesusClick(direct, ordered, newestVisibleRow);
+			if (resolution.matched()) {
+				rewardRunOwner = resolution.owner();
+				pendingChestOwner = rewardRunOwner;
+				DrtConfigManager.updateRunCompletionParty(rewardRunOwner.runSessionId(), CroesusPartyParser.parse(runLore));
+				croesusRunViewFloor = configFloor(rewardRunOwner.floor());
+				DungeonRunTracker.LOGGER.info(
+					"[DRT] Croesus run selected: floor={} runSessionId={} source={} reason={}",
+					rewardRunOwner.floor(),
+					rewardRunOwner.runSessionId(),
+					rewardRunOwner.source(),
+					resolution.reason()
+				);
+			} else {
+				pendingChestOwner = RunOwnership.Owner.none();
+				selectedCroesusRunBound = false;
+				croesusRunViewFloor = configFloor(evidence.floor());
+				DungeonRunTracker.LOGGER.warn(
+					"[DRT] Croesus run selection not attached: status={} floor={} candidates={} reason={}",
+					resolution.status(),
+					evidence.floor(),
+					resolution.candidateCount(),
+					resolution.reason()
+				);
+			}
+			return;
+		}
+	}
+
+	/**
+	 * Reads the party from every Croesus run entry the server already sent with the open menu, so
+	 * history is enriched without hovering each one. Lore arrives with the container contents and
+	 * nothing is clicked; only entries that match exactly one completion are used.
+	 */
+	private void scanCroesusMenuParties(Minecraft client) {
+		if (!(client.gui.screen() instanceof AbstractContainerScreen<?> screen) || client.player == null) return;
+		if (!isCroesusMainMenuTitle(normalize(screen.getTitle().getString()))) return;
+		AbstractContainerMenu menu = client.player.containerMenu;
+		if (menu == null) return;
+		long now = System.currentTimeMillis();
+		List<CroesusPartyRecovery.Entry> entries = new ArrayList<>();
+		StringBuilder fingerprint = new StringBuilder().append(System.identityHashCode(screen)).append('#').append(menu.containerId);
+		for (Slot slot : menu.slots) {
+			if (!isServerOwnedSlot(slot)) continue;
+			ItemStack stack = slot.getItem();
+			if (stack.isEmpty() || isCroesusMainMenuChromeStack(stack)) continue;
+			List<String> lore = cleanLoreLines(stack);
+			List<DungeonPartyMember> party = CroesusPartyParser.parse(lore);
+			if (party.isEmpty()) continue;
+			String displayName = cleanText(stack.getHoverName().getString());
+			fingerprint.append('|').append(slot.index).append(':').append(displayName.hashCode()).append(':').append(lore.hashCode());
+			entries.add(new CroesusPartyRecovery.Entry(
+				CroesusRunSelection.parse(displayName, lore, now, java.time.ZoneId.systemDefault()), party));
+		}
+		if (entries.isEmpty() || fingerprint.toString().equals(lastCroesusPartyScanFingerprint)) return;
+		lastCroesusPartyScanFingerprint = fingerprint.toString();
+		int updated = 0;
+		for (var match : CroesusPartyRecovery.plan(entries, DrtConfigManager.getRunCompletions()).entrySet()) {
+			if (DrtConfigManager.updateRunCompletionParty(match.getKey(), match.getValue())) updated++;
+		}
+		if (updated > 0) DungeonRunTracker.LOGGER.info("[DRT] Croesus menu filled party details for {} run(s)", updated);
+	}
+
+	private void observeHoveredCroesusParty(Minecraft client, int mouseX, int mouseY) {
+		if (!(client.gui.screen() instanceof AbstractContainerScreen<?> screen) || client.player == null) return;
+		if (!isCroesusMainMenuTitle(normalize(screen.getTitle().getString()))) return;
+		AbstractContainerMenu menu = client.player.containerMenu;
+		if (menu == null) return;
+		ScreenBounds bounds = currentContainerBounds(client);
+		for (Slot slot : menu.slots) {
+			if (!isServerOwnedSlot(slot) || !pointInRect(mouseX, mouseY, bounds.left + slot.x, bounds.top + slot.y, 16, 16)) continue;
+			ItemStack stack = slot.getItem();
+			if (stack.isEmpty() || isCroesusMainMenuChromeStack(stack)) return;
+			List<String> runLore = cleanLoreLines(stack);
+			var party = CroesusPartyParser.parse(runLore);
+			if (party.isEmpty()) return;
+			long now = System.currentTimeMillis();
+			String fingerprint = System.identityHashCode(screen) + ":" + slot.index + ":" + runLore.hashCode();
+			if (fingerprint.equals(lastHoveredCroesusPartyFingerprint) && now - lastHoveredCroesusPartyScanMillis < 1_000L) return;
+			lastHoveredCroesusPartyFingerprint = fingerprint;
+			lastHoveredCroesusPartyScanMillis = now;
+			CroesusRunSelection.Evidence evidence = CroesusRunSelection.parse(
+				cleanText(stack.getHoverName().getString()), runLore, now, java.time.ZoneId.systemDefault());
+			RunOwnership.Resolution resolution = RunOwnership.resolveCroesus(
+				evidence, DrtConfigManager.getRunCompletions(), now, DrtConfigManager.getCurrentAccountUuid());
+			if (resolution.matched() && DrtConfigManager.updateRunCompletionParty(resolution.owner().runSessionId(), party)) {
+				DungeonRunTracker.LOGGER.info("[DRT] Croesus hover refreshed party for runSessionId={}", resolution.owner().runSessionId());
+			}
+			return;
+		}
 	}
 
 	private CroesusMainMenuRunState parseCroesusMainMenuRunState(ItemStack stack) {
@@ -2863,13 +3238,13 @@ public final class DungeonRunTrackerFeature {
 	/** Glass panes, terracotta fillers, Close / Go Back, Eyes of Ender / arrows for paging. */
 	private boolean isCroesusMainMenuChromeStack(ItemStack stack) {
 		if (stack == null || stack.isEmpty()) return true;
-		if (stack.is(Items.LIGHT_GRAY_STAINED_GLASS_PANE)
-				|| stack.is(Items.GRAY_STAINED_GLASS_PANE)
-				|| stack.is(Items.BLACK_STAINED_GLASS_PANE)
+		if (stack.is(Items.STAINED_GLASS_PANE.lightGray())
+				|| stack.is(Items.STAINED_GLASS_PANE.gray())
+				|| stack.is(Items.STAINED_GLASS_PANE.black())
 				|| stack.is(Items.BARRIER)
 				|| stack.is(Items.ARROW)
 				|| stack.is(Items.ENDER_EYE)
-				|| stack.is(Items.RED_TERRACOTTA)
+				|| stack.is(Items.DYED_TERRACOTTA.red())
 				|| stack.is(Items.TERRACOTTA)
 				|| stack.is(Items.AIR)) {
 			return true;
@@ -2888,7 +3263,7 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private OverlayChestData currentOverlayChestData(Minecraft client) {
-		if (!(client.screen instanceof AbstractContainerScreen<?> screen)) return null;
+		if (!(client.gui.screen() instanceof AbstractContainerScreen<?> screen)) return null;
 		String normalizedTitle = normalize(screen.getTitle().getString());
 		AbstractContainerMenu liveMenu = client.player == null ? null : client.player.containerMenu;
 		String canonicalTitle = resolveCanonicalRewardChestTitle(normalizedTitle, liveMenu);
@@ -2948,8 +3323,7 @@ public final class DungeonRunTrackerFeature {
 			}
 			if (pending.usedKuudraKey) {
 				breakdown.usedKuudraKey = true;
-				// Do not copy a stale Hot-key price; re-resolve from the best known tier below.
-				breakdown.kuudraKeyCostCoins = 0L;
+				if (breakdown.kuudraKeyCostCoins <= 0L) breakdown.kuudraKeyCostCoins = pending.kuudraKeyCostCoins;
 			}
 		} else if (isCatacombsRewardChest(canonicalTitle) && shouldPreviewArmedKismetForChest(canonicalTitle)) {
 			applyArmedRewardModifiersForPreview(breakdown);
@@ -3026,7 +3400,10 @@ public final class DungeonRunTrackerFeature {
 		if (openSlot >= 0) {
 			ItemStack openStack = menu.getSlot(openSlot).getItem();
 			Long cost = parseChestCost(openStack);
-			if (cost != null) breakdown.baseChestCostCoins = cost;
+			if (cost != null) {
+				breakdown.baseChestCostCoins = cost;
+				breakdown.baseChestCostKnown = true;
+			}
 			applyModifierLoreHints(cleanLoreLines(openStack), breakdown);
 		}
 
@@ -3039,6 +3416,7 @@ public final class DungeonRunTrackerFeature {
 				Long cost = parseChestCost(stack);
 				if (cost != null) {
 					breakdown.baseChestCostCoins = cost;
+					breakdown.baseChestCostKnown = true;
 					applyModifierLoreHints(cleanLoreLines(stack), breakdown);
 					break;
 				}
@@ -3061,17 +3439,18 @@ public final class DungeonRunTrackerFeature {
 	private void applyArmedRewardModifiersForPreview(ChestCostBreakdown breakdown) {
 		if (breakdown == null) return;
 		if (nextOpenedChestUsesDungeonChestKey) breakdown.usedDungeonChestKey = true;
-		if (nextOpenedChestUsesKismetFeather || rewardMenuKismetRerollPending) {
-			breakdown.usedKismetFeather = true;
-		}
+		breakdown.usedKismetFeather = true;
 		if (nextOpenedChestUsesWheelOfFate) breakdown.usedWheelOfFate = true;
 	}
 
 	private boolean shouldPreviewArmedKismetForChest(String canonicalTitle) {
-		if (!nextOpenedChestUsesKismetFeather && !rewardMenuKismetRerollPending) return false;
-		return rewardMenuKismetRerolledChestTitle != null
-				&& !rewardMenuKismetRerolledChestTitle.isBlank()
-				&& rewardMenuKismetRerolledChestTitle.equals(canonicalTitle);
+		return kismetCharges.wouldChargeSpecific(canonicalTitle, System.currentTimeMillis());
+	}
+
+	private boolean sameOpenChest(String canonicalTitle) {
+		return pendingLootChestAssigned
+			&& canonicalTitle != null
+			&& toDisplayChestTitle(canonicalTitle).equalsIgnoreCase(pendingLootChestTitle);
 	}
 
 	private String canonicalRewardChestTitle(String normalizedTitle) {
@@ -3168,10 +3547,13 @@ public final class DungeonRunTrackerFeature {
 		}
 		NeuItemResolver.enqueue(visualId);
 		ItemStack resolved = NeuItemResolver.getResolvedStack(visualId);
-		if (resolved != null && !resolved.isEmpty() && !resolved.is(Items.BARRIER)) return resolved;
+		if (resolved != null && !resolved.isEmpty() && !resolved.is(Items.BARRIER)) {
+			if (NeuItemResolver.hasRenderableModel(resolved)) return resolved;
+		}
+		if (visualId.equals("KUUDRA_TEETH")) return new ItemStack(Items.PRISMARINE_SHARD);
 		if (visualId.startsWith("ESSENCE_")) return new ItemStack(Items.NETHER_STAR);
 		if (visualId.equals("WITHER_BLOOD")) return new ItemStack(Items.PLAYER_HEAD);
-		if (id.startsWith("SHARD_")) return new ItemStack(Items.AMETHYST_SHARD);
+		if (id.startsWith("SHARD_")) return new ItemStack(Items.PLAYER_HEAD);
 		if (visualId.contains("SWORD") || visualId.contains("DAGGER") || visualId.contains("BLADE") || visualId.contains("CLOAK")) {
 			return new ItemStack(Items.IRON_SWORD);
 		}
@@ -3188,6 +3570,7 @@ public final class DungeonRunTrackerFeature {
 		ItemStack icon = overlayItemIcon(itemId);
 		if (!icon.isEmpty()) return icon;
 		String id = itemId == null ? "" : itemId.toUpperCase(Locale.ROOT);
+		if (id.equals("KUUDRA_TEETH")) return new ItemStack(Items.PRISMARINE_SHARD);
 		if (id.contains("CLOAK") || id.contains("SWORD") || id.contains("BLADE") || id.contains("DAGGER")) {
 			return new ItemStack(Items.IRON_SWORD);
 		}
@@ -3208,6 +3591,7 @@ public final class DungeonRunTrackerFeature {
 
 	private String normalizeOverlayItemId(String id) {
 		return switch (id) {
+			case "SHARD_WITHER_SPECTRE" -> "SHARD_WITHER_SPECTER";
 			case "NECRONS_HANDLE" -> "NECRON_HANDLE";
 			case "SCARFS_STUDIES" -> "SCARF_STUDIES";
 			case "SPIRIT_STONE" -> "SPIRIT_DECOY";
@@ -3226,9 +3610,10 @@ public final class DungeonRunTrackerFeature {
 		String visualItemId = visualOverlayItemId(normalizeOverlayItemId(itemId));
 		Matcher bookMatcher = ENCHANTED_BOOK_PATTERN.matcher(rawName);
 		if (bookMatcher.matches()) {
-			String enchantName = bookMatcher.group(1).trim();
+			String enchantName = bookMatcher.group(1).trim().replaceFirst("(?i)^Ultimate\\s+", "");
 			String displayName = enchantName + " " + romanToArabic(bookMatcher.group(2));
-			return new OverlayItemDisplay(displayName, isUltimateEnchantName(enchantName, itemId), isUltimateEnchantName(enchantName, itemId) ? OVERLAY_ULTIMATE : OVERLAY_BOOK);
+			boolean ultimate = isUltimateEnchantName(bookMatcher.group(1), itemId);
+			return new OverlayItemDisplay(displayName, ultimate, ultimate ? OVERLAY_ULTIMATE : OVERLAY_BOOK);
 		}
 		if (itemId.startsWith("ENCHANTMENT_")) {
 			String displayName = enchantDisplayFromItemId(itemId);
@@ -3284,6 +3669,15 @@ public final class DungeonRunTrackerFeature {
 		}
 		String stripped = normalizeEnchantName(displayName == null ? "" : displayName);
 		return ULTIMATE_ENCHANTS.contains(stripped);
+	}
+
+	private String normalizeEnchantName(String enchantName) {
+		String normalized = sanitizeLootName(enchantName).replaceFirst("^(?i)Ultimate\\s+", "");
+		return normalized
+			.replaceAll("[^A-Za-z0-9 ]", " ")
+			.trim()
+			.replaceAll("\\s+", "_")
+			.toUpperCase(Locale.ROOT);
 	}
 
 	private String enchantDisplayFromItemId(String itemId) {
@@ -3356,8 +3750,8 @@ public final class DungeonRunTrackerFeature {
 	private boolean handleKuudraLine(String cleaned, long now) {
 		if (cleaned == null || cleaned.isBlank()) return false;
 
-		boolean entry = isKuudraEntryMessage(cleaned);
-		boolean completion = isKuudraCompletionMessage(cleaned);
+		boolean entry = KuudraChatLines.isEntry(cleaned);
+		boolean completion = KuudraChatLines.isCompletion(cleaned);
 		boolean strongLine = entry || completion || hasStrongKuudraTierSignal(cleaned);
 		DungeonFloor lineTier = detectKuudraTierFromLine(cleaned, strongLine || insideKuudra || isCurrentFloorKuudra());
 
@@ -3411,7 +3805,8 @@ public final class DungeonRunTrackerFeature {
 
 	private void clearPendingCompletionScore() {
 		pendingScoreGrade = null;
-		pendingScoreReading = null;
+		pendingScoreValue = 0;
+		pendingScoreRecorded = false;
 		pendingSPlusFloor = DungeonFloor.UNKNOWN;
 		pendingSPlusUntilMillis = 0L;
 	}
@@ -3461,7 +3856,8 @@ public final class DungeonRunTrackerFeature {
 
 		refreshCountdown = REFRESH_INTERVAL_TICKS;
 		List<String> scoreboardLines = readScoreboardLines(client);
-		List<String> tabLines = TabReader.readNormalizedLines(client);
+		List<String> rawTabLines = TabReader.readRawLines(client);
+		List<String> tabLines = TabReader.normalizeLines(rawTabLines);
 		updateKuudraReputationFromLines(tabLines, scoreboardLines);
 		boolean wasKuudra = insideKuudra;
 		inDungeonHub = isDungeonHub(scoreboardLines) || isDungeonHub(tabLines);
@@ -3472,6 +3868,10 @@ public final class DungeonRunTrackerFeature {
 				&& (wasKuudra || currentRunActive || inCrimsonIsle || isKuudra(scoreboardLines) || isKuudra(tabLines));
 		insideDungeon = isDungeon(scoreboardLines) || isDungeonTab(tabLines) || now <= dungeonSignalUntilMillis;
 		insideKuudra = tierImpliesKuudra || isKuudra(scoreboardLines) || isKuudra(tabLines) || now <= kuudraSignalUntilMillis;
+		// Only while the instance itself is confirmed; the grace window after leaving must not pick up hub parties.
+		boolean confirmedDungeon = isDungeon(scoreboardLines) || isDungeonTab(tabLines);
+		boolean confirmedKuudra = !confirmedDungeon && (isKuudraHollow(scoreboardLines) || isKuudraHollow(tabLines));
+		if (confirmedDungeon || confirmedKuudra) updateObservedParty(client, confirmedKuudra);
 
 		if (!insideDungeon && !insideKuudra) {
 			finishCurrentRunTiming(now);
@@ -3514,11 +3914,49 @@ public final class DungeonRunTrackerFeature {
 		}
 	}
 
+	/**
+	 * Accumulates the party shown in the tab list for the current instance. Every server transfer
+	 * creates a new client level, so a roster seen in one instance can never reach another run.
+	 * Sightings after completion (end screen) still complete that run's stored party.
+	 */
+	private void updateObservedParty(Minecraft client, boolean kuudra) {
+		Object level = client.level;
+		if (level != observedPartyLevel) {
+			observedPartyLevel = level;
+			observedDungeonParty = List.of();
+			observedPartyCompletionRunId = "";
+		}
+		List<String> lines = TabReader.readServerLines(client);
+		List<DungeonPartyMember> observed = kuudra
+			? DungeonPartyTabParser.partySectionNames(lines).stream().map(name -> new DungeonPartyMember(name, "", "", 0)).toList()
+			: DungeonPartyTabParser.parse(lines);
+		if (observed.isEmpty()) return;
+		PartyMemberReconciler.Result merged = PartyMemberReconciler.reconcile(observedDungeonParty, observed);
+		if (!merged.changed()) return;
+		observedDungeonParty = merged.members();
+		if (!observedPartyCompletionRunId.isBlank()
+			&& DrtConfigManager.updateRunCompletionParty(observedPartyCompletionRunId, observedDungeonParty)) {
+			DungeonRunTracker.LOGGER.info("[DRT] Tab party refreshed for completed runSessionId={}", observedPartyCompletionRunId);
+		}
+	}
+
+	private boolean isKuudraHollow(List<String> lines) {
+		for (String line : lines) {
+			if (line.contains("KUUDRA'S HOLLOW") || line.contains("KUUDRA HOLLOW")) return true;
+		}
+		return false;
+	}
+
 	private void captureRewardChestCosts(Minecraft client) {
-		if (!(client.screen instanceof AbstractContainerScreen<?> screen) || client.player == null) return;
+		if (!(client.gui.screen() instanceof AbstractContainerScreen<?> screen) || client.player == null) return;
 
 		String normalizedTitle = normalize(screen.getTitle().getString());
 		AbstractContainerMenu menu = client.player.containerMenu;
+		if (isCroesusMainMenuTitle(normalizedTitle)) {
+			croesusNavigationActive = true;
+			if (selectedCroesusSourceScreen != screen) clearSelectedCroesusRun();
+		}
+		if (isCroesusChestListTitle(normalizedTitle)) bindSelectedCroesusRun(System.currentTimeMillis());
 		String canonicalRewardTitle = resolveCanonicalRewardChestTitle(normalizedTitle, menu);
 		DungeonFloor menuTitleFloor = rewardContextFloorFromTitle(normalizedTitle);
 		long now = System.currentTimeMillis();
@@ -3527,13 +3965,16 @@ public final class DungeonRunTrackerFeature {
 			trackedRewardScreenSinceMillis = now;
 		}
 		rememberRunContextFromMenuTitle(normalizedTitle, now);
+		rememberCroesusRunViewFloor(normalizedTitle, canonicalRewardTitle, menuTitleFloor);
 
 		if (canonicalRewardTitle != null) {
 			viewedCroesusChestTitles.add(canonicalRewardTitle);
 			if (lootWindowUntilMillis <= 0L || now > lootWindowUntilMillis) {
-				startLateOwnedOrAdHocLootWindow(now, menuTitleFloor);
-				if (menuTitleFloor != DungeonFloor.UNKNOWN) {
-					pendingLootFloor = menuTitleFloor;
+				// Chest titles carry no floor; the Croesus run view they were opened from does.
+				DungeonFloor floorHint = menuTitleFloor != DungeonFloor.UNKNOWN ? menuTitleFloor : hubCroesusRunViewFloor();
+				startLateOwnedOrAdHocLootWindow(now, floorHint);
+				if (floorHint != DungeonFloor.UNKNOWN) {
+					pendingLootFloor = floorHint;
 					updatePendingChestContextProjection(EvidenceStrength.GUI_TITLE_INFERENCE, DetectionSource.GUI_TITLE_INFERENCE);
 				}
 			}
@@ -3544,15 +3985,15 @@ public final class DungeonRunTrackerFeature {
 				refreshRewardModifierScan(menu, previewKey, now);
 				// Do not re-parse Croesus list offers from the preview menu. Preview icons often
 				// lack Contents and would wipe the overlay cache (flash then empty).
-				if (pendingLootChestAssigned && pendingLootEntries.isEmpty()) {
-					resetPendingChestState();
+				if (RewardChestCapture.shouldDiscardUnconfirmedCapture(pendingLootChestAssigned, pendingLootChatConfirmed)) {
+					discardUnconfirmedRewardCapture();
 				}
 				// Arm so the paid open counts even if this tier was already opened earlier in Croesus
 				// (offers are cached by title, so a second Wood from another run looks "Already Opened").
 				armedPreviewRewardChestTitle = canonicalRewardTitle;
 				Long previewCost = parseChestCost(menu.getSlot(findOpenRewardChestSlotIndex(menu)).getItem());
 				armedPreviewRewardChestCost = previewCost == null ? -1L : previewCost;
-				captureDungeonChestPreview(screen, menu, canonicalRewardTitle, previewCost, now);
+				capturePersistedDungeonChestPreview(screen, menu, canonicalRewardTitle, previewCost, now);
 				// Keep key-requirement from this preview so the subsequent open can bill a key.
 				lastViewedOpenedRewardChestTitle = "";
 				return;
@@ -3569,12 +4010,18 @@ public final class DungeonRunTrackerFeature {
 				armedPreviewRewardChestTitle = "";
 				armedPreviewRewardChestCost = -1L;
 			}
-			// Skip pure re-views of an already-counted tier. Never skip a preview→Open sequence —
+			// Skip pure re-views of an already-counted tier. Never skip a preview→Open sequence -
 			// multi-run Croesus reuses titles (two Wood chests) and the title-keyed cache stays opened.
 			if (!openedFromArmedPreview
 				&& cached != null
 				&& cached.alreadyOpened
 				&& openedRewardChestTitlesInLootWindow.contains(canonicalRewardTitle)) {
+				if (RewardChestCapture.shouldReadLaterSnapshot(
+					sameOpenChest(canonicalRewardTitle),
+					lootCollectionUntilMillis > now
+				)) {
+					captureOpenedRewardChestLoot(client, menu, now);
+				}
 				updateCachedRewardChestOffers(menu);
 				lastViewedOpenedRewardChestTitle = "";
 				return;
@@ -3583,6 +4030,12 @@ public final class DungeonRunTrackerFeature {
 				&& cached != null
 				&& cached.alreadyOpened
 				&& isHubCroesusRewardBrowsing()) {
+				if (RewardChestCapture.shouldReadLaterSnapshot(
+					sameOpenChest(canonicalRewardTitle),
+					lootCollectionUntilMillis > now
+				)) {
+					captureOpenedRewardChestLoot(client, menu, now);
+				}
 				updateCachedRewardChestOffers(menu);
 				lastViewedOpenedRewardChestTitle = canonicalRewardTitle;
 				return;
@@ -3623,7 +4076,7 @@ public final class DungeonRunTrackerFeature {
 
 		if (!isRewardsMenuTitle(normalizedTitle) && !isCroesusChestListTitle(normalizedTitle)) return;
 
-		// Back on the chest list — drop any unused preview arm (backed out without opening).
+		// Back on the chest list - drop any unused preview arm (backed out without opening).
 		armedPreviewRewardChestTitle = "";
 		armedPreviewRewardChestCost = -1L;
 
@@ -3655,6 +4108,7 @@ public final class DungeonRunTrackerFeature {
 				? detectKuudraTierFromLine(normalizedTitle, normalizedTitle.contains("KUUDRA") || insideKuudra || isCurrentFloorKuudra())
 				: DungeonFloor.UNKNOWN;
 		if (kuudraTier != DungeonFloor.UNKNOWN) {
+			if (rememberHistoricalRewardContextFromMenuTitle(normalizedTitle, kuudraTier, now)) return;
 			if (menuTitleConflictsWithActiveRun(kuudraTier)) {
 				if (pendingLootFloor == DungeonFloor.UNKNOWN && lootWindowUntilMillis > 0L && now <= lootWindowUntilMillis) {
 					pendingLootFloor = kuudraTier;
@@ -3675,6 +4129,7 @@ public final class DungeonRunTrackerFeature {
 
 		DungeonFloor titleFloor = detectFloorFromLine(normalizedTitle);
 		if (titleFloor != DungeonFloor.UNKNOWN && titleFloor != activeRunFloorProjection()) {
+			if (rememberHistoricalRewardContextFromMenuTitle(normalizedTitle, titleFloor, now)) return;
 			if (menuTitleConflictsWithActiveRun(titleFloor)) {
 				if (pendingLootFloor == DungeonFloor.UNKNOWN && lootWindowUntilMillis > 0L && now <= lootWindowUntilMillis) {
 					pendingLootFloor = titleFloor;
@@ -3689,6 +4144,33 @@ public final class DungeonRunTrackerFeature {
 				updatePendingChestContextProjection(EvidenceStrength.GUI_TITLE_INFERENCE, DetectionSource.GUI_TITLE_INFERENCE);
 			}
 		}
+	}
+
+	private boolean rememberHistoricalRewardContextFromMenuTitle(
+		String normalizedTitle,
+		DungeonFloor incomingFloor,
+		long now
+	) {
+		if (incomingFloor == null || incomingFloor == DungeonFloor.UNKNOWN) return false;
+		if (!isRewardsMenuTitle(normalizedTitle) && !isCroesusChestListTitle(normalizedTitle)) return false;
+		if (!isHubCroesusRewardBrowsing()) return false;
+
+		DungeonFloor previousFloor = pendingLootFloor;
+		boolean needsDetachedContext = previousFloor != incomingFloor
+			|| (!pendingLootOrphaned && menuTitleConflictsWithActiveRun(incomingFloor));
+		if (!needsDetachedContext) return true;
+
+		// A Croesus run view belongs to the historical run named by its title. Finish any
+		// pending chest from the previous floor and create a separately owned context.
+		startLateOwnedOrAdHocLootWindow(now, incomingFloor);
+		if (pendingLootFloor == DungeonFloor.UNKNOWN) pendingLootFloor = incomingFloor;
+		updatePendingChestContextProjection(EvidenceStrength.GUI_TITLE_INFERENCE, DetectionSource.GUI_TITLE_INFERENCE);
+		DungeonRunTracker.LOGGER.debug(
+			"[DRT] Switched historical reward title context {} -> {}",
+			floorName(previousFloor),
+			incomingFloor.name()
+		);
+		return true;
 	}
 
 	private void refreshRewardModifierScan(AbstractContainerMenu menu, String screenKey, long now) {
@@ -3719,14 +4201,20 @@ public final class DungeonRunTrackerFeature {
 			DungeonChestOffer offer = parseChestOffer(canonicalKey, stack);
 			cachedChestOffersByTitle.put(canonicalKey, offer);
 			cachedChestOfferFingerprintsByTitle.put(canonicalKey, fingerprint);
+			persistLiveChestOffer(offer, System.currentTimeMillis());
 		}
-		if (!kismetChargedThisLootWindow
-				&& rewardMenuKismetRerolledChestTitle.isBlank()
-				&& changedExistingOffers.size() == 1) {
-			// Contents fingerprint change on exactly one Croesus chest row is the reroll signal.
-			rewardMenuKismetRerolledChestTitle = changedExistingOffers.get(0);
-			rewardMenuKismetRerollPending = true;
-			nextOpenedChestUsesKismetFeather = true;
+		if (changedExistingOffers.size() == 1) {
+			// One row changing is the reroll. A full menu refresh changes every row and is not a use.
+			boolean openCharged = pendingLootChestAssigned
+				&& pendingLootCostBreakdown != null
+				&& pendingLootCostBreakdown.usedKismetFeather;
+			kismetCharges.onChestContentsChanged(
+				changedExistingOffers.get(0),
+				openCharged,
+				pendingLootChestTitle,
+				System.currentTimeMillis(),
+				LOOT_WINDOW_MS
+			);
 		}
 	}
 
@@ -3738,7 +4226,7 @@ public final class DungeonRunTrackerFeature {
 		// Prefix matching "GOLD " false-positives Gold Ingot / Emerald Blade / etc.
 		if (TIER_NAME_TO_CHEST_TITLE.containsKey(chestTitle)) {
 			Minecraft client = Minecraft.getInstance();
-			if (client.screen instanceof AbstractContainerScreen<?> screen) {
+			if (client.gui.screen() instanceof AbstractContainerScreen<?> screen) {
 				String screenTitle = normalize(screen.getTitle().getString());
 				if (isCroesusChestListTitle(screenTitle) || isRewardsMenuTitle(screenTitle)) {
 					return TIER_NAME_TO_CHEST_TITLE.get(chestTitle);
@@ -3765,10 +4253,12 @@ public final class DungeonRunTrackerFeature {
 		List<String> lore = cleanLoreLines(stack);
 		long costCoins = 0L;
 		long valueCoins = 0L;
-		boolean alreadyOpened = false;
+		CroesusChestLore.Offer parsedLore = CroesusChestLore.parse(lore);
+		boolean alreadyOpened = parsedLore.alreadyOpened();
 		List<DungeonLootEntry> entries = new ArrayList<>();
 
 		Long parsedCost = parseChestCost(stack);
+		if (parsedCost == null) parsedCost = parsedLore.costCoins();
 		if (parsedCost != null) costCoins = parsedCost;
 		for (int i = 0; i < lore.size(); i++) {
 			String line = lore.get(i);
@@ -3780,17 +4270,8 @@ public final class DungeonRunTrackerFeature {
 			}
 		}
 
-		boolean inContents = false;
-		for (String line : lore) {
-			if (line.equalsIgnoreCase("Contents") || line.equalsIgnoreCase("Contents:")) {
-				inContents = true;
-				continue;
-			}
-			if (!inContents) continue;
-			if (isContentsSectionEnd(line)) break;
-			if (isContentsMetaLine(line)) continue;
-
-			ParsedLootName parsed = parseLootDisplayName(line);
+		for (CroesusChestLore.Reward reward : parsedLore.rewards()) {
+			ParsedLootName parsed = parseLootDisplayName(reward.name());
 			if (parsed.name().isBlank() || shouldIgnoreLootName(parsed.name())) continue;
 
 			String itemId = resolveItemId(parsed.name());
@@ -3802,10 +4283,18 @@ public final class DungeonRunTrackerFeature {
 				if (resolved != null) itemId = resolved;
 			}
 			if (!itemId.isEmpty() || looksReasonableLootName(parsed.name()) || masterStar) {
-				entries.add(new DungeonLootEntry(parsed.name(), itemId == null ? "" : itemId, parsed.quantity()));
+				entries.add(new DungeonLootEntry(parsed.name(), itemId == null ? "" : itemId, Math.max(parsed.quantity(), reward.quantity())));
 			}
 		}
-		ChestCostBreakdown breakdown = new ChestCostBreakdown(costCoins);
+		if (valueCoins <= 0L && !entries.isEmpty()) {
+			valueCoins = DungeonProfitPricing.calculateLootValue(entries, DrtConfigManager.getConfig());
+		}
+		ChestCostBreakdown breakdown = new ChestCostBreakdown();
+		if (parsedCost != null) {
+			breakdown.baseChestCostCoins = costCoins;
+			breakdown.baseChestCostKnown = true;
+		}
+		if (isConfirmedFreeChestTitle(normalizedTitle)) breakdown.baseChestCostKnown = true;
 		applyModifierLoreHints(lore, breakdown);
 		applyKuudraChestCostHint(normalizedTitle, breakdown, lore);
 		populateKnownModifierCosts(breakdown);
@@ -3813,8 +4302,122 @@ public final class DungeonRunTrackerFeature {
 		DungeonChestOffer offer = new DungeonChestOffer(toDisplayChestTitle(normalizedTitle), breakdown, valueCoins, entries);
 		offer.contextFloor = detectRewardFloorFromOffer(normalizedTitle, lore);
 		offer.alreadyOpened = alreadyOpened;
+		offer.purchased = alreadyOpened;
 		offer.normalize();
 		return offer;
+	}
+
+	private void persistLiveChestOffer(DungeonChestOffer offer, long now) {
+		if (offer == null || offer.lootEntries == null || offer.lootEntries.isEmpty()) return;
+		RunOwnership.Owner owner = offerOwner(now);
+		if (!owner.valid()) return;
+		DungeonChestOffer stored = offer.copy();
+		stored.observedAtEpochMillis = now;
+		if (stored.contextFloor == null || stored.contextFloor == DungeonFloor.UNKNOWN) {
+			stored.contextFloor = configFloor(owner.floor());
+		}
+		DrtConfigManager.recordObservedChestOffer(owner.runSessionId(), stored);
+	}
+
+	private void capturePersistedDungeonChestPreview(
+		Screen screen,
+		AbstractContainerMenu menu,
+		String canonicalTitle,
+		Long cost,
+		long now
+	) {
+		String ownerRunId = offerOwnerRunSessionId(now);
+		if (ownerRunId.isBlank() || menu == null) return;
+		if (!isCatacombsRewardChest(canonicalTitle) || !rewardScreenSettled(screen, now)) return;
+		String key = ownerRunId + "#" + canonicalTitle + "#" + menu.containerId;
+		if (capturedDungeonPreviews.contains(key)) return;
+		List<DungeonLootEntry> entries = new ArrayList<>();
+		StringBuilder signature = new StringBuilder();
+		var playerInventory = Minecraft.getInstance().player == null ? null : Minecraft.getInstance().player.getInventory();
+		for (int slotIndex = 0; slotIndex < menu.slots.size(); slotIndex++) {
+			Slot slot = menu.getSlot(slotIndex);
+			if (slot == null || slot.container == playerInventory) continue;
+			ItemStack stack = slot.getItem();
+			if (stack.isEmpty() || stackIndicatesOpenRewardChest(stack) || isRewardChestUiStack(stack)) continue;
+			if (canonicalChestTitleFromStack(stack) != null) continue;
+			DungeonLootEntry entry = lootEntryFromRewardChestStack(stack);
+			if (entry == null) continue;
+			entries.add(entry);
+			signature.append(entry.rawName).append('x').append(entry.quantity).append('|');
+		}
+		if (entries.isEmpty()) return;
+		String currentSignature = signature.toString();
+		String previousSignature = stableDungeonPreviewScans.put(key, currentSignature);
+		if (!currentSignature.equals(previousSignature)) return;
+		capturedDungeonPreviews.add(key);
+		ChestCostBreakdown breakdown = new ChestCostBreakdown();
+		if (cost != null) {
+			breakdown.baseChestCostCoins = Math.max(0L, cost);
+			breakdown.baseChestCostKnown = true;
+		}
+		if (isConfirmedFreeChestTitle(canonicalTitle)) breakdown.baseChestCostKnown = true;
+		long value = DungeonProfitPricing.calculateLootValue(entries, DrtConfigManager.getConfig());
+		DungeonChestOffer offer = new DungeonChestOffer(toDisplayChestTitle(canonicalTitle), breakdown, value, entries);
+		try {
+			String contextFloor = pendingLootFloor != null && pendingLootFloor != DungeonFloor.UNKNOWN
+				? pendingLootFloor.name()
+				: rewardRunOwner.floor();
+			offer.contextFloor = DungeonFloor.valueOf(contextFloor);
+		} catch (IllegalArgumentException ignored) {
+			offer.contextFloor = DungeonFloor.UNKNOWN;
+		}
+		offer.observedAtEpochMillis = now;
+		DrtConfigManager.recordObservedChestOffer(ownerRunId, offer);
+	}
+
+	private String offerOwnerRunSessionId(long now) {
+		RunOwnership.Owner owner = offerOwner(now);
+		return owner.valid() ? owner.runSessionId() : "";
+	}
+
+	private RunOwnership.Owner offerOwner(long now) {
+		if (lootWindowUntilMillis > 0L && now <= lootWindowUntilMillis && pendingChestOwner.valid()) return pendingChestOwner;
+		return rewardRunOwner;
+	}
+
+	private void clearSelectedCroesusRun() {
+		rewardRunOwner = RunOwnership.Owner.none();
+		selectedCroesusSourceScreen = null;
+		selectedCroesusRunBound = false;
+		croesusRunViewFloor = DungeonFloor.UNKNOWN;
+	}
+
+	private void bindSelectedCroesusRun(long now) {
+		if (!croesusNavigationActive || selectedCroesusRunBound || !rewardRunOwner.valid()) return;
+		DungeonRunCompletionRecord selected = DrtConfigManager.getRunCompletion(rewardRunOwner.runSessionId());
+		if (selected == null) {
+			clearSelectedCroesusRun();
+			return;
+		}
+		DungeonFloor floor = configFloor(selected.floor);
+		if (floor == DungeonFloor.UNKNOWN) {
+			clearSelectedCroesusRun();
+			return;
+		}
+		if (pendingLootChestAssigned && !pendingLootEntries.isEmpty()) flushPendingLootRecord(false);
+		else clearLootWindow();
+		rewardRunOwner = RunOwnership.Owner.from(selected, rewardRunOwner.source());
+		startLootWindow(now, Math.max(1, totalRunsCompleted()), floor);
+		pendingChestOwner = rewardRunOwner;
+		pendingLootOrphaned = false;
+		pendingScoreGrade = selected.grade;
+		croesusRunViewFloor = floor;
+		selectedCroesusRunBound = true;
+	}
+
+	private void persistCachedOffersForOwner(String ownerRunId, long now) {
+		if (ownerRunId == null || ownerRunId.isBlank()) return;
+		for (DungeonChestOffer offer : cachedChestOffersByTitle.values()) {
+			if (offer == null || offer.lootEntries == null || offer.lootEntries.isEmpty()) continue;
+			DungeonChestOffer stored = offer.copy();
+			if (stored.observedAtEpochMillis <= 0L) stored.observedAtEpochMillis = now;
+			DrtConfigManager.recordObservedChestOffer(ownerRunId, stored);
+		}
 	}
 
 	private DungeonFloor detectRewardFloorFromOffer(String normalizedTitle, List<String> lore) {
@@ -3831,11 +4434,28 @@ public final class DungeonRunTrackerFeature {
 		// Catacombs loot commonly contains names such as "Master Skull - Tier 4". A bare
 		// TIER 4 in that Contents section is loot metadata, not evidence for Kuudra K4.
 		if (isCatacombsRewardChest(normalizedTitle)) return DungeonFloor.UNKNOWN;
-		for (String line : normalizedLore) {
-			DungeonFloor kuudraFloor = detectKuudraTierFromLine(line, isKuudraRewardContext(normalizedTitle));
+		DungeonFloor keyTier = detectKuudraKeyTierFromLore(lore);
+		if (keyTier.isKuudra()) return keyTier;
+		// Kuudra loot such as "Burning Kuudra Core" names a tier that is not the run's tier.
+		for (String line : linesOutsideContents(lore)) {
+			DungeonFloor kuudraFloor = detectKuudraTierFromLine(normalize(line), isKuudraRewardContext(normalizedTitle));
 			if (kuudraFloor != DungeonFloor.UNKNOWN) return kuudraFloor;
 		}
 		return DungeonFloor.UNKNOWN;
+	}
+
+	private List<String> linesOutsideContents(List<String> lore) {
+		List<String> result = new ArrayList<>(lore.size());
+		boolean inContents = false;
+		for (String line : lore) {
+			if (line.equalsIgnoreCase("Contents") || line.equalsIgnoreCase("Contents:")) {
+				inContents = true;
+				continue;
+			}
+			if (inContents && isContentsSectionEnd(line)) inContents = false;
+			if (!inContents && !normalize(line).isBlank()) result.add(line);
+		}
+		return result;
 	}
 
 	private void assignPendingOpenedChest(String normalizedTitle, DungeonChestOffer offer) {
@@ -3886,12 +4506,13 @@ public final class DungeonRunTrackerFeature {
 			alreadyChargedKey = false;
 			previousBreakdown = null;
 		}
-		if (offer != null && offer.contextFloor != null && offer.contextFloor != DungeonFloor.UNKNOWN
-				&& isCrossRunCroesusFloorSwitch(offer.contextFloor)) {
-			detachPendingLootFromStaleRun(offer.contextFloor);
+		DungeonFloor incomingFloor = openedChestContextFloor(offer);
+		if (!samePendingChest && isCrossRunCroesusFloorSwitch(incomingFloor)) {
+			// Another Croesus run: re-decide ownership so a recent completion on that floor keeps it.
+			startLateOwnedOrAdHocLootWindow(System.currentTimeMillis(), incomingFloor);
+			if (pendingLootFloor == DungeonFloor.UNKNOWN) pendingLootFloor = incomingFloor;
 		}
 		if (!samePendingChest) {
-			decidePendingRunLink(System.currentTimeMillis());
 			pendingChestSessionId = openTrackingChestSession(displayTitle, containerId, DetectionSource.CONFIRMED_GUI_COMPONENT);
 			pendingChestLootDedupKeys.clear();
 			pendingLootReconcilingGuiChat = false;
@@ -3904,11 +4525,13 @@ public final class DungeonRunTrackerFeature {
 		pendingLootChestAssigned = true;
 		pendingLootChestTitle = displayTitle;
 		pendingLootCostBreakdown = offer == null ? new ChestCostBreakdown() : offer.costBreakdown.copy();
-		applyOfferContextFloor(offer, "assignPendingOpenedChest");
+		if (isConfirmedFreeChestTitle(normalizedTitle)) pendingLootCostBreakdown.baseChestCostKnown = true;
+		applyOfferContextFloor(incomingFloor, "assignPendingOpenedChest");
 		// Never inherit key flags from croesus/preview offer lore; only charge when we have evidence.
 		pendingLootCostBreakdown.usedDungeonChestKey = false;
 		pendingLootCostBreakdown.dungeonChestKeyCostCoins = 0L;
 		if (previousBreakdown != null) {
+			if (previousBreakdown.baseChestCostKnown) pendingLootCostBreakdown.baseChestCostKnown = true;
 			if (previousBreakdown.baseChestCostCoins > 0L && pendingLootCostBreakdown.baseChestCostCoins <= 0L) {
 				pendingLootCostBreakdown.baseChestCostCoins = previousBreakdown.baseChestCostCoins;
 			}
@@ -3932,20 +4555,16 @@ public final class DungeonRunTrackerFeature {
 			nextOpenedChestUsesDungeonChestKey = false;
 			lastRewardModifierScanHadKeyRequirement = false;
 		}
-		if (shouldAssignArmedKismetToOpenedChest(normalizedTitle)) {
+		if (pendingLootCostBreakdown != null
+			&& kismetCharges.commitCharge(normalizedTitle, pendingLootCostBreakdown.usedKismetFeather, System.currentTimeMillis())) {
 			pendingLootCostBreakdown.usedKismetFeather = true;
 			pendingLootCostBreakdown.kismetRerolledChestOpened = true;
-			nextOpenedChestUsesKismetFeather = false;
-			rewardMenuKismetRerollPending = false;
-			rewardMenuKismetRerolledChestTitle = "";
-			kismetChargedThisLootWindow = true;
 		}
 		if (nextOpenedChestUsesWheelOfFate) {
 			pendingLootCostBreakdown.usedWheelOfFate = true;
 			nextOpenedChestUsesWheelOfFate = false;
 		}
 		applyKuudraChestCostHint(normalizedTitle, pendingLootCostBreakdown);
-		if (pendingLootCostBreakdown.usedKuudraKey) pendingLootCostBreakdown.kuudraKeyCostCoins = 0L;
 		populateKnownModifierCosts(pendingLootCostBreakdown);
 		suppressDungeonChestKeyForKuudra(normalizedTitle, pendingLootCostBreakdown);
 		trackingSession.updateChestCost(pendingChestSessionId, pendingLootCostBreakdown);
@@ -3953,15 +4572,25 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private void applyPreviewOpenCost(long previewOpenCost) {
-		if (previewOpenCost <= 0L || !pendingLootChestAssigned || pendingLootCostBreakdown == null) return;
-		if (pendingLootCostBreakdown.baseChestCostCoins > 0L) return;
-		pendingLootCostBreakdown.baseChestCostCoins = previewOpenCost;
+		if (previewOpenCost < 0L || !pendingLootChestAssigned || pendingLootCostBreakdown == null) return;
+		if (pendingLootCostBreakdown.baseChestCostKnown && pendingLootCostBreakdown.baseChestCostCoins > 0L) return;
+		pendingLootCostBreakdown.baseChestCostCoins = Math.max(0L, previewOpenCost);
+		pendingLootCostBreakdown.baseChestCostKnown = true;
 		trackingSession.updateChestCost(pendingChestSessionId, pendingLootCostBreakdown);
 	}
 
-	private void applyOfferContextFloor(DungeonChestOffer offer, String handler) {
-		if (offer == null || offer.contextFloor == null || offer.contextFloor == DungeonFloor.UNKNOWN) return;
-		DungeonFloor offerFloor = offer.contextFloor;
+	private boolean isConfirmedFreeChestTitle(String title) {
+		String normalized = normalize(title);
+		return normalized.equals("WOOD CHEST") || normalized.equals("FREE CHEST");
+	}
+
+	private DungeonFloor openedChestContextFloor(DungeonChestOffer offer) {
+		if (offer != null && offer.contextFloor != null && offer.contextFloor != DungeonFloor.UNKNOWN) return offer.contextFloor;
+		return hubCroesusRunViewFloor();
+	}
+
+	private void applyOfferContextFloor(DungeonFloor offerFloor, String handler) {
+		if (offerFloor == null || offerFloor == DungeonFloor.UNKNOWN) return;
 		if (pendingLootFloor == DungeonFloor.UNKNOWN) {
 			pendingLootFloor = offerFloor;
 			updatePendingChestContextProjection(EvidenceStrength.CONFIRMED_GUI_COMPONENT, DetectionSource.CONFIRMED_GUI_COMPONENT);
@@ -3991,76 +4620,28 @@ public final class DungeonRunTrackerFeature {
 		recordContextConflictDiagnostic(handler, "croesus_offer_floor_conflicts_with_pending_context", offerFloor);
 	}
 
-	private boolean hasLiveCompletion(long now) {
-		return !liveCompletionRunSessionId.isBlank() && now - liveCompletionAtMillis <= LIVE_CHEST_LINK_MS;
-	}
-
-	/** Still in the instance where the live completion happened: same world, not the Dungeon Hub. */
-	private boolean inLiveCompletionInstance(long now) {
-		return (insideDungeon || insideKuudra)
-			&& !inDungeonHub
-			&& hasLiveCompletion(now)
-			&& liveCompletionLevel != null
-			&& liveCompletionLevel == Minecraft.getInstance().level;
-	}
-
-	/** The run just completed in the Catacombs instance the player is still in; null otherwise. */
-	public LiveRewardSession liveRewardSession() {
-		long now = System.currentTimeMillis();
-		if (!insideDungeon || insideKuudra || !inLiveCompletionInstance(now)) return null;
-		return new LiveRewardSession(liveCompletionRunSessionId, liveCompletionFloor);
-	}
-
-	/**
-	 * Stores a reward chest preview seen in the dungeon instance as an offer of the run just
-	 * completed. The contents must read the same on two scans after the screen settled, so a menu
-	 * still filling in is never stored as a short offer.
-	 */
-	private void captureDungeonChestPreview(Screen screen, AbstractContainerMenu menu, String canonicalTitle, Long cost, long now) {
-		if (!insideDungeon || insideKuudra || !inLiveCompletionInstance(now) || menu == null) return;
-		if (!isCatacombsRewardChest(canonicalTitle) || !rewardScreenSettled(screen, now)) return;
-		String key = liveCompletionRunSessionId + "#" + canonicalTitle + "#" + menu.containerId;
-		if (capturedDungeonPreviews.contains(key)) return;
-		List<DungeonLootEntry> entries = new ArrayList<>();
-		StringBuilder signature = new StringBuilder();
-		var playerInventory = Minecraft.getInstance().player == null ? null : Minecraft.getInstance().player.getInventory();
-		for (int slotIndex = 0; slotIndex < menu.slots.size(); slotIndex++) {
-			Slot slot = menu.getSlot(slotIndex);
-			if (slot == null || slot.container == playerInventory) continue;
-			ItemStack stack = slot.getItem();
-			if (stack.isEmpty() || stackIndicatesOpenRewardChest(stack) || isRewardChestUiStack(stack)) continue;
-			if (canonicalChestTitleFromStack(stack) != null) continue;
-			DungeonLootEntry entry = lootEntryFromRewardChestStack(stack);
-			if (entry == null) continue;
-			entries.add(entry);
-			signature.append(entry.rawName).append('x').append(entry.quantity).append('|');
-		}
-		if (entries.isEmpty()) return;
-		String previous = dungeonPreviewScans.put(key, signature.toString());
-		if (!signature.toString().equals(previous)) return;
-		capturedDungeonPreviews.add(key);
-		LuckRunCapture.onDungeonChestOffer(liveCompletionRunSessionId, liveCompletionFloor, toDisplayChestTitle(canonicalTitle), entries, cost);
-	}
-
 	/**
 	 * Which completed run a newly opened chest belongs to: the run just completed in this instance,
-	 * the run of a Croesus view that matched exactly one recorded run, or none.
+	 * or none.
 	 */
-	private void decidePendingRunLink(long now) {
+	private void applyPendingRunLink(DungeonRunRecord record) {
+		if (record == null) return;
 		boolean inInstance = (insideDungeon || insideKuudra) && !inDungeonHub;
-		if (inLiveCompletionInstance(now)) {
-			pendingLootRunLinkSource = DungeonRunRecord.LINK_LIVE;
-			pendingLootLinkedRunId = liveCompletionRunSessionId;
+		RunOwnership.Owner owner = pendingChestOwner;
+		String ownerRunId = owner.valid() ? owner.runSessionId() : "";
+		if (!ownerRunId.isBlank()) {
+			record.runLinkSource = owner.croesus()
+				? DungeonRunRecord.LINK_CROESUS_UNIQUE
+				: DungeonRunRecord.LINK_LIVE;
+			record.linkedRunId = ownerRunId;
 		} else {
-			// Not gated on the instance flags: they still read the instance for a few seconds after
-			// warping to the Dungeon Hub, and Croesus views are dropped on every world change.
-			String croesusRun = LuckRunCapture.activeCroesusRunSession();
-			pendingLootRunLinkSource = croesusRun != null ? DungeonRunRecord.LINK_CROESUS_UNIQUE : DungeonRunRecord.LINK_NONE;
-			pendingLootLinkedRunId = croesusRun != null ? croesusRun : "";
+			record.runLinkSource = DungeonRunRecord.LINK_NONE;
+			record.linkedRunId = "";
 		}
-		boolean unlinked = pendingLootLinkedRunId == null || pendingLootLinkedRunId.isBlank();
-		DungeonRunTracker.LOGGER.info("[DRT] Chest run link: {}{}", pendingLootRunLinkSource,
-			unlinked ? (inInstance ? " (in an instance without its completion)" : " (no linked Croesus run view open)") : " -> " + pendingLootLinkedRunId);
+		boolean unlinked = record.linkedRunId.isBlank();
+		String why = inInstance ? " (in an instance without its completion)" : " (no linked run)";
+		DungeonRunTracker.LOGGER.info("[DRT] Chest run link: {}{}", record.runLinkSource,
+			unlinked ? why : " -> " + record.linkedRunId);
 	}
 
 	private boolean rewardScreenSettled(Screen screen, long now) {
@@ -4074,10 +4655,10 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private void captureOpenedRewardChestLootIfViewing(Minecraft client, long now) {
-		if (!(client.screen instanceof AbstractContainerScreen<?>) || client.player == null) return;
-		String canonical = canonicalRewardChestTitle(normalize(client.screen.getTitle().getString()));
+		if (!(client.gui.screen() instanceof AbstractContainerScreen<?>) || client.player == null) return;
+		String canonical = canonicalRewardChestTitle(normalize(client.gui.screen().getTitle().getString()));
 		if (canonical == null || !pendingLootChestAssigned) return;
-		if (!rewardScreenSettled(client.screen, now)) return;
+		if (!rewardScreenSettled(client.gui.screen(), now)) return;
 		if (isRewardChestPreviewScreen(client.player.containerMenu)) return;
 		// Same chest session only: do not merge a different title into pending.
 		if (!toDisplayChestTitle(canonical).equalsIgnoreCase(pendingLootChestTitle)) return;
@@ -4088,15 +4669,16 @@ public final class DungeonRunTrackerFeature {
 
 	private void captureOpenedRewardChestLoot(Minecraft client, AbstractContainerMenu menu, long now) {
 		if (client == null || client.player == null || menu == null || !pendingLootChestAssigned) return;
-		if (client.screen instanceof AbstractContainerScreen<?>) {
-			String canonical = canonicalRewardChestTitle(normalize(client.screen.getTitle().getString()));
+		if (client.gui.screen() instanceof AbstractContainerScreen<?>) {
+			String canonical = canonicalRewardChestTitle(normalize(client.gui.screen().getTitle().getString()));
 			if (canonical == null) return;
 			if (!toDisplayChestTitle(canonical).equalsIgnoreCase(pendingLootChestTitle)) return;
 		}
-		// Chat CHEST REWARDS is authoritative once it starts; keep GUI scan from fighting it.
-		if (!pendingLootSeededFromGui && !pendingLootEntries.isEmpty() && lootCollectionUntilMillis > now) {
-			return;
-		}
+		// Chat already has some lines. Still accept a later GUI item chat never listed, such as essence
+		// that arrives in a following container packet. Do not add a second copy of a listed item.
+		boolean chatAlreadyAuthoritative = !pendingLootSeededFromGui
+			&& !pendingLootEntries.isEmpty()
+			&& lootCollectionUntilMillis > now;
 		var playerInventory = client.player.getInventory();
 		boolean found = false;
 		for (int slotIndex = 0; slotIndex < menu.slots.size(); slotIndex++) {
@@ -4108,20 +4690,21 @@ public final class DungeonRunTrackerFeature {
 
 			DungeonLootEntry entry = lootEntryFromRewardChestStack(stack);
 			if (entry == null) continue;
+			if (!RewardChestCapture.shouldAddGuiItem(chatAlreadyAuthoritative, pendingContainsLootKey(lootKey(entry)))) continue;
 			observeTrackingLoot(entry, DetectionSource.CONFIRMED_GUI_COMPONENT, menu.containerId, slotIndex, SlotOwner.SERVER_CONTAINER, "gui");
 			mergePendingLootEntry(entry, true);
 			found = true;
 		}
 		if (found) {
-			pendingLootSeededFromGui = true;
+			if (!chatAlreadyAuthoritative) pendingLootSeededFromGui = true;
 			lootCollectionUntilMillis = now + LOOT_COLLECTION_MS;
 		}
 	}
 
 	private boolean isRewardChestUiStack(ItemStack stack) {
 		if (stack == null || stack.isEmpty()) return true;
-		if (stack.is(Items.LIGHT_GRAY_STAINED_GLASS_PANE) || stack.is(Items.GRAY_STAINED_GLASS_PANE)
-				|| stack.is(Items.BLACK_STAINED_GLASS_PANE) || stack.is(Items.BARRIER)
+		if (stack.is(Items.STAINED_GLASS_PANE.lightGray()) || stack.is(Items.STAINED_GLASS_PANE.gray())
+				|| stack.is(Items.STAINED_GLASS_PANE.black()) || stack.is(Items.BARRIER)
 				|| stack.is(Items.AIR)) return true;
 		String name = normalize(cleanText(stack.getHoverName().getString()));
 		return name.contains("STAINED GLASS")
@@ -4131,20 +4714,10 @@ public final class DungeonRunTrackerFeature {
 			|| name.startsWith("REROLL ");
 	}
 
-	private boolean shouldAssignArmedKismetToOpenedChest(String normalizedTitle) {
-		if (kismetChargedThisLootWindow) return false;
-		if (!nextOpenedChestUsesKismetFeather && !rewardMenuKismetRerollPending) return false;
-		if (rewardMenuKismetRerolledChestTitle == null || rewardMenuKismetRerolledChestTitle.isBlank()) {
-			// Chat-armed next open only: charge the first open once.
-			return true;
-		}
-		return rewardMenuKismetRerolledChestTitle.equals(normalizedTitle);
-	}
-
 	private boolean isCatacombsRewardChest(String normalizedTitle) {
 		if (normalizedTitle == null || normalizedTitle.isBlank()) return false;
 		if (!REWARD_CHEST_TITLES.contains(normalizedTitle)) return false;
-		// Title alone decides this — Wood/Gold/… are always Catacombs. Do not gate on
+		// Title alone decides this - Wood/Gold/… are always Catacombs. Do not gate on
 		// isCurrentFloorKuudra(): sticky Kuudra currentFloor after leaving Hollow hid all
 		// Croesus rows and skipped dungeon-key billing.
 		return !normalizedTitle.equals("FREE CHEST") && !normalizedTitle.equals("PAID CHEST");
@@ -4176,12 +4749,14 @@ public final class DungeonRunTrackerFeature {
 
 	private boolean isKuudraRewardContext(String normalizedTitle) {
 		if (normalizedTitle != null && !normalizedTitle.isBlank()) {
+			// Free and Paid chests exist only in Kuudra. The GUI title is often just that,
+			// including after the hollow scoreboard is gone or the chest is opened from Croesus.
+			if (KuudraKeyShopLore.isKuudraChestTitle(normalizedTitle)) return true;
 			if (normalizedTitle.contains("VESUVIUS")) return true;
 			if (normalizedTitle.contains("KUUDRA") && !normalizedTitle.contains("CATACOMBS")) return true;
 			// Croesus / Catacombs reward menus are dungeon chests even if Kuudra state is sticky.
 			if (normalizedTitle.contains("CROESUS") || normalizedTitle.contains("CATACOMBS")) return false;
 		}
-		// Never let a leftover lastKnownKuudraFloor flip dungeon Croesus into FREE/PAID mode.
 		return insideKuudra && !insideDungeon;
 	}
 
@@ -4191,11 +4766,12 @@ public final class DungeonRunTrackerFeature {
 
 	private void applyKuudraChestCostHint(String canonicalTitle, ChestCostBreakdown breakdown, List<String> lore) {
 		if (breakdown == null || !isKuudraPaidRewardChest(canonicalTitle)) return;
-		breakdown.usedKuudraKey = true;
 		DungeonFloor keyTier = detectKuudraKeyTierFromLore(lore);
 		if (keyTier.isKuudra()) {
 			adoptKuudraKeyTier(keyTier);
 		}
+		DungeonFloor pricedTier = keyTier != null && keyTier.isKuudra() ? keyTier : currentKuudraFloorForPricing();
+		DungeonProfitPricing.applyPaidKuudraKey(breakdown, pricedTier, DrtConfigManager.getConfig());
 	}
 
 	private void rememberKuudraKeyTierFromMenu(AbstractContainerMenu menu) {
@@ -4251,9 +4827,9 @@ public final class DungeonRunTrackerFeature {
 	// Mage/Barbarian shop key offers show the player's real price (emissary, Seal, etc.).
 	// Slots can fill a moment after the shop opens, so keep rescanning while it stays open.
 	private void captureKuudraKeyShopCosts(Minecraft client, long now) {
-		if (!(client.screen instanceof AbstractContainerScreen<?> screen) || client.player == null) return;
+		if (!(client.gui.screen() instanceof AbstractContainerScreen<?> screen) || client.player == null) return;
 		String title = normalize(screen.getTitle().getString());
-		if (!title.equals("MAGE SHOP") && !title.equals("BARBARIAN SHOP")) return;
+		if (!KuudraKeyShopLore.isShopTitle(title)) return;
 		if (now - lastKuudraKeyShopScanMillis < KUUDRA_KEY_SHOP_SCAN_INTERVAL_MS) return;
 		lastKuudraKeyShopScanMillis = now;
 		AbstractContainerMenu menu = client.player.containerMenu;
@@ -4277,42 +4853,15 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private static DungeonFloor kuudraKeyTierFromExactName(String normalizedName) {
-		if (normalizedName == null || normalizedName.isBlank()) return DungeonFloor.UNKNOWN;
-		for (Map.Entry<String, DungeonFloor> entry : KUUDRA_KEY_NAMES) {
-			if (normalizedName.equals(entry.getKey())) return entry.getValue();
-		}
-		return DungeonFloor.UNKNOWN;
+		return KuudraKeyShopLore.tierFromItemName(normalizedName);
 	}
 
-	/** Reads "Cost" / "198,000 Coins" / "Enchanted Mycelium x2" / "Nether Star x2" from a shop offer. */
+	/** Reads the emissary offer, including "20x Enchanted Mycelium" and "Enchanted Mycelium x20". */
 	private KuudraKeyShopCost parseKuudraKeyShopCost(List<String> loreLines, long now) {
-		int costIndex = -1;
-		for (int index = 0; index < loreLines.size(); index++) {
-			if (loreLines.get(index).equalsIgnoreCase("Cost")) {
-				costIndex = index;
-				break;
-			}
-		}
-		if (costIndex < 0) return null;
-
-		KuudraKeyShopCost cost = new KuudraKeyShopCost();
+		KuudraKeyShopCost cost = KuudraKeyShopLore.parse(loreLines);
+		if (cost == null) return null;
 		cost.seenAtMillis = now;
-		for (int index = costIndex + 1; index < loreLines.size(); index++) {
-			String line = loreLines.get(index);
-			if (line.toUpperCase(Locale.ROOT).endsWith(" COINS")) {
-				Long coins = parseCoins(line);
-				if (coins == null || coins <= 0L) return null;
-				cost.coins = coins;
-				continue;
-			}
-			Matcher material = KUUDRA_KEY_SHOP_MATERIAL_PATTERN.matcher(line);
-			if (!material.matches()) break;
-			String itemId = DungeonProfitPricing.kuudraKeyMaterialItemId(material.group(1));
-			int amount = parsePositiveInt(material.group(2), 0);
-			if (itemId.isEmpty() || amount <= 0) break;
-			cost.materials.merge(itemId, amount, Integer::sum);
-		}
-		return cost.coins > 0L ? cost : null;
+		return cost;
 	}
 
 	private void notifyKuudraKeyCostsInChat(List<String> updated) {
@@ -4369,10 +4918,7 @@ public final class DungeonRunTrackerFeature {
 			return true;
 		}
 		if (lineIndicatesKismetRerollState(cleaned)) {
-			// Sticky "already rerolled" chat/state: arm at most one next open, never re-bill forever.
-			if (!kismetChargedThisLootWindow && !nextOpenedChestUsesKismetFeather && !rewardMenuKismetRerollPending) {
-				armNextOpenedKismetReroll();
-			}
+			// "You already rerolled a chest" stays on the menu after the use. It is not another feather.
 			return true;
 		}
 		if (lineIndicatesWheelOfFateUsed(cleaned)) {
@@ -4406,12 +4952,20 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private boolean lineIndicatesKismetUsed(String normalized) {
-		if (normalized == null || !normalized.contains("KISMET")) return false;
+		if (normalized == null || !normalized.contains("KISMET") || looksLikePlayerChat(normalized)) return false;
 		return normalized.contains("USED")
 				|| normalized.contains("CONSUMED")
 				|| normalized.contains("REROLLED")
 				|| normalized.contains("RE-ROLLED")
 				|| normalized.contains("REROLL USED");
+	}
+
+	/** Party, guild and private messages, and any "name: message" line, are players talking, not Hypixel reporting. */
+	private static boolean looksLikePlayerChat(String normalized) {
+		if (normalized == null) return false;
+		return normalized.startsWith("PARTY >") || normalized.startsWith("GUILD >") || normalized.startsWith("OFFICER >")
+			|| normalized.startsWith("FROM ") || normalized.startsWith("TO ") || normalized.startsWith("CO-OP >")
+			|| normalized.contains(": ");
 	}
 
 	private boolean lineIndicatesKismetRerollState(String normalized) {
@@ -4480,25 +5034,22 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private void markKismetFeatherUsed() {
-		if (kismetChargedThisLootWindow) return;
+		long now = System.currentTimeMillis();
+		boolean open = pendingLootChestAssigned && pendingLootCostBreakdown != null;
+		boolean alreadyCharged = open && pendingLootCostBreakdown.usedKismetFeather;
+		KismetChargeLedger.FeatherUse use = kismetCharges.onFeatherUsed(
+			open,
+			alreadyCharged,
+			pendingLootChestTitle,
+			now,
+			LOOT_WINDOW_MS
+		);
+		if (use != KismetChargeLedger.FeatherUse.APPLY_TO_OPEN_CHEST) return;
 		invalidateRewardMenuScans();
-		if (pendingLootChestAssigned) {
-			pendingLootCostBreakdown.usedKismetFeather = true;
-			pendingLootCostBreakdown.kismetRerolledChestOpened = true;
-			nextOpenedChestUsesKismetFeather = false;
-			rewardMenuKismetRerollPending = false;
-			rewardMenuKismetRerolledChestTitle = "";
-			kismetChargedThisLootWindow = true;
-			populateKnownModifierCosts(pendingLootCostBreakdown);
-			trackingSession.updateChestCost(pendingChestSessionId, pendingLootCostBreakdown);
-		} else {
-			armNextOpenedKismetReroll();
-		}
-	}
-
-	private void armNextOpenedKismetReroll() {
-		rewardMenuKismetRerollPending = true;
-		nextOpenedChestUsesKismetFeather = true;
+		pendingLootCostBreakdown.usedKismetFeather = true;
+		pendingLootCostBreakdown.kismetRerolledChestOpened = true;
+		populateKnownModifierCosts(pendingLootCostBreakdown);
+		trackingSession.updateChestCost(pendingChestSessionId, pendingLootCostBreakdown);
 	}
 
 	private void invalidateRewardMenuScans() {
@@ -4528,10 +5079,13 @@ public final class DungeonRunTrackerFeature {
 			breakdown.wheelOfFateCostCoins = resolveModifierItemCost(ITEM_WHEEL_OF_FATE);
 		}
 		if (breakdown.usedKuudraKey) {
-			// Always re-resolve from the best known tier so a sticky Hot/K2 price cannot stick
-			// after Infernal is learned from chest Cost lore or scoreboard.
-			long resolved = DungeonProfitPricing.resolveKuudraKeyCost(currentKuudraFloorForPricing(), DrtConfigManager.getConfig());
-			if (resolved > 0L) breakdown.kuudraKeyCostCoins = resolved;
+			// Re-resolve from the current tier. A missing material price stays unknown instead of
+			// replacing a previously priced key with zero.
+			DungeonProfitPricing.applyPaidKuudraKey(
+				breakdown,
+				currentKuudraFloorForPricing(),
+				DrtConfigManager.getConfig()
+			);
 		}
 		breakdown.normalize();
 	}
@@ -4539,7 +5093,6 @@ public final class DungeonRunTrackerFeature {
 	private DungeonFloor currentKuudraFloorForPricing() {
 		DungeonFloor chestFloor = authoritativePendingChestFloor();
 		if (chestFloor != null && chestFloor.isKuudra()) return chestFloor;
-		if (pendingLootOrphaned) return DungeonFloor.UNKNOWN;
 		DungeonFloor activeFloor = activeRunFloorProjection();
 		if (activeFloor != null && activeFloor.isKuudra()) return activeFloor;
 		if (lastKnownKuudraFloor != null && lastKnownKuudraFloor.isKuudra()) return lastKnownKuudraFloor;
@@ -4583,7 +5136,7 @@ public final class DungeonRunTrackerFeature {
 			return;
 		}
 
-		if (!(client.screen instanceof InventoryScreen)) {
+		if (!(client.gui.screen() instanceof InventoryScreen)) {
 			if (!leftMouseDown && dragging && positionDirty) saveHudPosition();
 			dragging = false;
 			positionDirty = false;
@@ -4649,7 +5202,7 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private boolean shouldShowResetLine(Minecraft client, boolean moveMode) {
-		return !moveMode && client != null && client.screen instanceof InventoryScreen;
+		return !moveMode && client != null && client.gui.screen() instanceof InventoryScreen;
 	}
 
 	private double toHudLocalX(double mouseX) {
@@ -4740,11 +5293,13 @@ public final class DungeonRunTrackerFeature {
 
 	private DungeonFloor detectKuudraTierFromLine(String line, boolean kuudraContext) {
 		if (line == null || line.isBlank()) return DungeonFloor.UNKNOWN;
+		// "Burning Kuudra Core" drops from every tier; its prefix is not the run's tier.
+		if (line.contains("KUUDRA CORE")) return DungeonFloor.UNKNOWN;
 		boolean hasKuudra = line.contains("KUUDRA");
 		boolean hasHollow = line.contains("HOLLOW");
 		boolean strongContext = hasKuudra || hasHollow || line.contains("TIER");
 
-		// Named tiers first — "Infernal Tier!" must beat any later short-pattern noise.
+		// Named tiers first - "Infernal Tier!" must beat any later short-pattern noise.
 		boolean tierNameContext = strongContext
 				|| line.startsWith("TIER:")
 				|| line.startsWith("TIER ")
@@ -4764,7 +5319,7 @@ public final class DungeonRunTrackerFeature {
 			return kuudraTier(parseTierNumber(wordMatcher.group(1)));
 		}
 
-		// Short T5/K5 only with line-local Kuudra/Hollow context — never from ambient
+		// Short T5/K5 only with line-local Kuudra/Hollow context - never from ambient
 		// "we're in Kuudra" alone (that falsely matched digits in unrelated chat/scoreboard).
 		Matcher shortMatcher = KUUDRA_SHORT_TIER_PATTERN.matcher(line);
 		if (strongContext && shortMatcher.find()) {
@@ -4919,16 +5474,19 @@ public final class DungeonRunTrackerFeature {
 		return grade == null ? null : grade.toUpperCase(Locale.ROOT);
 	}
 
+	private Integer extractScoreValue(String line) {
+		Matcher matcher = SCORE_VALUE_PATTERN.matcher(line);
+		if (!matcher.find()) return null;
+		try { return Math.max(0, Integer.parseInt(matcher.group(1))); }
+		catch (NumberFormatException ignored) { return null; }
+	}
+
 	private boolean isExtraStatsHeader(String line) {
 		return line.contains("EXTRA STATS");
 	}
 
 	private boolean isDungeonEntryMessage(String cleaned) {
-		return (cleaned.startsWith("STARTING IN ") && (insideDungeon || inDungeonHub))
-				|| cleaned.contains(" THE CATACOMBS ")
-				|| cleaned.contains(" CATACOMBS (F")
-				|| cleaned.contains(" CATACOMBS (M")
-				|| cleaned.startsWith("MASTER MODE CATACOMBS - FLOOR ");
+		return dev.vy.drt.tracking.DungeonEntrySignals.isEntry(cleaned, insideDungeon || inDungeonHub);
 	}
 
 	private boolean shouldBeginNewDungeonRunFromEntry(long now) {
@@ -4937,27 +5495,6 @@ public final class DungeonRunTrackerFeature {
 		if (runCountedThisDungeon) return true;
 		if (now <= dungeonSignalUntilMillis && activeRunSessionId != null && !activeRunSessionId.isBlank()) return false;
 		return true;
-	}
-
-	private boolean isKuudraEntryMessage(String cleaned) {
-		if (cleaned == null || cleaned.isBlank()) return false;
-		if (cleaned.contains("KUUDRA'S HOLLOW") || cleaned.contains("KUUDRA HOLLOW")) return true;
-		if (!cleaned.contains("KUUDRA") || cleaned.contains("CORE")) return false;
-		if (cleaned.contains("STARTING") || cleaned.contains("TIER")) return true;
-		// Word-boundary style checks — avoid matching HOT inside SHOT/PHOTO.
-		String padded = " " + cleaned.replaceAll("[^A-Z0-9]+", " ").trim() + " ";
-		return padded.contains(" BASIC ")
-				|| padded.contains(" HOT ")
-				|| padded.contains(" BURNING ")
-				|| padded.contains(" FIERY ")
-				|| padded.contains(" INFERNAL ");
-	}
-
-	private boolean isKuudraCompletionMessage(String cleaned) {
-		return cleaned.contains("KUUDRA DOWN")
-				|| cleaned.contains("KUUDRA DEFEATED")
-				|| cleaned.contains("DEFEATED KUUDRA")
-				|| cleaned.contains("KUUDRA RUN ENDED: COMPLETED");
 	}
 
 	private boolean isCurrentFloorKuudra() {
@@ -5037,17 +5574,14 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private void clearLiveCompletion() {
-		liveCompletionRunSessionId = "";
-		liveCompletionFloor = "";
-		liveCompletionAtMillis = 0L;
-		liveCompletionLevel = null;
-		dungeonPreviewScans.clear();
-		capturedDungeonPreviews.clear();
+		rewardRunOwner = RunOwnership.Owner.none();
 	}
 
 	private void beginNewDungeonRun(long now) {
 		flushPendingLootRecord();
 		clearLiveCompletion();
+		clearSelectedCroesusRun();
+		croesusNavigationActive = false;
 		startCurrentRunTiming(now);
 		RunSession run = trackingSession.startRun(
 			RunMode.DUNGEON,
@@ -5057,6 +5591,8 @@ public final class DungeonRunTrackerFeature {
 		);
 		activeRunSessionId = run.id();
 		currentRunCompletionFingerprint = "";
+		observedDungeonParty = List.of();
+		observedPartyCompletionRunId = "";
 		currentFloor = DungeonFloor.UNKNOWN;
 		lastKnownKuudraFloor = DungeonFloor.UNKNOWN;
 		insideKuudra = false;
@@ -5070,6 +5606,8 @@ public final class DungeonRunTrackerFeature {
 		runCountedThisDungeon = false;
 		dungeonSignalUntilMillis = now + DUNGEON_SIGNAL_GRACE_MS;
 		cachedChestOffersByTitle.clear();
+		stableDungeonPreviewScans.clear();
+		capturedDungeonPreviews.clear();
 		scannedRewardScreens.clear();
 		viewedCroesusChestTitles.clear();
 	}
@@ -5077,8 +5615,12 @@ public final class DungeonRunTrackerFeature {
 	private void beginNewKuudraRun(long now, DungeonFloor tier) {
 		flushPendingLootRecord();
 		clearLiveCompletion();
+		clearSelectedCroesusRun();
+		croesusNavigationActive = false;
 		startCurrentRunTiming(now);
 		currentRunCompletionFingerprint = "";
+		observedDungeonParty = List.of();
+		observedPartyCompletionRunId = "";
 		// Prefer a freshly detected tier. Do not silently inherit a sticky Hot (K2) floor from
 		// earlier farming when this Hollow visit has not announced Infernal/T5 yet.
 		DungeonFloor runTier = tier != null && tier.isKuudra() ? tier : DungeonFloor.UNKNOWN;
@@ -5107,6 +5649,8 @@ public final class DungeonRunTrackerFeature {
 		runCountedThisDungeon = false;
 		kuudraSignalUntilMillis = now + DUNGEON_SIGNAL_GRACE_MS;
 		cachedChestOffersByTitle.clear();
+		stableDungeonPreviewScans.clear();
+		capturedDungeonPreviews.clear();
 		scannedRewardScreens.clear();
 		viewedCroesusChestTitles.clear();
 	}
@@ -5133,17 +5677,12 @@ public final class DungeonRunTrackerFeature {
 		pendingLootReconcilingGuiChat = false;
 		pendingLootChestAssigned = false;
 		pendingLootChatConfirmed = false;
-		pendingLootRunLinkSource = null;
-		pendingLootLinkedRunId = "";
+		pendingChestOwner = rewardRunOwner;
 		openedRewardChestsInLootWindow = preserveOpenCount ? preservedOpenCount : 0;
 		openedRewardChestTitlesInLootWindow.clear();
 		if (preserveOpenCount) openedRewardChestTitlesInLootWindow.addAll(preservedOpenTitles);
 		nextOpenedChestUsesDungeonChestKey = false;
-		nextOpenedChestUsesKismetFeather = false;
 		nextOpenedChestUsesWheelOfFate = false;
-		rewardMenuKismetRerollPending = false;
-		rewardMenuKismetRerolledChestTitle = "";
-		kismetChargedThisLootWindow = false;
 		pendingLootEntries.clear();
 		pendingChestLootDedupKeys.clear();
 	}
@@ -5160,6 +5699,7 @@ public final class DungeonRunTrackerFeature {
 		long now = System.currentTimeMillis();
 		String key = record.floor;
 		String g = record.grade;
+		record.manual = dev.vy.drt.config.ManualRecord.CREATED;
 
 		var recordCommit = DrtConfigManager.addRunRecord(record);
 		if (recordCommit != dev.vy.drt.config.RunRecordCommitDecision.ADD_INCOMING) {
@@ -5179,7 +5719,11 @@ public final class DungeonRunTrackerFeature {
 			record.runSessionId,
 			completionFingerprint
 		);
-		if (runTimeMs > 0L) manualCompletion.runTimeSource = DungeonRunCompletionRecord.RUN_TIME_MANUAL;
+		if (runTimeMs > 0L) {
+			manualCompletion.runTimeSource = DungeonRunCompletionRecord.RUN_TIME_MANUAL;
+			manualCompletion.runTimeEvidence = DungeonRunCompletionRecord.TIME_EVIDENCE_MANUAL;
+		}
+		manualCompletion.manual = dev.vy.drt.config.ManualRecord.CREATED;
 		DrtConfigManager.addRunCompletionRecord(manualCompletion);
 
 		resyncLifetimeFromConfig();
@@ -5200,7 +5744,7 @@ public final class DungeonRunTrackerFeature {
 		sessionTotalProfit += profit;
 		sessionFloorProfitTotals.merge(key, profit, Long::sum);
 
-		if (runTimeMs > 0L) {
+		if (DungeonRunCompletionRecord.plausibleRunTime(runTimeMs)) {
 			sessionTotalRunTimeMs += runTimeMs;
 			sessionFloorRunTimeTotals.merge(key, runTimeMs, Long::sum);
 			sessionInRunMillis += runTimeMs;
@@ -5210,10 +5754,6 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private synchronized void recordCompletedRun(long now, DungeonFloor floor, String grade) {
-		recordCompletedRun(now, floor, grade, null);
-	}
-
-	private synchronized void recordCompletedRun(long now, DungeonFloor floor, String grade, DungeonScoreReading scoreReading) {
 		String key = floor != null && floor != DungeonFloor.UNKNOWN ? floor.name() : "UNKNOWN";
 		String g = grade == null || grade.isBlank() ? "?" : grade;
 		long bossTimeMs = Math.max(0L, currentRunBossTimeMs);
@@ -5278,21 +5818,35 @@ public final class DungeonRunTrackerFeature {
 			g,
 			runTimeMs,
 			activeRunSessionId,
-			completionFingerprint
+			"run|" + activeRunSessionId
 		);
-		if (currentRunBossTimeMs > 0L) completionRecord.runTimeSource = DungeonRunCompletionRecord.RUN_TIME_OFFICIAL;
-		else if (runTimeMs > 0L) completionRecord.runTimeSource = DungeonRunCompletionRecord.RUN_TIME_MEASURED;
+		completionRecord.score = pendingScoreValue;
+		completionRecord.scoreRecorded = pendingScoreRecorded;
+		// A roster from another instance never belongs to this completion.
+		Object completionLevel = Minecraft.getInstance().level;
+		if (completionLevel != observedPartyLevel) {
+			observedPartyLevel = completionLevel;
+			observedDungeonParty = List.of();
+		}
+		completionRecord.partyMembers = observedDungeonParty.stream().map(DungeonPartyMember::copy).toList();
+		if (currentRunBossTimeMs > 0L) {
+			completionRecord.runTimeSource = DungeonRunCompletionRecord.RUN_TIME_OFFICIAL;
+			completionRecord.runTimeEvidence = currentRunBossTimeEvidence;
+		} else if (runTimeMs > 0L) {
+			completionRecord.runTimeSource = DungeonRunCompletionRecord.RUN_TIME_MEASURED;
+			completionRecord.runTimeEvidence = DungeonRunCompletionRecord.TIME_EVIDENCE_MEASURED;
+		}
 		var completionCommit = DrtConfigManager.addRunCompletionRecord(completionRecord);
 		if (completionCommit != dev.vy.drt.config.RunRecordCommitDecision.ADD_INCOMING) {
 			recordCompletionPersistenceDiagnostic(completionCommit, completionFingerprint, now, key, g, runTimeMs);
 			runCountedThisDungeon = true;
 			return;
 		}
-		liveCompletionRunSessionId = activeRunSessionId;
-		liveCompletionFloor = key;
-		liveCompletionAtMillis = now;
-		liveCompletionLevel = Minecraft.getInstance().level;
-		LuckRunCapture.onCompletionRecorded(completionRecord, scoreReading);
+		observedPartyCompletionRunId = activeRunSessionId;
+		DungeonRunCompletionRecord persisted = DrtConfigManager.getRunCompletion(activeRunSessionId);
+		rewardRunOwner = RunOwnership.Owner.from(persisted, RunOwnership.Source.LIVE_COMPLETION);
+		lastPersistedCompletionRunSessionId = rewardRunOwner.runSessionId();
+		persistCachedOffersForOwner(rewardRunOwner.runSessionId(), now);
 		resyncLifetimeFromConfig();
 		int newCount = floorRunCounts.getOrDefault(key, 0);
 		gradeRunCounts.merge(g, 1, Integer::sum);
@@ -5300,10 +5854,15 @@ public final class DungeonRunTrackerFeature {
 		lastRecordedGrade = g;
 		runCountedThisDungeon = true;
 		DungeonRunTracker.LOGGER.info("[DRT] *** RUN RECORDED: floor={} grade={} totalForFloor={} allFloors={}", key, g, newCount, floorRunCounts);
-		sessionTotalRunTimeMs += runTimeMs;
-		sessionFloorRunTimeTotals.merge(key, runTimeMs, Long::sum);
-		accumulateLifetimeRunTime(key, runTimeMs);
+		if (DungeonRunCompletionRecord.plausibleRunTime(runTimeMs)) {
+			sessionTotalRunTimeMs += runTimeMs;
+			sessionFloorRunTimeTotals.merge(key, runTimeMs, Long::sum);
+			accumulateLifetimeRunTime(key, runTimeMs);
+		} else if (runTimeMs > 0L) {
+			DungeonRunTracker.LOGGER.warn("[DRT] Ignoring implausible run time {}ms for {}", runTimeMs, key);
+		}
 		currentRunBossTimeMs = 0L;
+		currentRunBossTimeEvidence = null;
 		lastFinishedRunTimeMs = 0L;
 		sessionRuns++;
 		sessionFloorRuns.merge(key, 1, Integer::sum);
@@ -5323,13 +5882,13 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private boolean isUnexpectedOrphanChest(long now) {
-		// Mid-run or in-instance reward context should always have run ownership.
-		if (currentRunActive || insideDungeon || insideKuudra) {
-			return true;
-		}
 		// Hub Croesus browsing of historical runs is expected to be unassigned/orphaned.
 		if (isHubCroesusRewardBrowsing()) {
 			return false;
+		}
+		// Mid-run or in-instance reward context should always have run ownership.
+		if (currentRunActive || insideDungeon || insideKuudra) {
+			return true;
 		}
 		// Recent completion: late reattach should have succeeded.
 		if (lastRunRecordMillis > 0L && now - lastRunRecordMillis <= LATE_LOOT_REATTACH_MS) {
@@ -5357,30 +5916,37 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private DungeonFloor lateLootOwnerFloorFromLiveMemory(DungeonFloor floorHint, long now) {
-		if (!runCountedThisDungeon) return DungeonFloor.UNKNOWN;
-		// Croesus is normally opened outside the dungeon instance (hub / island). Do not
-		// require insideDungeon/insideKuudra — only a recent completed run session.
-		if (activeRunSessionId == null || activeRunSessionId.isBlank()) return DungeonFloor.UNKNOWN;
-		if (lastRunRecordMillis <= 0L || now - lastRunRecordMillis > LATE_LOOT_REATTACH_MS) return DungeonFloor.UNKNOWN;
-		RunSession run = trackingSession.run(activeRunSessionId);
-		if (run == null || run.state() != RunState.COMPLETED) return DungeonFloor.UNKNOWN;
-		return chooseLateLootFloor(floorHint, lastRunRecordFloor, currentFloor);
+		if (!rewardRunOwner.valid()) return DungeonFloor.UNKNOWN;
+		if (now - rewardRunOwner.completedAtEpochMillis() > LATE_LOOT_REATTACH_MS) return DungeonFloor.UNKNOWN;
+		DungeonFloor recorded = configFloor(rewardRunOwner.floor());
+		return chooseLateLootFloor(floorHint, recorded, DungeonFloor.UNKNOWN);
 	}
 
 	private DungeonFloor lateLootOwnerFloorFromPersistedCompletion(DungeonFloor floorHint, long now) {
-		DungeonRunCompletionRecord recent = mostRecentPersistedCompletion(now);
-		if (recent == null) return DungeonFloor.UNKNOWN;
-		DungeonFloor recordedFloor = configFloor(recent.floor);
-		DungeonFloor chosen = chooseLateLootFloor(floorHint, recordedFloor, currentFloor);
-		if (chosen == DungeonFloor.UNKNOWN) return DungeonFloor.UNKNOWN;
-		if (!restoreLiveOwnershipFromPersistedCompletion(recent, recordedFloor == DungeonFloor.UNKNOWN ? chosen : recordedFloor, now)) {
-			return DungeonFloor.UNKNOWN;
-		}
+		if (croesusNavigationActive) return DungeonFloor.UNKNOWN;
+		String floor = floorHint == null || floorHint == DungeonFloor.UNKNOWN ? "" : floorHint.name();
+		RunOwnership.Resolution resolution = RunOwnership.resolveRecent(
+			DrtConfigManager.getRunCompletions(),
+			floor,
+			now,
+			LATE_LOOT_REATTACH_MS,
+			DrtConfigManager.getCurrentAccountUuid()
+		);
+		if (!resolution.matched()) return DungeonFloor.UNKNOWN;
+		rewardRunOwner = resolution.owner();
+		lastPersistedCompletionRunSessionId = rewardRunOwner.runSessionId();
+		DungeonFloor chosen = configFloor(rewardRunOwner.floor());
+		lastRunRecordMillis = rewardRunOwner.completedAtEpochMillis();
+		lastRunRecordFloor = chosen;
+		lastRunRecordGrade = rewardRunOwner.grade();
+		lastRecordedGrade = rewardRunOwner.grade();
+		runCountedThisDungeon = true;
 		DungeonRunTracker.LOGGER.info(
-			"[DRT] Reattached late chest ownership from persisted completion: floor={} grade={} ageMs={}",
+			"[DRT] Restored persisted reward owner: floor={} grade={} ageMs={} runSessionId={}",
 			chosen.name(),
-			recent.grade,
-			Math.max(0L, now - recent.completedAtEpochMillis)
+			rewardRunOwner.grade(),
+			Math.max(0L, now - rewardRunOwner.completedAtEpochMillis()),
+			rewardRunOwner.runSessionId()
 		);
 		return chosen;
 	}
@@ -5413,40 +5979,6 @@ public final class DungeonRunTrackerFeature {
 		return best;
 	}
 
-	private boolean restoreLiveOwnershipFromPersistedCompletion(
-		DungeonRunCompletionRecord recent,
-		DungeonFloor floor,
-		long now
-	) {
-		if (recent == null || floor == null || floor == DungeonFloor.UNKNOWN) return false;
-		RunMode mode = floor.isKuudra() ? RunMode.KUUDRA : RunMode.DUNGEON;
-		RunSession run = trackingSession.startRun(
-			mode,
-			floor,
-			DetectionSource.RECENT_CONTEXT,
-			EvidenceStrength.RECENT_CONTEXT
-		);
-		String grade = recent.grade == null || recent.grade.isBlank() ? "?" : recent.grade;
-		String fingerprint = recent.completionFingerprint;
-		if (fingerprint == null || fingerprint.isBlank()) {
-			fingerprint = run.id() + "|" + floor.name() + "|" + grade + "|" + Math.max(0L, recent.runTimeMs);
-		}
-		if (!trackingSession.completeRun(run.id(), floor, grade, fingerprint)) {
-			return false;
-		}
-		activeRunSessionId = run.id();
-		currentRunCompletionFingerprint = fingerprint;
-		lastRunRecordMillis = recent.completedAtEpochMillis > 0L ? recent.completedAtEpochMillis : now;
-		lastRunRecordFloor = floor;
-		lastRunRecordGrade = grade;
-		lastRecordedGrade = grade;
-		runCountedThisDungeon = true;
-		if (currentFloor == null || currentFloor == DungeonFloor.UNKNOWN) {
-			currentFloor = floor;
-		}
-		return true;
-	}
-
 	private void clearLootWindow() {
 		lootWindowUntilMillis = 0L;
 		lootCollectionUntilMillis = 0L;
@@ -5462,18 +5994,18 @@ public final class DungeonRunTrackerFeature {
 		pendingLootReconcilingGuiChat = false;
 		pendingLootChestAssigned = false;
 		pendingLootChatConfirmed = false;
+		pendingChestOwner = RunOwnership.Owner.none();
 		openedRewardChestsInLootWindow = 0;
 		openedRewardChestTitlesInLootWindow.clear();
 		nextOpenedChestUsesDungeonChestKey = false;
-		nextOpenedChestUsesKismetFeather = false;
 		nextOpenedChestUsesWheelOfFate = false;
-		rewardMenuKismetRerollPending = false;
-		rewardMenuKismetRerolledChestTitle = "";
-		kismetChargedThisLootWindow = false;
+		kismetCharges.clear();
 		pendingLootEntries.clear();
 		lootGuardWarnedKeys.clear();
 		cachedChestOffersByTitle.clear();
 		cachedChestOfferFingerprintsByTitle.clear();
+		stableDungeonPreviewScans.clear();
+		capturedDungeonPreviews.clear();
 		scannedRewardScreens.clear();
 		lastRewardModifierScanKey = "";
 		lastRewardModifierScanMillis = 0L;
@@ -5496,6 +6028,12 @@ public final class DungeonRunTrackerFeature {
 			cancelUnconfirmedOpenedChest(now);
 			return;
 		}
+		// A Croesus reroll is often clicked before any chest is open, so this cannot wait for a loot window.
+		if (!looksLikePlayerChat(cleaned) && lineIndicatesKismetUsed(cleaned)) {
+			markKismetFeatherUsed();
+			return;
+		}
+		// Recorded before the loot-window check: a Croesus reroll happens before any chest is opened.
 		if ((lootWindowUntilMillis <= 0L || now > lootWindowUntilMillis) && isLootHeader(cleaned)) {
 			startLateOwnedOrAdHocLootWindow(now, rewardContextFloorFromTitle(cleaned));
 		}
@@ -5509,10 +6047,10 @@ public final class DungeonRunTrackerFeature {
 				&& chatChestTitle != null
 				&& toDisplayChestTitle(chatChestTitle).equalsIgnoreCase(pendingLootChestTitle);
 			if (sameChest && pendingLootSeededFromGui) {
-				// Same open as the GUI capture — reconcile chat with GUI instead of destroying GUI observations.
+				// Same open as the GUI capture - reconcile chat with GUI instead of destroying GUI observations.
 				pendingLootReconcilingGuiChat = true;
 			} else if (sameChest && !pendingLootEntries.isEmpty()) {
-				// Second CHEST REWARDS for the same tier (multi-run Croesus) — save the previous open.
+				// Second CHEST REWARDS for the same tier (multi-run Croesus) - save the previous open.
 				flushPendingLootRecord(true);
 				assignOpenedChest(cleaned);
 			} else if (!pendingLootEntries.isEmpty()) {
@@ -5533,9 +6071,10 @@ public final class DungeonRunTrackerFeature {
 		if (lootCollectionUntilMillis <= 0L || now > lootCollectionUntilMillis) return;
 		if (!pendingLootChestAssigned) return;
 		boolean rareRewardLine = isOwnChestRareRewardLine(rawText) || isOwnChestRareRewardLine(cleaned);
-		// RARE REWARD chat is enrichment only. Never let it seed an empty chest (creates
-		// handle-only duplicate records at full AH price with no open cost).
-		if (rareRewardLine && pendingLootEntries.isEmpty() && !pendingLootSeededFromGui) return;
+		// A stray rare announcement must not seed an empty chest. Lines under the open
+		// CHEST REWARDS block are real loot and often arrive before essence.
+		if (rareRewardLine && !RewardChestCapture.includeRareRewardLine(
+			rewardBlockLine, pendingLootEntries.isEmpty(), pendingLootSeededFromGui)) return;
 		DungeonLootEntry parsed = parseLootEntry(rawText, cleaned, rewardBlockLine);
 		if (parsed == null) return;
 		observeTrackingLoot(parsed, DetectionSource.STRUCTURED_CHAT, -1, -1, SlotOwner.SERVER_CONTAINER, cleaned);
@@ -5568,7 +6107,7 @@ public final class DungeonRunTrackerFeature {
 
 	private boolean isLootHeader(String cleaned) {
 		// Real headers are "OBSIDIAN CHEST REWARDS" / similar. Do not match bare
-		// "DUNGEON CHEST" — that false-positives on key-requirement chat and flushes mid-loot.
+		// "DUNGEON CHEST" - that false-positives on key-requirement chat and flushes mid-loot.
 		return cleaned.contains("CHEST REWARDS")
 			|| cleaned.contains("REWARD CHEST");
 	}
@@ -5616,10 +6155,15 @@ public final class DungeonRunTrackerFeature {
 		String candidateName = null;
 		int quantity = 1;
 		boolean structuredLootLine = false;
+		EnchantedBookIdentity.Book exactBook = EnchantedBookIdentity.parse(sanitizeLootName(trimmedRaw));
+		if (exactBook != null) {
+			candidateName = exactBook.displayName();
+			structuredLootLine = true;
+		}
 
 		Matcher rareRewardMatcher = RARE_REWARD_ITEM_PATTERN.matcher(trimmedRaw);
 		if (!rareRewardMatcher.matches()) rareRewardMatcher = RARE_REWARD_ITEM_PATTERN.matcher(cleaned);
-		if (rareRewardMatcher.matches()) {
+		if (candidateName == null && rareRewardMatcher.matches()) {
 			candidateName = rareRewardMatcher.group(1).trim();
 			structuredLootLine = true;
 		}
@@ -5680,8 +6224,7 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private boolean isRewardsMenuTitle(String normalizedTitle) {
-		return normalizedTitle.startsWith("CATACOMBS - FLOOR ")
-				|| normalizedTitle.startsWith("MASTER CATACOMBS - FLOOR ")
+		return RewardMenuTitles.isCatacombsRewardMenu(normalizedTitle)
 				|| normalizedTitle.contains("KUUDRA")
 				|| (insideKuudra && !isPlayerStorageTitle(normalizedTitle)
 					&& (normalizedTitle.contains("REWARD") || normalizedTitle.contains("CHEST")));
@@ -5696,17 +6239,7 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private Long parseChestCost(ItemStack stack) {
-		List<String> loreLines = cleanLoreLines(stack);
-		for (int index = 0; index < loreLines.size(); index++) {
-			String line = loreLines.get(index);
-			if (line.equalsIgnoreCase("FREE")) return 0L;
-			if (line.equalsIgnoreCase("Cost") && index + 1 < loreLines.size()) {
-				Long parsed = parseCoins(loreLines.get(index + 1));
-				if (parsed != null) return parsed;
-			}
-			if (line.regionMatches(true, 0, "Cost:", 0, 5)) return parseCoins(line);
-		}
-		return null;
+		return ChestCostParser.parseLore(cleanLoreLines(stack));
 	}
 
 	private List<String> cleanLoreLines(ItemStack stack) {
@@ -5924,7 +6457,12 @@ public final class DungeonRunTrackerFeature {
 			recordContextConflictDiagnostic("warnLootGuardsForEntry", "context_conflict_blocks_loot_guard", guardFloor);
 			return;
 		}
-		for (String reason : LootFloorGuards.evaluate(guardFloor, pendingLootChestTitle, entry)) {
+		for (String reason : LootFloorGuards.evaluate(
+			guardFloor,
+			pendingLootChestTitle,
+			entry,
+			DrtConfigManager.getConfig()
+		)) {
 			String key = lootKey(entry) + "|" + reason;
 			if (!lootGuardWarnedKeys.add(key)) continue;
 			String report = buildLootGuardReport(reason, entry);
@@ -5940,7 +6478,12 @@ public final class DungeonRunTrackerFeature {
 			recordContextConflictDiagnostic("warnLootGuardsForChest", "context_conflict_blocks_loot_guard", guardFloor);
 			return;
 		}
-		for (String reason : LootFloorGuards.evaluateChest(guardFloor, pendingLootChestTitle, entries)) {
+		for (String reason : LootFloorGuards.evaluateChest(
+			guardFloor,
+			pendingLootChestTitle,
+			entries,
+			DrtConfigManager.getConfig()
+		)) {
 			String key = "chest|" + reason;
 			if (!lootGuardWarnedKeys.add(key)) continue;
 			String report = buildLootGuardReport(reason, null);
@@ -5958,7 +6501,7 @@ public final class DungeonRunTrackerFeature {
 		sb.append('\n');
 		sb.append("timeUtc=").append(java.time.Instant.ofEpochMilli(now)).append('\n');
 		sb.append("modVersion=").append(drtModVersion()).append('\n');
-		sb.append("minecraft=").append(client.getVersionType()).append(' ').append(minecraftVersionName()).append('\n');
+		sb.append("minecraft=").append((net.minecraft.SharedConstants.getCurrentVersion().stable() ? "release" : "snapshot")).append(' ').append(minecraftVersionName()).append('\n');
 		sb.append("server=").append(connectedServerLabel(client)).append('\n');
 		sb.append("player=").append(playerName(client)).append('\n');
 		sb.append('\n');
@@ -5976,7 +6519,7 @@ public final class DungeonRunTrackerFeature {
 		sb.append("--- floor context ---\n");
 		sb.append("pendingLootFloor=").append(floorName(pendingLootFloor)).append('\n');
 		sb.append("currentFloor=").append(floorName(currentFloor)).append('\n');
-		sb.append("selectedHudFloor=").append(selectedFloor == null ? "ALL" : selectedFloor.name()).append('\n');
+		sb.append("selectedHudFloor=").append(selectedFloorAuto ? "AUTO" : (selectedFloor == null ? "ALL" : selectedFloor.name())).append('\n');
 		sb.append("lastKnownKuudraFloor=").append(floorName(lastKnownKuudraFloor)).append('\n');
 		sb.append("pendingSPlusFloor=").append(floorName(pendingSPlusFloor)).append('\n');
 		sb.append("awaitingExtraStatsFloor=").append(floorName(awaitingExtraStatsFloor)).append('\n');
@@ -6120,15 +6663,7 @@ public final class DungeonRunTrackerFeature {
 		return state;
 	}
 
-	private Map<String, Object> diagnosticState(DiagnosticIncident incident) {
-		Map<String, Object> state = new LinkedHashMap<>(diagnosticState());
-		if (incident != null && SyntheticDiagnosticIncidentFactory.INCIDENT_TYPE.equals(incident.incidentType())) {
-			state.putAll(SyntheticDiagnosticIncidentFactory.expected(incident));
-		}
-		return state;
-	}
-
-	private Map<String, Object> diagnosticExpected(DiagnosticIncident incident) {
+	private Map<String, Object> diagnosticExpected() {
 		Map<String, Object> expected = new LinkedHashMap<>(diagnosticPayload(
 			"invariants", diagnostics.incidents().stream()
 				.flatMap(existingIncident -> existingIncident.invariants().stream())
@@ -6139,9 +6674,6 @@ public final class DungeonRunTrackerFeature {
 			"pendingChestSessionId", pendingChestSessionId,
 			"pendingLootOrphaned", pendingLootOrphaned
 		));
-		if (incident != null && SyntheticDiagnosticIncidentFactory.INCIDENT_TYPE.equals(incident.incidentType())) {
-			expected.putAll(SyntheticDiagnosticIncidentFactory.expected(incident));
-		}
 		return expected;
 	}
 
@@ -6170,8 +6702,8 @@ public final class DungeonRunTrackerFeature {
 			replayPath = diagnostics.saveReplayBundle(
 				diagnosticReplayParentDir(),
 				incident,
-				diagnosticExpected(incident),
-				diagnosticState(incident)
+				diagnosticExpected(),
+				diagnosticState()
 			);
 		} catch (Exception e) {
 			DungeonRunTracker.LOGGER.warn("[DRT] Failed to auto-save diagnostic bug export: {}", e.getMessage());
@@ -6222,28 +6754,6 @@ public final class DungeonRunTrackerFeature {
 		notifyTrackingIncidentInChat(incident);
 	}
 
-	public boolean triggerSyntheticDiagnosticIncident(String mode) {
-		String normalized = mode == null ? "" : mode.trim().toLowerCase(Locale.ROOT);
-		String rootKey = SyntheticDiagnosticIncidentFactory.DEFAULT_ROOT_KEY;
-		int repeats = "duplicate".equals(normalized) ? 3 : 1;
-		if ("new".equals(normalized)) {
-			rootKey = SyntheticDiagnosticIncidentFactory.DEFAULT_ROOT_KEY + "|new|" + UUID.randomUUID();
-		}
-		DiagnosticIncident first = null;
-		for (int i = 0; i < repeats; i++) {
-			DiagnosticIncident incident = SyntheticDiagnosticIncidentFactory.record(diagnostics, rootKey, i);
-			if (first == null) first = incident;
-			notifyTrackingIncidentInChat(incident);
-		}
-		DungeonRunTracker.LOGGER.info(
-			"[DRT] Synthetic diagnostic incident triggered: mode={} reportId={} repeats={}",
-			normalized.isBlank() ? "default" : normalized,
-			first == null ? "" : first.id(),
-			repeats
-		);
-		return first != null;
-	}
-
 	public boolean copyDiagnosticReportToClipboard(String reportId) {
 		DiagnosticIncident incident = diagnostics.incidentById(reportId);
 		Minecraft client = Minecraft.getInstance();
@@ -6252,7 +6762,7 @@ public final class DungeonRunTrackerFeature {
 			sendDrtSystemMessage(client, Component.literal("§c[DRT] Diagnostic report not found: " + nullToEmpty(reportId)));
 			return false;
 		}
-		String report = diagnostics.buildHumanReport(incident, diagnosticState(incident));
+		String report = diagnostics.buildHumanReport(incident, diagnosticState());
 		client.keyboardHandler.setClipboard(report);
 		sendDrtSystemMessage(client, Component.literal("§a[DRT] Diagnostic report copied to clipboard."));
 		return true;
@@ -6274,8 +6784,8 @@ public final class DungeonRunTrackerFeature {
 			Path replayPath = diagnostics.saveReplayBundle(
 				diagnosticReplayParentDir(),
 				incident,
-				diagnosticExpected(incident),
-				diagnosticState(incident)
+				diagnosticExpected(),
+				diagnosticState()
 			);
 			return copyDiagnosticZipPathToClipboard(client, replayPath);
 		} catch (Exception e) {
@@ -6404,8 +6914,8 @@ public final class DungeonRunTrackerFeature {
 		return diagnostics.saveReplayBundle(
 			diagnosticReplayParentDir(),
 			incident,
-			diagnosticExpected(incident),
-			diagnosticState(incident)
+			diagnosticExpected(),
+			diagnosticState()
 		);
 	}
 
@@ -6497,7 +7007,23 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private boolean isHubCroesusRewardBrowsing() {
+		// Croesus run titles mark the hub as Kuudra, and the last run stays active after warping out.
+		if (inDungeonHub && !insideDungeon) return true;
 		return !currentRunActive && !insideDungeon && !insideKuudra;
+	}
+
+	private void rememberCroesusRunViewFloor(String normalizedTitle, String canonicalRewardTitle, DungeonFloor titleFloor) {
+		if (isCroesusMainMenuTitle(normalizedTitle)) {
+			croesusRunViewFloor = DungeonFloor.UNKNOWN;
+			return;
+		}
+		if (canonicalRewardTitle == null && titleFloor != DungeonFloor.UNKNOWN && inDungeonHub && !insideDungeon) {
+			croesusRunViewFloor = titleFloor;
+		}
+	}
+
+	private DungeonFloor hubCroesusRunViewFloor() {
+		return inDungeonHub && !insideDungeon ? croesusRunViewFloor : DungeonFloor.UNKNOWN;
 	}
 
 	private boolean shouldSkipLootGuards() {
@@ -6983,7 +7509,8 @@ public final class DungeonRunTrackerFeature {
 		lootCollectionUntilMillis = 0L;
 		try {
 			DrtConfig config = DrtConfigManager.getConfig();
-			long chestValueCoins = DungeonProfitPricing.calculateLootValue(committedLootEntries, config);
+			DungeonProfitPricing.ValueSummary lootValue = DungeonProfitPricing.summarizeLootValue(committedLootEntries, config);
+			long chestValueCoins = lootValue.knownValueCoins();
 			ChestCostBreakdown costBreakdown = authoritativePendingChestCost();
 			if (costBreakdown.usedKismetFeather) costBreakdown.kismetRerolledChestOpened = true;
 			DungeonFloor kuudraFloor = currentKuudraFloorForPricing();
@@ -6996,7 +7523,8 @@ public final class DungeonRunTrackerFeature {
 			populateKnownModifierCosts(costBreakdown);
 			suppressDungeonChestKeyForKuudra(pendingChestTitle, costBreakdown);
 			long chestCostCoins = costBreakdown.totalCostCoins();
-			long chestProfitCoins = chestValueCoins - chestCostCoins;
+			boolean chestCostKnown = costBreakdown.baseChestCostKnown || isConfirmedFreeChestTitle(pendingLootChestTitle);
+			long chestProfitCoins = chestCostKnown ? chestValueCoins - chestCostCoins : 0L;
 			DungeonFloor recordFloor = authoritativePendingChestFloor();
 			String floorName = recordFloor != DungeonFloor.UNKNOWN ? recordFloor.name() : "UNKNOWN";
 			String runGrade = orphanCommit ? "?" : pendingScoreGrade != null ? pendingScoreGrade : lastRecordedGrade;
@@ -7011,10 +7539,10 @@ public final class DungeonRunTrackerFeature {
 				chestProfitCoins,
 				committedLootEntries
 			);
-			record.runSessionId = orphanCommit ? "" : activeRunSessionId == null ? "" : activeRunSessionId;
-			if (pendingLootRunLinkSource == null) decidePendingRunLink(System.currentTimeMillis());
-			record.runLinkSource = pendingLootRunLinkSource;
-			record.linkedRunId = pendingLootLinkedRunId == null ? "" : pendingLootLinkedRunId;
+			record.runSessionId = pendingChestOwner.valid() ? pendingChestOwner.runSessionId() : "";
+			record.chestCostKnown = chestCostKnown;
+			if (!lootValue.complete()) record.financialsKnown = false;
+			applyPendingRunLink(record);
 			record.chestSessionId = pendingChestSessionId == null ? "" : pendingChestSessionId;
 			record.commitFingerprint = buildLootCommitFingerprint(record);
 			record.applyCostBreakdown(costBreakdown);
@@ -7050,15 +7578,13 @@ public final class DungeonRunTrackerFeature {
 			RunRecordCommitDecision commitDecision = DrtConfigManager.addRunRecord(record);
 			if (commitDecision == RunRecordCommitDecision.ADD_INCOMING
 				|| commitDecision == RunRecordCommitDecision.REPLACE_EXISTING) {
+				String offerRunId = record.linkedRunId == null || record.linkedRunId.isBlank()
+					? (DungeonRunRecord.LINK_LIVE.equals(record.runLinkSource) ? record.runSessionId : "")
+					: record.linkedRunId;
+				DrtConfigManager.markChestOfferPurchased(offerRunId, record.chestTitle);
 				trackingSession.updateChestCost(record.chestSessionId, costBreakdown);
 				trackingSession.commitChest(record.chestSessionId, record.commitFingerprint);
-				if (DungeonRunRecord.LINK_LIVE.equals(record.runLinkSource)) {
-					LuckRunCapture.onDungeonChestPurchased(record.linkedRunId, record.chestTitle);
-				} else if (DungeonRunRecord.LINK_CROESUS_UNIQUE.equals(record.runLinkSource) && pendingLootChatConfirmed) {
-					// The CHEST REWARDS chat is Hypixel's receipt for the open; viewing an offer is not a purchase.
-					LuckRunCapture.onCroesusChestPurchased(record.linkedRunId, record.chestTitle);
-				}
-				if (sessionActive && sessionStartMillis > 0L && record.timestampEpochMillis >= sessionStartMillis) {
+				if (chestCostKnown && sessionActive && sessionStartMillis > 0L && record.timestampEpochMillis >= sessionStartMillis) {
 					sessionTotalProfit += chestProfitCoins;
 					sessionFloorProfitTotals.merge(floorName, chestProfitCoins, Long::sum);
 				}
@@ -7086,6 +7612,14 @@ public final class DungeonRunTrackerFeature {
 		return true;
 	}
 
+	private void discardUnconfirmedRewardCapture() {
+		String canonical = canonicalRewardChestTitle(normalize(pendingLootChestTitle));
+		if (canonical != null && openedRewardChestTitlesInLootWindow.remove(canonical)) {
+			openedRewardChestsInLootWindow = Math.max(0, openedRewardChestsInLootWindow - 1);
+		}
+		resetPendingChestState();
+	}
+
 	private void resetPendingChestState() {
 		lootCollectionUntilMillis = 0L;
 		rewardChatBlock.close();
@@ -7097,8 +7631,6 @@ public final class DungeonRunTrackerFeature {
 		pendingLootReconcilingGuiChat = false;
 		pendingLootChestAssigned = false;
 		pendingLootChatConfirmed = false;
-		pendingLootRunLinkSource = null;
-		pendingLootLinkedRunId = "";
 		pendingLootEntries.clear();
 		lootGuardWarnedKeys.clear();
 		recentLootMessages.clear();
@@ -7247,21 +7779,8 @@ public final class DungeonRunTrackerFeature {
 	}
 
 	private String resolveEnchantedBookId(String itemName) {
-		String cleaned = sanitizeLootName(itemName);
-		Matcher matcher = ENCHANTED_BOOK_PATTERN.matcher(cleaned);
-		if (!matcher.matches()) return null;
-
-		String enchantName = matcher.group(1);
-		String romanLevel = matcher.group(2);
-		int numericLevel = romanToInt(romanLevel);
-		if (numericLevel <= 0) return null;
-
-		String normalizedEnchantName = normalizeEnchantName(enchantName);
-		boolean ultimatePrefix = sanitizeLootName(enchantName).regionMatches(true, 0, "Ultimate ", 0, 9);
-		boolean isUltimate = ultimatePrefix
-			|| ULTIMATE_ENCHANTS.contains(normalizedEnchantName);
-		if (isUltimate) return "ENCHANTMENT_ULTIMATE_" + normalizedEnchantName + "_" + numericLevel;
-		return "ENCHANTMENT_" + normalizedEnchantName + "_" + numericLevel;
+		EnchantedBookIdentity.Book book = EnchantedBookIdentity.parse(sanitizeLootName(itemName));
+		return book == null ? null : book.itemId();
 	}
 
 	/**
@@ -7277,9 +7796,10 @@ public final class DungeonRunTrackerFeature {
 		String displayName = rawName;
 		boolean bareBook = isBareEnchantedBookName(rawName) || stack.is(Items.ENCHANTED_BOOK);
 		if (bareBook) {
-			String fromLore = enchantedBookDisplayNameFromLore(stack);
-			if (fromLore != null && !fromLore.isBlank()) {
-				displayName = fromLore;
+			String exactBookName = enchantedBookDisplayNameFromMetadata(stack);
+			if (exactBookName == null) exactBookName = enchantedBookDisplayNameFromLore(stack);
+			if (exactBookName != null && !exactBookName.isBlank()) {
+				displayName = exactBookName;
 			} else if (isBareEnchantedBookName(rawName)) {
 				return null;
 			}
@@ -7294,7 +7814,7 @@ public final class DungeonRunTrackerFeature {
 		}
 
 		int quantity = Math.max(Math.max(1, stack.getCount()), parsed.quantity());
-		if (isCrimsonEssenceName(parsed.name())) {
+		if (isEssenceStackName(parsed.name())) {
 			int fromLore = essenceQuantityFromLore(stack);
 			if (fromLore > quantity) quantity = fromLore;
 		}
@@ -7311,10 +7831,10 @@ public final class DungeonRunTrackerFeature {
 		return new DungeonLootEntry(parsed.name(), itemId, quantity);
 	}
 
-	private boolean isCrimsonEssenceName(String name) {
+	private boolean isEssenceStackName(String name) {
 		if (name == null || name.isBlank()) return false;
 		String compact = sanitizeLootName(name).toUpperCase(Locale.ROOT).replaceAll("[^A-Z0-9]+", " ").trim();
-		return compact.equals("CRIMSON ESSENCE") || compact.equals("ESSENCE CRIMSON");
+		return compact.endsWith(" ESSENCE") || compact.startsWith("ESSENCE ");
 	}
 
 	/** Paid-chest bonus essence is sometimes only in lore, and amounts use thousands separators. */
@@ -7329,7 +7849,7 @@ public final class DungeonRunTrackerFeature {
 				continue;
 			}
 			Matcher suffix = QUANTITY_SUFFIX_PATTERN.matcher(sanitized);
-			if (suffix.matches() && isCrimsonEssenceName(suffix.group(1))) {
+			if (suffix.matches() && isEssenceStackName(suffix.group(1))) {
 				best = Math.max(best, parsePositiveInt(suffix.group(2), 0));
 			}
 		}
@@ -7362,6 +7882,31 @@ public final class DungeonRunTrackerFeature {
 		return null;
 	}
 
+	private String enchantedBookDisplayNameFromMetadata(ItemStack stack) {
+		if (stack == null || stack.isEmpty()) return null;
+		CompoundTag customData = stack.getOrDefault(DataComponents.CUSTOM_DATA, CustomData.EMPTY).copyTag();
+		CompoundTag enchantments = findEnchantmentsTag(customData);
+		if (enchantments == null) return null;
+		for (String enchantKey : enchantments.keySet().stream().sorted().toList()) {
+			int level = enchantments.getInt(enchantKey).orElse(0);
+			EnchantedBookIdentity.Book book = EnchantedBookIdentity.fromEnchantKey(enchantKey, level);
+			if (book != null) return book.displayName();
+		}
+		return null;
+	}
+
+	private CompoundTag findEnchantmentsTag(Tag tag) {
+		if (!(tag instanceof CompoundTag compound)) return null;
+		var direct = compound.getCompound("enchantments");
+		if (direct.isPresent() && !direct.get().isEmpty()) return direct.get();
+		for (String key : compound.keySet()) {
+			if (key.equals("enchantments")) continue;
+			CompoundTag found = findEnchantmentsTag(compound.get(key));
+			if (found != null) return found;
+		}
+		return null;
+	}
+
 	private boolean looksLikeEnchantLoreNoise(String cleaned) {
 		String upper = cleaned.toUpperCase(Locale.ROOT);
 		return upper.contains("COMMON")
@@ -7385,23 +7930,6 @@ public final class DungeonRunTrackerFeature {
 			|| upper.contains("GRANTS")
 			|| upper.contains("THIS ENCHANTMENT")
 			|| upper.contains("THIS ITEM");
-	}
-
-	private String normalizeEnchantName(String enchantName) {
-		String normalized = sanitizeLootName(enchantName).replaceFirst("^(?i)Ultimate\\s+", "");
-		return normalized
-				.replaceAll("[^A-Za-z0-9 ]", " ")
-				.trim()
-				.replaceAll("\\s+", "_")
-				.toUpperCase(Locale.ROOT);
-	}
-
-	private int romanToInt(String roman) {
-		return switch (roman.toUpperCase(Locale.ROOT)) {
-			case "I" -> 1; case "II" -> 2; case "III" -> 3; case "IV" -> 4;
-			case "V" -> 5; case "VI" -> 6; case "VII" -> 7; case "VIII" -> 8;
-			case "IX" -> 9; case "X" -> 10; default -> -1;
-		};
 	}
 
 	private boolean looksLikeNonLootLine(String value) {
@@ -7542,6 +8070,14 @@ public final class DungeonRunTrackerFeature {
 				|| isMasterStarLootName(value);
 	}
 
+	private boolean pendingContainsLootKey(String key) {
+		if (key == null || key.isBlank()) return false;
+		for (DungeonLootEntry existing : pendingLootEntries) {
+			if (key.equals(lootKey(existing))) return true;
+		}
+		return false;
+	}
+
 	private String lootKey(DungeonLootEntry entry) {
 		if (entry.itemId != null && !entry.itemId.isBlank()) return "id:" + entry.itemId;
 		return "raw:" + stripTrailingLootQuantity(sanitizeLootName(entry.rawName)).toUpperCase(Locale.ROOT);
@@ -7633,8 +8169,8 @@ public final class DungeonRunTrackerFeature {
 		aliases.put("GIANT TOOTH", "GIANT_TOOTH");
 		aliases.put("SADAN'S BROOCH", "SADANS_BROOCH");
 		aliases.put("SADANS BROOCH", "SADANS_BROOCH");
-		aliases.put("NECROMANCER'S BROOCH", "NECROMANCERS_BROOCH");
-		aliases.put("NECROMANCERS BROOCH", "NECROMANCERS_BROOCH");
+		aliases.put("NECROMANCER'S BROOCH", "NECROMANCER_BROOCH");
+		aliases.put("NECROMANCERS BROOCH", "NECROMANCER_BROOCH");
 		aliases.put("RED NOSE", "RED_NOSE");
 		aliases.put("RED SCARF", "RED_SCARF");
 		aliases.put("ROCK GEMSTONE", "ROCK_GEMSTONE");

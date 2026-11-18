@@ -5,6 +5,9 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import dev.vy.drt.DungeonRunTracker;
+import dev.vy.drt.history.ManualRecords;
+import dev.vy.drt.history.RunOwnership;
+import dev.vy.drt.history.RunHistoryLinks;
 import java.io.IOException;
 import java.io.Reader;
 import java.io.Writer;
@@ -12,29 +15,39 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 import net.fabricmc.loader.api.FabricLoader;
 
 public final class DrtConfigManager {
 	private static final float MIN_HUD_SCALE = 0.5F;
 	private static final float MAX_HUD_SCALE = 2.0F;
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-	private static final Path CONFIG_PATH = FabricLoader.getInstance().getConfigDir().resolve("drt.json");
-	private static final Path BACKUP_DIR = CONFIG_PATH.resolveSibling("drt").resolve("backups");
+	private static final Path CONFIG_DIR = FabricLoader.getInstance().getConfigDir();
+	private static final Path CONFIG_PATH = DrtConfigPaths.configFile(CONFIG_DIR);
+	private static final Path BACKUP_DIR = DrtConfigPaths.drtDirectory(CONFIG_DIR).resolve("backups");
 	private static final long COMPLETION_SESSION_DEDUP_WINDOW_MS = 30L * 60L * 1000L;
 	private static DrtConfig config = new DrtConfig();
+	private static Supplier<String> accountUuidSupplier = () -> null;
 	private static boolean primaryConfigMalformed;
 	private static long nextRollingBackupAtMillis;
+	private static long historyRevision;
 
 	private DrtConfigManager() {
 	}
 
 	public static synchronized void load() {
 		try {
+			if (DrtConfigPaths.migrateLegacyConfig(CONFIG_DIR)) {
+				DungeonRunTracker.LOGGER.info("[DRT] Migrated legacy config to {}", CONFIG_PATH);
+			}
 			Files.createDirectories(CONFIG_PATH.getParent());
 		} catch (IOException e) {
 			DungeonRunTracker.LOGGER.error("[DRT] Failed to create config directory", e);
@@ -42,7 +55,9 @@ public final class DrtConfigManager {
 		if (Files.notExists(CONFIG_PATH)) {
 			config = new DrtConfig();
 			applyFreshOverlayDefaults(config);
+			config.startStatsSyncBoundary(System.currentTimeMillis());
 			primaryConfigMalformed = false;
+			historyRevision++;
 			save();
 			return;
 		}
@@ -58,6 +73,7 @@ public final class DrtConfigManager {
 		} catch (IOException e) {
 			recoverUnreadablePrimary("[DRT] Config file could not be read, preserving primary and attempting backup recovery", e);
 		}
+		historyRevision++;
 	}
 
 	/** The primary is kept as a .malformed copy on the next save instead of being overwritten unseen. */
@@ -71,6 +87,7 @@ public final class DrtConfigManager {
 		} else {
 			config = new DrtConfig();
 			applyFreshOverlayDefaults(config);
+			config.startStatsSyncBoundary(System.currentTimeMillis());
 			DungeonRunTracker.LOGGER.error("[DRT] Backup recovery failed; using in-memory defaults, the unreadable primary is kept as a .malformed copy");
 		}
 	}
@@ -84,6 +101,7 @@ public final class DrtConfigManager {
 				if (loaded.floorRunTimeMs == null) loaded.floorRunTimeMs = new LinkedHashMap<>();
 				if (loaded.runHistory == null) loaded.runHistory = new ArrayList<>();
 				if (loaded.runCompletions == null) loaded.runCompletions = new ArrayList<>();
+				if (loaded.pendingChestOffers == null) loaded.pendingChestOffers = new LinkedHashMap<>();
 				loaded.hudScale = clampHudScale(loaded.hudScale);
 				loaded.hudVisibilityMode = normalizeHudVisibilityMode(loaded.hudVisibilityMode);
 				boolean migrated = normalizeToggleFlags(loaded, root);
@@ -93,6 +111,8 @@ public final class DrtConfigManager {
 				}
 				if (normalizeRunHistory(loaded)) migrated = true;
 				if (normalizeRunCompletions(loaded)) migrated = true;
+				if (recoverPersistedRunOwnership(loaded)) migrated = true;
+				if (ManualRecords.markLegacy(loaded.runHistory, loaded.runCompletions)) migrated = true;
 				if (restoreFloorRunCountsFromCompletions(loaded)) migrated = true;
 				if (migrateOverlayPreset(loaded, root)) migrated = true;
 				if (normalizeCustomOverlayLayout(loaded)) migrated = true;
@@ -125,6 +145,35 @@ public final class DrtConfigManager {
 		return config;
 	}
 
+	public static Path configDirectory() {
+		return DrtConfigPaths.drtDirectory(CONFIG_DIR);
+	}
+
+	public static Path themesDirectory() {
+		return DrtConfigPaths.themesDirectory(CONFIG_DIR);
+	}
+
+	/** Applies Settings-tab changes to the shared config, validates them, and persists once. */
+	public static synchronized void updateUserSettings(Consumer<DrtConfig> update) {
+		if (update != null) update.accept(config);
+		DrtSettingsValidation.normalize(config);
+		save();
+	}
+
+	/** Supplies the logged-in account's undashed UUID, stamped on every new run and chest record. */
+	public static synchronized void setAccountUuidSupplier(Supplier<String> supplier) {
+		accountUuidSupplier = supplier == null ? () -> null : supplier;
+	}
+
+	private static String currentAccountUuid() {
+		try {
+			String uuid = accountUuidSupplier.get();
+			return uuid == null || uuid.isBlank() ? null : uuid;
+		} catch (RuntimeException e) {
+			return null;
+		}
+	}
+
 	public static synchronized String getDungeonSelectedFloor() {
 		return config.selectedFloor;
 	}
@@ -142,6 +191,11 @@ public final class DrtConfigManager {
 		return records;
 	}
 
+	/** Changes whenever persisted loot history is loaded or mutated. */
+	public static synchronized long historyRevision() {
+		return historyRevision;
+	}
+
 	public static synchronized List<DungeonRunCompletionRecord> getRunCompletions() {
 		List<DungeonRunCompletionRecord> records = new ArrayList<>();
 		if (config.runCompletions == null) return records;
@@ -149,6 +203,70 @@ public final class DrtConfigManager {
 			if (r != null) records.add(r.copy());
 		}
 		return records;
+	}
+
+	public static synchronized DungeonRunCompletionRecord getRunCompletion(String runSessionId) {
+		if (runSessionId == null || runSessionId.isBlank() || config.runCompletions == null) return null;
+		for (DungeonRunCompletionRecord record : config.runCompletions) {
+			if (record != null && runSessionId.equals(record.runSessionId)) return record.copy();
+		}
+		return null;
+	}
+
+	public static synchronized String getCurrentAccountUuid() {
+		return currentAccountUuid();
+	}
+
+	public static synchronized boolean updateRunCompletionParty(String runSessionId, List<DungeonPartyMember> members) {
+		if (runSessionId == null || runSessionId.isBlank() || members == null || members.isEmpty()) return false;
+		DungeonRunCompletionRecord completion = findCompletion(runSessionId);
+		if (completion == null) return false;
+		PartyMemberReconciler.Result reconciled = PartyMemberReconciler.reconcile(completion.partyMembers, members);
+		if (!reconciled.changed()) return false;
+		completion.partyMembers = reconciled.members();
+		historyRevision++;
+		save();
+		return true;
+	}
+
+	/** Applies a backend-confirmed UUID to historical name-only party entries without changing run ownership. */
+	public static synchronized boolean resolvePartyIdentity(String name, String uuid) {
+		if (name == null || name.isBlank() || uuid == null || uuid.isBlank() || config.runCompletions == null) return false;
+		String normalized = uuid.replace("-", "").toLowerCase(java.util.Locale.ROOT);
+		if (!normalized.matches("[0-9a-f]{32}")) return false;
+		boolean changed = false;
+		for (DungeonRunCompletionRecord completion : config.runCompletions) {
+			if (completion == null || completion.partyMembers == null) continue;
+			for (DungeonPartyMember member : completion.partyMembers) {
+				if (member != null && member.name.equalsIgnoreCase(name) && !member.uuid.equals(normalized)) {
+					member.uuid = normalized;
+					changed = true;
+				}
+			}
+		}
+		if (changed) { historyRevision++; save(); }
+		return changed;
+	}
+
+
+	public static synchronized boolean updateRunCompletionDuration(String runSessionId, long runTimeMs, String evidence) {
+		if (runSessionId == null || runSessionId.isBlank() || !DungeonRunCompletionRecord.plausibleRunTime(runTimeMs)) return false;
+		if (config.runCompletions == null) return false;
+		for (DungeonRunCompletionRecord existing : config.runCompletions) {
+			if (existing == null || !runSessionId.equals(existing.runSessionId)) continue;
+			existing.normalize();
+			CompletionDurationEvidence.Update update = CompletionDurationEvidence.apply(existing, runTimeMs, evidence);
+			if (!update.changed()) return false;
+			long previous = update.previousMillis();
+			if (config.floorRunTimeMs != null && existing.floor != null && !existing.floor.isBlank()) {
+				long delta = runTimeMs - (DungeonRunCompletionRecord.plausibleRunTime(previous) ? previous : 0L);
+				config.floorRunTimeMs.merge(existing.floor, delta, (oldValue, change) -> Math.max(0L, oldValue + change));
+			}
+			historyRevision++;
+			save();
+			return true;
+		}
+		return false;
 	}
 
 	public static synchronized RunRecordCommitDecision addRunCompletionRecord(DungeonRunCompletionRecord record) {
@@ -164,9 +282,12 @@ public final class DrtConfigManager {
 			if (existing == null) continue;
 			existing.normalize();
 			boolean sameFingerprint = sameStableId(existing.completionFingerprint, stored.completionFingerprint);
-			boolean sameRunSession = sameStableId(existing.runSessionId, stored.runSessionId)
-				&& completionTimesNear(existing, stored);
+			boolean sameRunSession = sameStableId(existing.runSessionId, stored.runSessionId);
 			if (!sameFingerprint && !sameRunSession) continue;
+			if (ChestOfferPersistence.attachPending(config, existing)) {
+				historyRevision++;
+				save();
+			}
 			if (existing.equivalentTo(stored) || sameFingerprint) {
 				return RunRecordCommitDecision.KEEP_EXISTING;
 			}
@@ -181,10 +302,30 @@ public final class DrtConfigManager {
 		if (stored.completionId == null || stored.completionId.isBlank()) {
 			stored.completionId = "completion-" + UUID.randomUUID();
 		}
+		if (stored.playerUuid == null) stored.playerUuid = currentAccountUuid();
+		ChestOfferPersistence.attachPending(config, stored);
 		config.runCompletions.add(stored);
 		config.floorRunCounts.merge(stored.floor, 1, Integer::sum);
 		save();
 		return RunRecordCommitDecision.ADD_INCOMING;
+	}
+
+	public static synchronized boolean recordObservedChestOffer(String runSessionId, DungeonChestOffer incoming) {
+		if (ChestOfferPersistence.record(config, runSessionId, incoming)) {
+			historyRevision++;
+			save();
+			return true;
+		}
+		return false;
+	}
+
+	public static synchronized boolean markChestOfferPurchased(String runSessionId, String chestTitle) {
+		if (ChestOfferPersistence.markPurchased(config, runSessionId, chestTitle)) {
+			historyRevision++;
+			save();
+			return true;
+		}
+		return false;
 	}
 
 	public static synchronized RunRecordCommitDecision addRunRecord(DungeonRunRecord record) {
@@ -192,6 +333,14 @@ public final class DrtConfigManager {
 		if (config.runHistory == null) config.runHistory = new ArrayList<>();
 		DungeonRunRecord stored = record.copy();
 		stored.normalizeCostBreakdown();
+		if (isLinkedSource(stored.runLinkSource)) {
+			DungeonRunCompletionRecord owner = findCompletion(stored.linkedRunId);
+			if (owner == null) {
+				DungeonRunTracker.LOGGER.warn("[DRT] Rejected chest with missing persisted owner: linkedRunId={} chest={}", stored.linkedRunId, stored.chestTitle);
+				return RunRecordCommitDecision.CONFLICT;
+			}
+			stored.runSessionId = owner.runSessionId;
+		}
 		if (stored.commitFingerprint == null || stored.commitFingerprint.isBlank()) {
 			stored.commitFingerprint = commitFingerprint(stored);
 		}
@@ -212,17 +361,25 @@ public final class DrtConfigManager {
 			DungeonRunRecord existing = config.runHistory.get(decision.existingIndex());
 			assignPersistentIds(stored, existing);
 			config.runHistory.set(decision.existingIndex(), stored);
+			historyRevision++;
 			save();
 			return RunRecordCommitDecision.REPLACE_EXISTING;
 		}
 		assignPersistentIds(stored, null);
 		config.runHistory.add(stored);
+		historyRevision++;
 		save();
 		return RunRecordCommitDecision.ADD_INCOMING;
 	}
 
 	private static void assignPersistentIds(DungeonRunRecord stored, DungeonRunRecord existing) {
 		if (stored == null) return;
+		if (existing != null) stored.manual = ManualRecord.merge(existing.manual, stored.manual);
+		if (stored.playerUuid == null || stored.playerUuid.isBlank()) {
+			stored.playerUuid = existing != null && existing.playerUuid != null && !existing.playerUuid.isBlank()
+				? existing.playerUuid
+				: currentAccountUuid();
+		}
 		if (stored.recordId == null || stored.recordId.isBlank()) {
 			stored.recordId = existing != null && existing.recordId != null && !existing.recordId.isBlank()
 				? existing.recordId
@@ -248,6 +405,20 @@ public final class DrtConfigManager {
 		} else {
 			config.nextChestLogNumber = Math.max(Math.max(1, config.nextChestLogNumber), stored.chestNumber + 1);
 		}
+	}
+
+	private static boolean isLinkedSource(String source) {
+		return DungeonRunRecord.LINK_LIVE.equals(source)
+			|| DungeonRunRecord.LINK_CROESUS_UNIQUE.equals(source)
+			|| DungeonRunRecord.LINK_RECOVERED.equals(source);
+	}
+
+	private static DungeonRunCompletionRecord findCompletion(String runSessionId) {
+		if (runSessionId == null || runSessionId.isBlank() || config.runCompletions == null) return null;
+		for (DungeonRunCompletionRecord completion : config.runCompletions) {
+			if (completion != null && runSessionId.equals(completion.runSessionId)) return completion;
+		}
+		return null;
 	}
 
 	private static String commitFingerprint(DungeonRunRecord record) {
@@ -316,20 +487,17 @@ public final class DrtConfigManager {
 	}
 
 	public static synchronized void updateHudOverlayPreset(String preset) {
-		config.hudOverlayPreset = normalizeOverlayPreset(preset, false);
+		OverlaySettings.applyPreset(config, preset);
 		save();
 	}
 
 	public static synchronized void updateCustomOverlayLayout(String layout) {
-		config.customOverlayLayout = layout == null ? "" : layout.replace("\r\n", "\n").replace('\r', '\n');
+		OverlaySettings.applyCustomLayout(config, layout);
 		save();
 	}
 
 	public static synchronized void updateOverlaySettings(String preset, String customLayout) {
-		config.hudOverlayPreset = normalizeOverlayPreset(preset, false);
-		if (customLayout != null) {
-			config.customOverlayLayout = customLayout.replace("\r\n", "\n").replace('\r', '\n');
-		}
+		OverlaySettings.applyPresetAndLayout(config, preset, customLayout);
 		save();
 	}
 
@@ -409,7 +577,9 @@ public final class DrtConfigManager {
 		config.legacyRunsCompleted = 0;
 		config.runHistory = new ArrayList<>();
 		config.runCompletions = new ArrayList<>();
+		config.pendingChestOffers = new LinkedHashMap<>();
 		config.nextChestLogNumber = 1;
+		historyRevision++;
 		DungeonRunTracker.LOGGER.warn("[DRT] Cleared all history from {}: {} loot records, {} run completions. Backup: {}",
 			source, records, completions, backup == null ? "none (nothing to clear)" : backup);
 		save();
@@ -431,6 +601,11 @@ public final class DrtConfigManager {
 		if (config.floorRunTimeMs != null) config.floorRunTimeMs.remove(floor);
 		if (config.runHistory != null) config.runHistory.removeIf(r -> r != null && floor.equals(r.floor));
 		if (config.runCompletions != null) config.runCompletions.removeIf(r -> r != null && floor.equals(r.floor));
+		if (config.pendingChestOffers != null) {
+			config.pendingChestOffers.values().forEach(offers -> offers.removeIf(offer -> offer != null && offer.contextFloor != null && floor.equals(offer.contextFloor.name())));
+			config.pendingChestOffers.entrySet().removeIf(entry -> entry.getValue() == null || entry.getValue().isEmpty());
+		}
+		historyRevision++;
 		DungeonRunTracker.LOGGER.warn("[DRT] Cleared {} history from {}: {} loot records, {} run completions. Backup: {}",
 			floor, source, records, completions, backup == null ? "none (nothing to clear)" : backup);
 		save();
@@ -462,7 +637,10 @@ public final class DrtConfigManager {
 	public static synchronized boolean removeRunRecord(DungeonRunRecord target) {
 		if (target == null || config.runHistory == null) return false;
 		boolean removed = config.runHistory.removeIf(r -> matchesRunRecord(r, target));
-		if (removed) save();
+		if (removed) {
+			historyRevision++;
+			save();
+		}
 		return removed;
 	}
 
@@ -484,12 +662,36 @@ public final class DrtConfigManager {
 				stored.runLinkSource = existing.runLinkSource;
 				stored.linkedRunId = existing.linkedRunId;
 			}
+			stored.manual = ManualRecord.merge(existing.manual, stored.manual);
 			stored.normalizeCostBreakdown();
 			config.runHistory.set(i, stored);
+			historyRevision++;
 			save();
 			return true;
 		}
 		return false;
+	}
+
+	/**
+	 * A change the player made by hand. The chest and the run it belongs to are marked edited for
+	 * good, so neither is uploaded as DRT-recorded data again. Automatic updates such as repricing
+	 * use {@link #updateRunRecord} and keep whatever marker the record already has.
+	 */
+	public static synchronized boolean editRunRecordManually(DungeonRunRecord matchKey, DungeonRunRecord replacement) {
+		if (matchKey == null || replacement == null || config.runHistory == null) return false;
+		DungeonRunRecord existing = null;
+		for (DungeonRunRecord record : config.runHistory) {
+			if (matchesRunRecord(record, matchKey)) {
+				existing = record;
+				break;
+			}
+		}
+		if (existing == null) return false;
+		RunHistoryLinks.Link link = RunHistoryLinks.resolve(config.runHistory, config.runCompletions).get(existing);
+		DungeonRunRecord edited = replacement.copy();
+		edited.manual = ManualRecord.edited(existing.manual);
+		if (link != null && link.linked()) link.completion().manual = ManualRecord.edited(link.completion().manual);
+		return updateRunRecord(matchKey, edited);
 	}
 
 	private static void decrementFloorRunCount(String floor) {
@@ -546,18 +748,14 @@ public final class DrtConfigManager {
 			loaded.essenceCountsTowardProfit = true;
 			migrated = true;
 		}
+		if (loaded.startStatsSyncBoundary(System.currentTimeMillis())) migrated = true;
 		return migrated;
 	}
 
 	private static void normalizeOnboardingSettings(DrtConfig loaded) {
-		loaded.kuudraFaction = normalizeKuudraFaction(loaded.kuudraFaction);
+		DrtSettingsValidation.normalize(loaded);
 		loaded.kuudraReputation = clamp(loaded.kuudraReputation, 0, 100_000);
-		loaded.kuudraPetRarity = normalizePetRarity(loaded.kuudraPetRarity);
-		loaded.kuudraPetLevel = clamp(loaded.kuudraPetLevel, 1, 100);
-		loaded.coolForgedLevel = clamp(loaded.coolForgedLevel, 1, 5);
-		loaded.bazaarPriceMode = normalizeBazaarPriceMode(loaded.bazaarPriceMode);
 		if (loaded.kuudraKeyShopCosts == null) loaded.kuudraKeyShopCosts = new LinkedHashMap<>();
-		loaded.crimsonEssenceBonusPercent = clamp(loaded.crimsonEssenceBonusPercent, 0, 100);
 	}
 
 	private static void applyFreshOverlayDefaults(DrtConfig cfg) {
@@ -571,7 +769,7 @@ public final class DrtConfigManager {
 		boolean missingField = root == null || !root.has("hudOverlayPreset");
 		String current = loaded.hudOverlayPreset;
 		if (!missingField && current != null && !current.isBlank()) {
-			String normalized = normalizeOverlayPreset(current, false);
+			String normalized = OverlaySettings.normalizePreset(current, false);
 			if (!normalized.equals(current)) {
 				loaded.hudOverlayPreset = normalized;
 				return true;
@@ -601,15 +799,6 @@ public final class DrtConfigManager {
 		}
 		loaded.customOverlayLayout = defaultCustomOverlayLayout();
 		return true;
-	}
-
-	private static String normalizeOverlayPreset(String preset, boolean freshDefault) {
-		if (preset == null || preset.isBlank()) return freshDefault ? "MODERN" : "LEGACY";
-		String normalized = preset.trim().toUpperCase(java.util.Locale.ROOT);
-		return switch (normalized) {
-			case "LEGACY", "MODERN", "SESSION", "DETAILED", "CLASSIC", "CUSTOM" -> normalized;
-			default -> freshDefault ? "MODERN" : "LEGACY";
-		};
 	}
 
 	private static String defaultCustomOverlayLayout() {
@@ -706,8 +895,8 @@ public final class DrtConfigManager {
 			return true;
 		}
 		boolean changed = false;
-		Set<String> fingerprints = new HashSet<>();
-		Set<String> runSessionIds = new HashSet<>();
+		Map<String, DungeonRunCompletionRecord> byFingerprint = new HashMap<>();
+		Map<String, DungeonRunCompletionRecord> byRunSession = new HashMap<>();
 		for (int i = loaded.runCompletions.size() - 1; i >= 0; i--) {
 			DungeonRunCompletionRecord record = loaded.runCompletions.get(i);
 			if (record == null) {
@@ -724,9 +913,11 @@ public final class DrtConfigManager {
 			if (record.completionId.isBlank()) {
 				record.completionId = "completion-" + UUID.randomUUID();
 			}
-			boolean duplicateFingerprint = !record.completionFingerprint.isBlank() && !fingerprints.add(record.completionFingerprint);
-			boolean duplicateRunSession = !record.runSessionId.isBlank() && !runSessionIds.add(record.runSessionId);
-			if (duplicateFingerprint || duplicateRunSession) {
+			DungeonRunCompletionRecord keptFingerprint = record.completionFingerprint.isBlank() ? null : byFingerprint.putIfAbsent(record.completionFingerprint, record);
+			DungeonRunCompletionRecord keptRunSession = record.runSessionId.isBlank() ? null : byRunSession.putIfAbsent(record.runSessionId, record);
+			if (keptFingerprint != null || keptRunSession != null) {
+				DungeonRunCompletionRecord kept = keptFingerprint != null ? keptFingerprint : keptRunSession;
+				mergeCompletion(kept, record);
 				loaded.runCompletions.remove(i);
 				changed = true;
 				continue;
@@ -736,6 +927,49 @@ public final class DrtConfigManager {
 			}
 		}
 		return changed;
+	}
+
+	private static void mergeCompletion(DungeonRunCompletionRecord kept, DungeonRunCompletionRecord incoming) {
+		if (kept == null || incoming == null) return;
+		kept.manual = ManualRecord.merge(kept.manual, incoming.manual);
+		if ((kept.playerUuid == null || kept.playerUuid.isBlank()) && incoming.playerUuid != null) kept.playerUuid = incoming.playerUuid;
+		if (!kept.hasRecordedScore() && incoming.hasRecordedScore()) {
+			kept.score = incoming.score;
+			kept.scoreRecorded = incoming.scoreRecorded;
+		}
+		if (incoming.runTimeEvidenceRank() > kept.runTimeEvidenceRank()) {
+			kept.runTimeMs = incoming.runTimeMs;
+			kept.runTimeSource = incoming.runTimeSource;
+			kept.runTimeEvidence = incoming.runTimeEvidence;
+		}
+		kept.partyMembers = PartyMemberReconciler.reconcile(kept.partyMembers, incoming.partyMembers).members();
+		if (kept.chestOffers == null) kept.chestOffers = new ArrayList<>();
+		if (incoming.chestOffers == null) return;
+		for (DungeonChestOffer offer : incoming.chestOffers) {
+			if (offer == null) continue;
+			DungeonChestOffer existing = null;
+			for (DungeonChestOffer candidate : kept.chestOffers) {
+				if (candidate != null && candidate.chestTitle.equalsIgnoreCase(offer.chestTitle)) {
+					existing = candidate;
+					break;
+				}
+			}
+			if (existing == null) {
+				kept.chestOffers.add(offer.copy());
+			} else {
+				existing.purchased |= offer.purchased;
+				if ((existing.lootEntries == null || existing.lootEntries.isEmpty()) && offer.lootEntries != null && !offer.lootEntries.isEmpty()) {
+					int index = kept.chestOffers.indexOf(existing);
+					DungeonChestOffer replacement = offer.copy();
+					replacement.purchased |= existing.purchased;
+					kept.chestOffers.set(index, replacement);
+				}
+			}
+		}
+	}
+
+	static boolean recoverPersistedRunOwnership(DrtConfig loaded) {
+		return RunOwnership.recoverPersistedChestOwners(loaded, COMPLETION_SESSION_DEDUP_WINDOW_MS);
 	}
 
 	private static boolean deduplicateRunHistory(List<DungeonRunRecord> records) {
@@ -748,6 +982,7 @@ public final class DrtConfigManager {
 				DungeonRunRecord right = records.get(j);
 				if (!RunRecordDeduplicator.areDuplicateLootRecords(left, right)) continue;
 				DungeonRunRecord keep = RunRecordDeduplicator.preferredForMigration(left, right);
+				keep.manual = ManualRecord.merge(left.manual, right.manual);
 				records.set(i, keep);
 				records.remove(j);
 				left = keep;

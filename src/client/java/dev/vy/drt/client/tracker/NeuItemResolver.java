@@ -5,6 +5,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import dev.vy.drt.DungeonRunTracker;
+import net.minecraft.client.Minecraft;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
@@ -14,6 +15,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.component.DyedItemColor;
 import net.minecraft.world.item.component.ResolvableProfile;
+import net.minecraft.resources.Identifier;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -60,11 +62,24 @@ public final class NeuItemResolver {
 	private static final Set<String> FETCHED = ConcurrentHashMap.newKeySet();
 	private static final ConcurrentHashMap<String, ItemStack> RESOLVED_STACKS = new ConcurrentHashMap<>();
 	private static final ConcurrentHashMap<String, Integer>   RESOLVED_COLORS = new ConcurrentHashMap<>();
+	private static final ConcurrentHashMap<Identifier, Boolean> CUSTOM_MODEL_AVAILABILITY = new ConcurrentHashMap<>();
 	private static final ConcurrentHashMap<String, String> ATTRIBUTE_SHARD_INTERNAL_NAMES = new ConcurrentHashMap<>(Map.of(
 		"SHARD_BEZAL", "ATTRIBUTE_SHARD_BLAZING_RESISTANCE;1",
-		"SHARD_KRAKEN", "ATTRIBUTE_SHARD_MENDING;1"
+		"SHARD_KRAKEN", "ATTRIBUTE_SHARD_MENDING;1",
+		"SHARD_BONZO", "ATTRIBUTE_SHARD_CATACOMBS_EXPLORER;1",
+		"SHARD_SCARF", "ATTRIBUTE_SHARD_CATACOMBS_GRADUATE;1",
+		"SHARD_THORN", "ATTRIBUTE_SHARD_DOMINANCE;1",
+		"SHARD_WITHER", "ATTRIBUTE_SHARD_WITHER_ESSENCE;1",
+		"SHARD_WITHER_SPECTER", "ATTRIBUTE_SHARD_BREEZE;1"
 	));
 	private static final AtomicBoolean ATTRIBUTE_SHARD_INDEX_REQUESTED = new AtomicBoolean();
+	static {
+		registerShardColor("SHARD_BONZO", "ATTRIBUTE_SHARD_CATACOMBS_EXPLORER;1", "EPIC");
+		registerShardColor("SHARD_SCARF", "ATTRIBUTE_SHARD_CATACOMBS_GRADUATE;1", "EPIC");
+		registerShardColor("SHARD_THORN", "ATTRIBUTE_SHARD_DOMINANCE;1", "EPIC");
+		registerShardColor("SHARD_WITHER", "ATTRIBUTE_SHARD_WITHER_ESSENCE;1", "RARE");
+		registerShardColor("SHARD_WITHER_SPECTER", "ATTRIBUTE_SHARD_BREEZE;1", "RARE");
+	}
 
 	private NeuItemResolver() {}
 
@@ -76,6 +91,33 @@ public final class NeuItemResolver {
 	public static Integer getColor(String itemId) {
 		if (itemId == null || itemId.isBlank()) return null;
 		return RESOLVED_COLORS.get(itemId.toUpperCase(Locale.ROOT));
+	}
+
+	public static boolean hasRenderableModel(ItemStack stack) {
+		if (stack == null || stack.isEmpty() || stack.is(Items.BARRIER)) return false;
+		Identifier model = stack.get(DataComponents.ITEM_MODEL);
+		if (model == null || model.getNamespace().equals("minecraft")) return true;
+		if (CUSTOM_MODEL_AVAILABILITY.containsKey(model)) return true;
+		boolean available = customModelAvailable(model);
+		if (available) CUSTOM_MODEL_AVAILABILITY.put(model, true);
+		return available;
+	}
+
+	private static boolean customModelAvailable(Identifier model) {
+		try {
+			var mc = Minecraft.getInstance();
+			if (mc == null) return false;
+			var resources = mc.getResourceManager();
+			if (resources == null) return false;
+			String path = model.getPath();
+			String stripped = path.startsWith("item/") ? path.substring("item/".length()) : path;
+			return resources.getResource(Identifier.fromNamespaceAndPath(model.getNamespace(), "items/" + path + ".json")).isPresent()
+				|| resources.getResource(Identifier.fromNamespaceAndPath(model.getNamespace(), "items/" + stripped + ".json")).isPresent()
+				|| resources.getResource(Identifier.fromNamespaceAndPath(model.getNamespace(), "models/" + path + ".json")).isPresent()
+				|| resources.getResource(Identifier.fromNamespaceAndPath(model.getNamespace(), "models/item/" + stripped + ".json")).isPresent();
+		} catch (RuntimeException ignored) {
+			return false;
+		}
 	}
 
 	public static String getAttributeShardInternalName(String bazaarName) {
@@ -126,14 +168,34 @@ public final class NeuItemResolver {
 					bazaarName.toUpperCase(Locale.ROOT),
 					internalName.toUpperCase(Locale.ROOT)
 				);
+				if (object.has("rarity")) registerShardColor(bazaarName, internalName, object.get("rarity").getAsString());
 			}
 		} catch (Exception e) {
 			DungeonRunTracker.LOGGER.warn("[NEU] Failed to load attribute shard index: {}", e.getMessage());
 		}
 	}
 
+	private static void registerShardColor(String bazaarName, String internalName, String rarity) {
+		int color = switch (rarity == null ? "" : rarity.toUpperCase(Locale.ROOT)) {
+			case "COMMON" -> 0xFFFFFFFF;
+			case "UNCOMMON" -> 0xFF55FF55;
+			case "RARE" -> 0xFF5555FF;
+			case "EPIC" -> 0xFFAA00AA;
+			case "LEGENDARY" -> 0xFFFFAA00;
+			case "MYTHIC" -> 0xFFFF55FF;
+			case "DIVINE" -> 0xFF55FFFF;
+			case "SPECIAL", "VERY_SPECIAL" -> 0xFFFF5555;
+			default -> 0;
+		};
+		if (color == 0) return;
+		if (bazaarName != null && !bazaarName.isBlank()) RESOLVED_COLORS.putIfAbsent(bazaarName.toUpperCase(Locale.ROOT), color);
+		if (internalName != null && !internalName.isBlank()) RESOLVED_COLORS.putIfAbsent(internalName.toUpperCase(Locale.ROOT), color);
+	}
+
 	public static void preload() {
+		loadAttributeShardIndexAsync();
 		String[] skulls = {
+			"KUUDRA_TEETH",
 			"SHADOW_ASSASSIN_HELMET",
 			"SHADOW_ASSASSIN_CLOAK",
 			"NECROMANCER_LORD_HELMET",
@@ -142,6 +204,8 @@ public final class NeuItemResolver {
 			"WITHER_SHIELD_SCROLL",
 			"WITHER_BLOOD",
 			"RECOMBOBULATOR_3000",
+			"FIRST_MASTER_STAR", "SECOND_MASTER_STAR", "THIRD_MASTER_STAR", "FOURTH_MASTER_STAR", "FIFTH_MASTER_STAR",
+			"NECROMANCER_BROOCH", "ATTRIBUTE_SHARD_BREEZE;1",
 			"ADAPTIVE_HELMET",
 			"TRAINING_WEIGHTS",
 			"AOTE_STONE",
@@ -238,6 +302,13 @@ public final class NeuItemResolver {
 			item = translateItemId(neuItemId);
 		}
 		ItemStack stack = new ItemStack(item);
+		if (itemModel != null) {
+			try {
+				stack.set(DataComponents.ITEM_MODEL, Identifier.parse(itemModel));
+			} catch (RuntimeException ignored) {
+				// Invalid repository model identifiers fall back to the resolved vanilla item.
+			}
+		}
 		Integer leatherColor = extractLeatherColor(nbttag);
 		if (leatherColor != null && isLeatherArmor(item)) {
 			stack.set(DataComponents.DYED_COLOR, new DyedItemColor(leatherColor));

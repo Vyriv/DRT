@@ -14,3 +14,7 @@ remappedSources/
 .tmp_report_*/
 at/
 
+# Versioned Loom / game logs under versions/
+versions/*/logs/
+versions/*/run/
+

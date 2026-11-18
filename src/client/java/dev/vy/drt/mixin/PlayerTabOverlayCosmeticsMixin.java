@@ -1,5 +1,7 @@
 package dev.vy.drt.mixin;
 
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import dev.vy.drt.client.cosmetics.DrtCosmetics;
 import net.minecraft.client.gui.components.PlayerTabOverlay;
 import net.minecraft.client.multiplayer.PlayerInfo;
@@ -19,5 +21,19 @@ public abstract class PlayerTabOverlayCosmeticsMixin {
 		if (styled != current) {
 			cir.setReturnValue(styled);
 		}
+	}
+
+	// Styled at the draw call, not in getNameForDisplay: SkyHanni and TabReader parse tab lines
+	// through that method, and SkyHanni decorates its compact tab separately.
+	@WrapOperation(
+		method = "extractRenderState",
+		at = @At(
+			value = "INVOKE",
+			target = "Lnet/minecraft/client/gui/components/PlayerTabOverlay;getNameForDisplay(Lnet/minecraft/client/multiplayer/PlayerInfo;)Lnet/minecraft/network/chat/Component;"
+		)
+	)
+	private Component drt$styleRenderedTabName(PlayerTabOverlay overlay, PlayerInfo playerInfo, Operation<Component> original) {
+		Component current = original.call(overlay, playerInfo);
+		return DrtCosmetics.styleRenderedTabName(current, playerInfo == null ? null : playerInfo.getProfile());
 	}
 }

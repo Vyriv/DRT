@@ -2,6 +2,7 @@ package dev.vy.drt.price;
 
 import dev.vy.drt.config.DungeonFloor;
 import dev.vy.drt.config.DungeonLootEntry;
+import dev.vy.drt.config.DrtConfig;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -25,6 +26,10 @@ public final class LootFloorGuards {
 	}
 
 	public static List<String> evaluate(DungeonFloor floor, String chestTitle, DungeonLootEntry entry) {
+		return evaluate(floor, chestTitle, entry, null);
+	}
+
+	public static List<String> evaluate(DungeonFloor floor, String chestTitle, DungeonLootEntry entry, DrtConfig config) {
 		List<String> reasons = new ArrayList<>(3);
 		if (entry == null) return reasons;
 		if (chestFloorModeMismatch(floor, chestTitle)) return reasons;
@@ -34,7 +39,7 @@ public final class LootFloorGuards {
 		ExpectedLootTables.ChestTier chest = ExpectedLootTables.parseChestTier(chestTitle);
 
 		if (isEssence(raw, itemId)) {
-			addEssenceReasons(reasons, floor, chest, raw, itemId, qty);
+			addEssenceReasons(reasons, floor, chest, raw, itemId, qty, config);
 			return reasons;
 		}
 
@@ -53,10 +58,11 @@ public final class LootFloorGuards {
 		if (ExpectedLootTables.isKrakenShard(raw, itemId) && floor != null && floor.isKuudra()
 			&& chest == ExpectedLootTables.ChestTier.PAID) {
 			int expected = ExpectedLootTables.guaranteedKrakenShards(floor);
+			int max = ExpectedLootTables.maxKrakenShards(floor);
 			if (expected > 0 && qty < expected) {
 				reasons.add("kraken_shards_below_guaranteed=" + expected);
-			} else if (expected > 0 && qty > expected + 3) {
-				reasons.add("kraken_shards_above_guaranteed=" + expected);
+			} else if (max > 0 && qty > max + 3) {
+				reasons.add("kraken_shards_above_expected_max=" + max);
 			}
 			return reasons;
 		}
@@ -77,6 +83,15 @@ public final class LootFloorGuards {
 	 * Never removes entries.
 	 */
 	public static List<String> evaluateChest(DungeonFloor floor, String chestTitle, List<DungeonLootEntry> entries) {
+		return evaluateChest(floor, chestTitle, entries, null);
+	}
+
+	public static List<String> evaluateChest(
+		DungeonFloor floor,
+		String chestTitle,
+		List<DungeonLootEntry> entries,
+		DrtConfig config
+	) {
 		List<String> reasons = new ArrayList<>();
 		if (entries == null) return reasons;
 		if (chestFloorModeMismatch(floor, chestTitle)) return reasons;
@@ -126,7 +141,8 @@ public final class LootFloorGuards {
 		}
 
 		if (floor.isKuudra() && chest == ExpectedLootTables.ChestTier.FREE) {
-			int expected = ExpectedLootTables.freeCrimsonEssence(floor);
+			int rewardFloor = ExpectedLootTables.freeCrimsonEssence(floor);
+			int expected = DungeonProfitPricing.minimumCrimsonEssenceBaseAmount(rewardFloor, config);
 			if (expected > 0 && crimson < expected) {
 				reasons.add("missing_free_crimson_essence expected>=" + expected + " got=" + crimson);
 			}
@@ -156,10 +172,14 @@ public final class LootFloorGuards {
 		ExpectedLootTables.ChestTier chest,
 		String raw,
 		String itemId,
-		int qty
+		int qty,
+		DrtConfig config
 	) {
-		if (qty >= ExpectedLootTables.ESSENCE_ABSOLUTE_SOFT_CEILING) {
-			reasons.add("essence_qty_soft_ceiling>=" + ExpectedLootTables.ESSENCE_ABSOLUTE_SOFT_CEILING);
+		int ceiling = ExpectedLootTables.isCrimsonEssence(raw, itemId)
+			? ExpectedLootTables.CRIMSON_ESSENCE_SOFT_CEILING
+			: ExpectedLootTables.ESSENCE_ABSOLUTE_SOFT_CEILING;
+		if (qty >= ceiling) {
+			reasons.add("essence_qty_soft_ceiling>=" + ceiling);
 		}
 
 		if (floor != null && floor != DungeonFloor.UNKNOWN) {
@@ -187,7 +207,8 @@ public final class LootFloorGuards {
 
 		if (floor.isKuudra() && ExpectedLootTables.isCrimsonEssence(raw, itemId)) {
 			if (chest == ExpectedLootTables.ChestTier.FREE) {
-				int guaranteed = ExpectedLootTables.freeCrimsonEssence(floor);
+				int rewardFloor = ExpectedLootTables.freeCrimsonEssence(floor);
+				int guaranteed = DungeonProfitPricing.minimumCrimsonEssenceBaseAmount(rewardFloor, config);
 				if (guaranteed > 0 && qty < guaranteed) {
 					reasons.add("crimson_below_free_guaranteed=" + guaranteed);
 				} else if (guaranteed > 0 && qty > guaranteed + ExpectedLootTables.ESSENCE_FILLER_HEADROOM) {
@@ -197,7 +218,7 @@ public final class LootFloorGuards {
 				int expected = ExpectedLootTables.paidCrimsonEssenceDefault(floor);
 				if (expected > 0 && qty < expected) {
 					reasons.add("crimson_below_paid_default=" + expected + " (tunable)");
-				} else if (expected > 0 && qty > ExpectedLootTables.softMaxForGuaranteed(expected)) {
+				} else if (expected > 0 && qty > ExpectedLootTables.paidCrimsonSoftMax(expected)) {
 					reasons.add("crimson_above_paid_default=" + expected + " (tunable)");
 				}
 			}
@@ -238,7 +259,7 @@ public final class LootFloorGuards {
 		return raw.toUpperCase(Locale.ROOT).contains("CRIMSON ESSENCE");
 	}
 
-	/** Catacombs Wood–Bedrock vs Kuudra Free/Paid titles disagree with a sticky floor projection. */
+	/** Catacombs Wood-Bedrock vs Kuudra Free/Paid titles disagree with a sticky floor projection. */
 	static boolean chestFloorModeMismatch(DungeonFloor floor, String chestTitle) {
 		if (floor == null || floor == DungeonFloor.UNKNOWN) return false;
 		ExpectedLootTables.ChestTier chest = ExpectedLootTables.parseChestTier(chestTitle);

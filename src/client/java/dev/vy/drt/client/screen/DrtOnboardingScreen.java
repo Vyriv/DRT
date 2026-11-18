@@ -1,6 +1,7 @@
 package dev.vy.drt.client.screen;
 
-import dev.vy.drt.client.luck.LuckRunCapture;
+import dev.vy.drt.client.render.DrtUiText;
+import dev.vy.drt.client.sync.DrtStatsSync;
 import dev.vy.drt.client.tracker.DungeonRunTrackerFeature;
 import dev.vy.drt.config.DrtConfig;
 import dev.vy.drt.config.DrtConfigManager;
@@ -45,6 +46,7 @@ public final class DrtOnboardingScreen extends Screen {
 
 	private static final String[] PET_RARITIES = {"COMMON", "UNCOMMON", "RARE", "EPIC", "LEGENDARY"};
 	private final DungeonRunTrackerFeature trackerFeature;
+	private final Screen parent;
 	private final List<ClickTarget> clickTargets = new ArrayList<>();
 
 	private boolean kuudraPetEnabled;
@@ -64,6 +66,7 @@ public final class DrtOnboardingScreen extends Screen {
 	private boolean includeEssence;
 	private int crimsonEssenceBonusPercent;
 	private Dropdown openDropdown = Dropdown.NONE;
+	private long deleteConfirmUntilMillis;
 
 	private int ox;
 	private int oy;
@@ -86,8 +89,13 @@ public final class DrtOnboardingScreen extends Screen {
 	private int petLevelInputW;
 
 	public DrtOnboardingScreen(DungeonRunTrackerFeature trackerFeature) {
+		this(trackerFeature, null);
+	}
+
+	public DrtOnboardingScreen(DungeonRunTrackerFeature trackerFeature, Screen parent) {
 		super(Component.literal("DRT Setup"));
 		this.trackerFeature = trackerFeature;
+		this.parent = parent;
 		DrtConfig config = DrtConfigManager.getConfig();
 		kuudraPetEnabled = config.kuudraPetEnabled;
 		kuudraPetRarity = normalizeRarity(config.kuudraPetRarity);
@@ -117,16 +125,17 @@ public final class DrtOnboardingScreen extends Screen {
 
 	@Override
 	public void extractRenderState(GuiGraphicsExtractor g, int mouseX, int mouseY, float partialTick) {
+		dev.vy.drt.config.DrtTheme.ensureLoaded();
 		updateLayout();
 		clickTargets.clear();
 
-		g.fill(0, 0, width, height, 0xA0000000);
-		g.fill(ox, oy, ox + winW, oy + winH, PANEL_BG);
-		border(g, ox, oy, winW, winH, BORDER);
+		g.fill(0, 0, width, height, dev.vy.drt.config.DrtTheme.color("scrim", 0xA0000000));
+		g.fill(ox, oy, ox + winW, oy + winH, dev.vy.drt.config.DrtTheme.color("window.background", PANEL_BG));
+		border(g, ox, oy, winW, winH, dev.vy.drt.config.DrtTheme.color("window.border", BORDER));
 
-		g.text(font, "DRT Setup", ox + 12, oy + 10, TEXT);
+		g.text(font, "DRT Setup", ox + 12, oy + 10, dev.vy.drt.config.DrtTheme.color("text.pageTitle", TEXT));
 		String subtitle = "Basic settings";
-		g.text(font, subtitle, ox + winW - 12 - font.width(subtitle), oy + 10, DIM);
+		g.text(font, subtitle, ox + winW - 12 - font.width(subtitle), oy + 10, dev.vy.drt.config.DrtTheme.color("text.muted", DIM));
 
 		int y = oy + 34;
 		drawSection(g, "General", y);
@@ -141,7 +150,7 @@ public final class DrtOnboardingScreen extends Screen {
 		y += ROW_H + GAP;
 		drawIncludeEssenceRow(g, mouseX, mouseY, y);
 		y += ROW_H + GAP;
-		drawLuckModifiersRow(g, mouseX, mouseY, y);
+		drawDataSharingRow(g, mouseX, mouseY, y);
 		y += ROW_H + GAP;
 
 		drawSection(g, "Kuudra", y + 2);
@@ -207,13 +216,12 @@ public final class DrtOnboardingScreen extends Screen {
 			}
 		}
 		if (event.key() == GLFW.GLFW_KEY_ESCAPE) {
-			saveSettings(false);
-			super.onClose();
+			onClose();
 			return true;
 		}
 		if (event.key() == GLFW.GLFW_KEY_ENTER || event.key() == GLFW.GLFW_KEY_KP_ENTER) {
 			saveSettings(true);
-			super.onClose();
+			closeAfterSave();
 			return true;
 		}
 		return super.keyPressed(event);
@@ -237,6 +245,10 @@ public final class DrtOnboardingScreen extends Screen {
 	@Override
 	public void onClose() {
 		saveSettings(false);
+		if (minecraft != null && parent != null) {
+			minecraft.gui.setScreen(parent);
+			return;
+		}
 		super.onClose();
 	}
 
@@ -263,30 +275,30 @@ public final class DrtOnboardingScreen extends Screen {
 	}
 
 	private void drawSection(GuiGraphicsExtractor g, String label, int y) {
-		g.text(font, label.toUpperCase(Locale.ROOT), ox + 12, y, MUTED);
-		g.fill(ox + 12 + font.width(label) + 8, y + 4, ox + winW - 12, y + 5, 0x5535385D);
+		g.text(font, label.toUpperCase(Locale.ROOT), ox + 12, y, dev.vy.drt.config.DrtTheme.color("text.sectionTitle", MUTED));
+		g.fill(ox + 12 + font.width(label) + 8, y + 4, ox + winW - 12, y + 5, dev.vy.drt.config.DrtTheme.color("separator", 0x5535385D));
 	}
 
 	private void drawPositionRow(GuiGraphicsExtractor g, int mouseX, int mouseY, int y) {
 		drawRowBase(g, mouseX, mouseY, y);
-		g.text(font, "Overlay", ox + 18, y + 7, TEXT);
+		g.text(font, "Overlay", ox + 18, y + 7, dev.vy.drt.config.DrtTheme.color("text.primary", TEXT));
 		String preset = trackerFeature.getOverlayPreset().displayName();
 		String value = preset + "  " + trackerFeature.getHudX() + "," + trackerFeature.getHudY() + "  " + trackerFeature.getHudScalePercent() + "%";
 		int buttonX = controlX(78);
 		int valueX = buttonX - CONTROL_GAP - font.width(value);
 		if (valueX > ox + 100) {
-			g.text(font, value, valueX, y + 7, MUTED);
+			g.text(font, value, valueX, y + 7, dev.vy.drt.config.DrtTheme.color("text.secondary", MUTED));
 		}
 		drawSmallButton(g, buttonX, y + 3, 78, 16, "Edit Overlay", false, () -> {
 			saveSettings(false);
 			Minecraft client = Minecraft.getInstance();
-			client.setScreen(new DrtOverlayEditorScreen(trackerFeature, this));
+			client.gui.setScreen(new DrtOverlayEditorScreen(trackerFeature, this));
 		}, "Choose overlay preset, custom layout, or move HUD");
 	}
 
 	private void drawPriceModeRow(GuiGraphicsExtractor g, int mouseX, int mouseY, int y) {
 		drawRowBase(g, mouseX, mouseY, y);
-		g.text(font, "BZ pricing", ox + 18, y + 7, TEXT);
+		g.text(font, "BZ pricing", ox + 18, y + 7, dev.vy.drt.config.DrtTheme.color("text.primary", TEXT));
 		priceDropdownW = CONTROL_W;
 		priceDropdownX = controlX(priceDropdownW);
 		priceDropdownY = y + 3;
@@ -296,14 +308,14 @@ public final class DrtOnboardingScreen extends Screen {
 
 	private void drawFancyMenuRow(GuiGraphicsExtractor g, int mouseX, int mouseY, int y) {
 		drawRowBase(g, mouseX, mouseY, y);
-		g.text(font, "Fancy menu", ox + 18, y + 7, TEXT);
+		g.text(font, "Fancy menu", ox + 18, y + 7, dev.vy.drt.config.DrtTheme.color("text.primary", TEXT));
 		drawToggle(g, controlX(46), y + 3, fancyMenuEnabled, () -> fancyMenuEnabled = !fancyMenuEnabled,
 			"Replace dungeon reward chests with DRT's reward interface");
 	}
 
 	private void drawCroesusOverlayRow(GuiGraphicsExtractor g, int mouseX, int mouseY, int y) {
 		drawRowBase(g, mouseX, mouseY, y);
-		g.text(font, "Croesus overlay", ox + 18, y + 7, TEXT);
+		g.text(font, "Croesus overlay", ox + 18, y + 7, dev.vy.drt.config.DrtTheme.color("text.primary", TEXT));
 		// Tooltip-only hitbox for the row (button -2 is ignored by mouseClicked).
 		clickTargets.add(new ClickTarget(ox + 12, y, winW - 24, ROW_H, -2, () -> {}, null, this::drawCroesusOverlayTooltip));
 		drawToggle(g, controlX(46), y + 3, croesusOverlayEnabled, () -> croesusOverlayEnabled = !croesusOverlayEnabled,
@@ -312,32 +324,51 @@ public final class DrtOnboardingScreen extends Screen {
 
 	private void drawIncludeEssenceRow(GuiGraphicsExtractor g, int mouseX, int mouseY, int y) {
 		drawRowBase(g, mouseX, mouseY, y);
-		g.text(font, "Inc essence", ox + 18, y + 7, TEXT);
+		g.text(font, "Inc essence", ox + 18, y + 7, dev.vy.drt.config.DrtTheme.color("text.primary", TEXT));
 		String essenceTip = "Toggling this on/off will enable/disable including essence in the profit tracker";
 		clickTargets.add(new ClickTarget(ox + 12, y, winW - 24, ROW_H, -2, () -> {}, essenceTip, null));
 		drawToggle(g, controlX(46), y + 3, includeEssence, () -> includeEssence = !includeEssence, essenceTip);
 	}
 
-	private void drawLuckModifiersRow(GuiGraphicsExtractor g, int mouseX, int mouseY, int y) {
+	private void drawDataSharingRow(GuiGraphicsExtractor g, int mouseX, int mouseY, int y) {
 		drawRowBase(g, mouseX, mouseY, y);
-		g.text(font, "Luck modifiers", ox + 18, y + 7, TEXT);
-		int unknown = LuckRunCapture.profile().unknownFieldCount();
-		String value = unknown == 0 ? "All set" : unknown + " unknown";
-		int buttonX = controlX(58);
-		int valueX = buttonX - CONTROL_GAP - font.width(value);
-		if (valueX > ox + 18 + font.width("Luck modifiers") + CONTROL_GAP) {
-			g.text(font, value, valueX, y + 7, unknown == 0 ? GREEN : MUTED);
+		g.text(font, "Statistics sharing", ox + 18, y + 7, dev.vy.drt.config.DrtTheme.color("text.primary", TEXT));
+		boolean enabled = DrtConfigManager.getConfig().statsSyncEnabled;
+		int toggleX = controlX(46);
+		drawToggle(g, toggleX, y + 3, enabled, () -> {
+			deleteConfirmUntilMillis = 0L;
+			DrtStatsSync.setEnabled(!DrtConfigManager.getConfig().statsSyncEnabled);
+		}, "Shares the runs and chests DRT recorded automatically with api.vyriv.dev for Vyriv statistics, in the "
+			+ "background. Older history is imported only when you choose Import history. Manually created or edited records (*) are never shared. "
+			+ DrtStatsSync.status() + " Privacy policy: " + DrtStatsSync.PRIVACY_URL);
+		if (enabled) {
+			int importW = 82;
+			drawSmallButton(g, toggleX - CONTROL_GAP - importW, y + 3, importW, 16,
+				DrtStatsSync.historicalImportEnabled() ? "History enabled" : "Import history", false,
+				() -> DrtStatsSync.beginHistoricalImport(Minecraft.getInstance()),
+				DrtStatsSync.historicalImportEnabled()
+					? "Historical import is enabled and resumes automatically. " + DrtStatsSync.status()
+					: "Optionally import eligible DRT history saved before Statistics Sharing was enabled. Records with ambiguous account ownership require confirmation.",
+				DrtStatsSync.historicalImportEnabled() ? GREEN : dev.vy.drt.config.DrtTheme.color("text.secondary", MUTED));
+			return;
 		}
-		drawSmallButton(g, buttonX, y + 3, 58, 16, "Edit", false, () -> {
-			saveSettings(false);
-			Minecraft client = Minecraft.getInstance();
-			client.setScreen(new DrtLuckModifiersScreen(this));
-		}, "Set the global modifier preset used by Luck Rating");
+		if (!DrtStatsSync.holdsUploads()) return;
+		boolean confirming = System.currentTimeMillis() < deleteConfirmUntilMillis;
+		int deleteW = 88;
+		drawSmallButton(g, toggleX - CONTROL_GAP - deleteW, y + 3, deleteW, 16, confirming ? "Confirm delete" : "Delete uploads", false, () -> {
+			if (System.currentTimeMillis() < deleteConfirmUntilMillis) {
+				deleteConfirmUntilMillis = 0L;
+				DrtStatsSync.deleteUploads(Minecraft.getInstance());
+			} else {
+				deleteConfirmUntilMillis = System.currentTimeMillis() + 5_000L;
+			}
+		}, "Deletes every run and chest this installation uploaded for this account from api.vyriv.dev. "
+			+ "Deleted records are never uploaded again.", confirming ? RED : dev.vy.drt.config.DrtTheme.color("text.secondary", MUTED));
 	}
 
 	private void drawFactionRow(GuiGraphicsExtractor g, int mouseX, int mouseY, int y) {
 		drawRowBase(g, mouseX, mouseY, y);
-		g.text(font, "Faction", ox + 18, y + 7, TEXT);
+		g.text(font, "Faction", ox + 18, y + 7, dev.vy.drt.config.DrtTheme.color("text.primary", TEXT));
 		factionDropdownW = CONTROL_W;
 		factionDropdownX = controlX(factionDropdownW);
 		factionDropdownY = y + 3;
@@ -347,7 +378,7 @@ public final class DrtOnboardingScreen extends Screen {
 
 	private void drawEssenceBonusRow(GuiGraphicsExtractor g, int mouseX, int mouseY, int y) {
 		drawRowBase(g, mouseX, mouseY, y);
-		g.text(font, "Essence shards", ox + 18, y + 7, TEXT);
+		g.text(font, "Essence shards", ox + 18, y + 7, dev.vy.drt.config.DrtTheme.color("text.primary", TEXT));
 		String tip = "Extra Crimson Essence from shards such as Lava Leech, on top of the Kuudra pet";
 		drawStepper(g, controlX(88), y + 3, 88, 16, "+" + crimsonEssenceBonusPercent + "%", false,
 			() -> crimsonEssenceBonusPercent = clamp(crimsonEssenceBonusPercent - 1, 0, 100),
@@ -357,7 +388,7 @@ public final class DrtOnboardingScreen extends Screen {
 
 	private void drawPetRow(GuiGraphicsExtractor g, int mouseX, int mouseY, int y) {
 		drawRowBase(g, mouseX, mouseY, y);
-		g.text(font, "Kuudra pet", ox + 18, y + 7, TEXT);
+		g.text(font, "Kuudra pet", ox + 18, y + 7, dev.vy.drt.config.DrtTheme.color("text.primary", TEXT));
 		drawToggle(g, controlX(46), y + 3, kuudraPetEnabled, () -> {
 			kuudraPetEnabled = !kuudraPetEnabled;
 			openDropdown = Dropdown.NONE;
@@ -367,7 +398,7 @@ public final class DrtOnboardingScreen extends Screen {
 
 	private void drawPetOptionsRow(GuiGraphicsExtractor g, int mouseX, int mouseY, int y) {
 		drawRowBase(g, mouseX, mouseY, y);
-		g.text(font, "Pet rarity / level", ox + 18, y + 7, TEXT);
+		g.text(font, "Pet rarity / level", ox + 18, y + 7, dev.vy.drt.config.DrtTheme.color("text.primary", TEXT));
 		petLevelInputW = 44;
 		petLevelInputX = controlX(petLevelInputW);
 		petLevelInputY = y + 3;
@@ -386,7 +417,7 @@ public final class DrtOnboardingScreen extends Screen {
 
 	private void drawForceSalvageRow(GuiGraphicsExtractor g, int mouseX, int mouseY, int y) {
 		drawRowBase(g, mouseX, mouseY, y);
-		g.text(font, "Force salvage", ox + 18, y + 7, TEXT);
+		g.text(font, "Force salvage", ox + 18, y + 7, dev.vy.drt.config.DrtTheme.color("text.primary", TEXT));
 		salvageDropdownW = CONTROL_W;
 		salvageDropdownX = controlX(salvageDropdownW);
 		salvageDropdownY = y + 3;
@@ -396,7 +427,7 @@ public final class DrtOnboardingScreen extends Screen {
 
 	private void drawCoolForgedRow(GuiGraphicsExtractor g, int mouseX, int mouseY, int y) {
 		drawRowBase(g, mouseX, mouseY, y);
-		g.text(font, "Cool Forged", ox + 18, y + 7, TEXT);
+		g.text(font, "Cool Forged", ox + 18, y + 7, dev.vy.drt.config.DrtTheme.color("text.primary", TEXT));
 		int levelX = controlX(68);
 		int toggleX = levelX - CONTROL_GAP - 46;
 		drawToggle(g, toggleX, y + 3, coolForgedEnabled, () -> coolForgedEnabled = !coolForgedEnabled, "Increase salvage essence value");
@@ -409,19 +440,27 @@ public final class DrtOnboardingScreen extends Screen {
 
 	private void drawFooter(GuiGraphicsExtractor g, int mouseX, int mouseY) {
 		int y = oy + winH - 30;
-		g.fill(ox + 10, y - 5, ox + winW - 10, y - 4, 0x5535385D);
+		g.fill(ox + 10, y - 5, ox + winW - 10, y - 4, dev.vy.drt.config.DrtTheme.color("separator", 0x5535385D));
 		int doneX = controlX(58);
 		int discordW = 88;
 		int discordX = ox + (winW - discordW) / 2;
 		drawSmallButton(g, ox + 18, y, 48, 18, "Skip", false, () -> {
 			saveSettings(true);
-			super.onClose();
-		}, "Use current settings and stop showing setup", DIM);
+			closeAfterSave();
+		}, "Use current settings and stop showing setup", dev.vy.drt.config.DrtTheme.color("text.muted", DIM));
 		drawSmallButton(g, discordX, y, discordW, 18, "Join Discord", false, this::openDiscordInvite, "Open the DRT Discord invite", GOLD);
 		drawSmallButton(g, doneX, y, 58, 18, "Done", false, () -> {
 			saveSettings(true);
-			super.onClose();
+			closeAfterSave();
 		}, "Save and finish onboarding");
+	}
+
+	private void closeAfterSave() {
+		if (minecraft != null && parent != null) {
+			minecraft.gui.setScreen(parent);
+			return;
+		}
+		super.onClose();
 	}
 
 	private void openDiscordInvite() {
@@ -477,8 +516,8 @@ public final class DrtOnboardingScreen extends Screen {
 
 	private void drawRowBase(GuiGraphicsExtractor g, int mouseX, int mouseY, int y) {
 		boolean hovered = contains(ox + 12, y, winW - 24, ROW_H, mouseX, mouseY);
-		g.fill(ox + 12, y, ox + winW - 12, y + ROW_H, hovered ? PANEL_ROW_HOVER : PANEL_ROW);
-		g.fill(ox + 16, y + ROW_H - 1, ox + winW - 16, y + ROW_H, 0x3335385D);
+		g.fill(ox + 12, y, ox + winW - 12, y + ROW_H, hovered ? dev.vy.drt.config.DrtTheme.color("row.hover", PANEL_ROW_HOVER) : dev.vy.drt.config.DrtTheme.color("row.background", PANEL_ROW));
+		g.fill(ox + 16, y + ROW_H - 1, ox + winW - 16, y + ROW_H, dev.vy.drt.config.DrtTheme.color("separator", 0x3335385D));
 	}
 
 	private void drawToggle(GuiGraphicsExtractor g, int x, int y, boolean enabled, Runnable onClick, String tooltip) {
@@ -491,22 +530,22 @@ public final class DrtOnboardingScreen extends Screen {
 
 	private void drawDropdownButton(GuiGraphicsExtractor g, int mouseX, int mouseY, int x, int y, int w, int h, String label, boolean open, Runnable onClick, String tooltip) {
 		boolean hovered = contains(x, y, w, h, mouseX, mouseY);
-		g.fill(x, y, x + w, y + h, open ? 0xFF23375B : hovered ? 0xFF222641 : 0xFF171B30);
-		border(g, x, y, w, h, open ? BORDER_ACTIVE : hovered ? 0xFF51557E : BORDER);
+		g.fill(x, y, x + w, y + h, open ? dev.vy.drt.config.DrtTheme.color("control.active", 0xFF23375B) : hovered ? dev.vy.drt.config.DrtTheme.color("control.hover", 0xFF222641) : dev.vy.drt.config.DrtTheme.color("control.background", 0xFF171B30));
+		border(g, x, y, w, h, open ? dev.vy.drt.config.DrtTheme.color("control.borderActive", BORDER_ACTIVE) : hovered ? dev.vy.drt.config.DrtTheme.color("control.borderHover", 0xFF51557E) : dev.vy.drt.config.DrtTheme.color("control.border", BORDER));
 		String arrow = open ? "▲" : "▼";
 		String safeLabel = ellipsize(label, Math.max(0, w - 24));
-		g.text(font, safeLabel, x + 6, y + (h - font.lineHeight) / 2, TEXT);
+		g.text(font, safeLabel, x + 6, DrtUiText.centeredTextY(font, y, h), dev.vy.drt.config.DrtTheme.color("input.text", TEXT));
 		int arrowBoxW = 18;
 		int arrowX = x + w - arrowBoxW + (arrowBoxW - font.width(arrow)) / 2;
-		g.text(font, arrow, arrowX, y + (h - font.lineHeight) / 2, MUTED);
+		g.text(font, arrow, arrowX, DrtUiText.centeredTextY(font, y, h), dev.vy.drt.config.DrtTheme.color("text.secondary", MUTED));
 		clickTargets.add(new ClickTarget(x, y, w, h, 0, onClick, tooltip, null));
 	}
 
 	private void drawDropdownOption(GuiGraphicsExtractor g, int mouseX, int mouseY, int x, int y, int w, String label, boolean active, Runnable onClick, String tooltip) {
 		boolean hovered = contains(x, y, w, DROPDOWN_ROW_H, mouseX, mouseY);
-		g.fill(x, y, x + w, y + DROPDOWN_ROW_H, active ? 0xFF23375B : hovered ? 0xFF222641 : 0xFF101322);
-		border(g, x, y, w, DROPDOWN_ROW_H, active ? BORDER_ACTIVE : BORDER);
-		g.text(font, label, x + 6, y + 5, active ? TEXT : MUTED);
+		g.fill(x, y, x + w, y + DROPDOWN_ROW_H, active ? dev.vy.drt.config.DrtTheme.color("control.active", 0xFF23375B) : hovered ? dev.vy.drt.config.DrtTheme.color("control.hover", 0xFF222641) : dev.vy.drt.config.DrtTheme.color("input.background", 0xFF101322));
+		border(g, x, y, w, DROPDOWN_ROW_H, active ? dev.vy.drt.config.DrtTheme.color("control.borderActive", BORDER_ACTIVE) : dev.vy.drt.config.DrtTheme.color("control.border", BORDER));
+		g.text(font, label, x + 6, y + 5, active ? dev.vy.drt.config.DrtTheme.color("control.textActive", TEXT) : dev.vy.drt.config.DrtTheme.color("control.text", MUTED));
 		clickTargets.add(new ClickTarget(x, y, w, DROPDOWN_ROW_H, 0, onClick, tooltip, null));
 	}
 
@@ -520,16 +559,16 @@ public final class DrtOnboardingScreen extends Screen {
 
 	private void drawSegment(GuiGraphicsExtractor g, int mouseX, int mouseY, int x, int y, int w, int h, String label, boolean active, Runnable onClick, String tooltip) {
 		boolean hovered = contains(x, y, w, h, mouseX, mouseY);
-		int bg = active ? 0xFF23375B : hovered ? 0xFF222641 : 0xFF15182B;
-		int border = active ? BORDER_ACTIVE : hovered ? 0xFF51557E : BORDER;
+		int bg = active ? dev.vy.drt.config.DrtTheme.color("control.active", 0xFF23375B) : hovered ? dev.vy.drt.config.DrtTheme.color("control.hover", 0xFF222641) : dev.vy.drt.config.DrtTheme.color("control.background", 0xFF15182B);
+		int border = active ? dev.vy.drt.config.DrtTheme.color("control.borderActive", BORDER_ACTIVE) : hovered ? dev.vy.drt.config.DrtTheme.color("control.borderHover", 0xFF51557E) : dev.vy.drt.config.DrtTheme.color("control.border", BORDER);
 		g.fill(x, y, x + w, y + h, bg);
 		border(g, x, y, w, h, border);
-		g.text(font, label, x + (w - font.width(label)) / 2, y + 4, active ? TEXT : MUTED);
+		g.text(font, label, x + (w - font.width(label)) / 2, y + 4, active ? dev.vy.drt.config.DrtTheme.color("control.textActive", TEXT) : dev.vy.drt.config.DrtTheme.color("control.text", MUTED));
 		clickTargets.add(new ClickTarget(x, y, w, h, 0, onClick, tooltip, null));
 	}
 
 	private void drawSmallButton(GuiGraphicsExtractor g, int x, int y, int w, int h, String label, boolean disabled, Runnable onClick, String tooltip) {
-		drawSmallButton(g, x, y, w, h, label, disabled, onClick, tooltip, disabled ? DIM : TEXT, null);
+		drawSmallButton(g, x, y, w, h, label, disabled, onClick, tooltip, disabled ? dev.vy.drt.config.DrtTheme.color("text.muted", DIM) : dev.vy.drt.config.DrtTheme.color("text.primary", TEXT), null);
 	}
 
 	private void drawSmallButton(GuiGraphicsExtractor g, int x, int y, int w, int h, String label, boolean disabled, Runnable onClick, String tooltip, int textColor) {
@@ -537,22 +576,22 @@ public final class DrtOnboardingScreen extends Screen {
 	}
 
 	private void drawSmallButton(GuiGraphicsExtractor g, int x, int y, int w, int h, String label, boolean disabled, Runnable onClick, String tooltip, int textColor, TooltipDrawer customTooltip) {
-		g.fill(x, y, x + w, y + h, disabled ? 0xFF10121E : 0xFF171B30);
-		border(g, x, y, w, h, disabled ? 0xFF252842 : BORDER);
-		g.text(font, label, x + (w - font.width(label)) / 2, y + (h - font.lineHeight) / 2, textColor);
+		g.fill(x, y, x + w, y + h, disabled ? dev.vy.drt.config.DrtTheme.color("control.disabled", 0xFF10121E) : dev.vy.drt.config.DrtTheme.color("control.background", 0xFF171B30));
+		border(g, x, y, w, h, disabled ? dev.vy.drt.config.DrtTheme.color("control.borderDisabled", 0xFF252842) : dev.vy.drt.config.DrtTheme.color("control.border", BORDER));
+		g.text(font, label, x + (w - font.width(label)) / 2, DrtUiText.centeredTextY(font, y, h), textColor);
 		if (!disabled) clickTargets.add(new ClickTarget(x, y, w, h, 0, onClick, tooltip, customTooltip));
 	}
 
 	private void drawTextInput(GuiGraphicsExtractor g, int mouseX, int mouseY, int x, int y, int w, int h, String value, boolean focused, Runnable onClick, String tooltip) {
 		boolean hovered = contains(x, y, w, h, mouseX, mouseY);
-		g.fill(x, y, x + w, y + h, focused ? 0xFF10172E : hovered ? 0xFF20243D : PANEL_ALT);
-		border(g, x, y, w, h, focused ? BORDER_ACTIVE : hovered ? 0xFF51557E : BORDER);
+		g.fill(x, y, x + w, y + h, focused ? dev.vy.drt.config.DrtTheme.color("input.focus", 0xFF10172E) : hovered ? dev.vy.drt.config.DrtTheme.color("input.hover", 0xFF20243D) : dev.vy.drt.config.DrtTheme.color("input.background", PANEL_ALT));
+		border(g, x, y, w, h, focused ? dev.vy.drt.config.DrtTheme.color("control.borderActive", BORDER_ACTIVE) : hovered ? dev.vy.drt.config.DrtTheme.color("control.borderHover", 0xFF51557E) : dev.vy.drt.config.DrtTheme.color("control.border", BORDER));
 		String safeValue = ellipsize(value == null ? "" : value, Math.max(0, w - 8));
 		int textX = x + 4;
-		g.text(font, safeValue, textX, y + (h - font.lineHeight) / 2, focused ? TEXT : MUTED);
+		g.text(font, safeValue, textX, DrtUiText.centeredTextY(font, y, h), dev.vy.drt.config.DrtTheme.color("input.text", focused ? TEXT : MUTED));
 		if (focused && (System.currentTimeMillis() / 500L) % 2L == 0L) {
 			int caretX = Math.min(x + w - 4, textX + font.width(safeValue) + 1);
-			g.fill(caretX, y + 3, caretX + 1, y + h - 3, TEXT);
+			g.fill(caretX, y + 3, caretX + 1, y + h - 3, dev.vy.drt.config.DrtTheme.color("input.caret", TEXT));
 		}
 		clickTargets.add(new ClickTarget(x, y, w, h, 0, onClick, tooltip, null));
 	}
@@ -560,10 +599,10 @@ public final class DrtOnboardingScreen extends Screen {
 	private void drawStepper(GuiGraphicsExtractor g, int x, int y, int w, int h, String value, boolean disabled, Runnable dec, Runnable inc, String tooltip) {
 		int side = 16;
 		drawSmallButton(g, x, y, side, h, "-", disabled, dec, tooltip);
-		g.fill(x + side, y, x + w - side, y + h, disabled ? 0xFF10121E : PANEL_ALT);
-		g.fill(x + side, y, x + w - side, y + 1, disabled ? 0xFF252842 : BORDER);
-		g.fill(x + side, y + h - 1, x + w - side, y + h, disabled ? 0xFF252842 : BORDER);
-		g.text(font, value, x + side + (w - side * 2 - font.width(value)) / 2, y + (h - font.lineHeight) / 2, disabled ? DIM : TEXT);
+		g.fill(x + side, y, x + w - side, y + h, disabled ? dev.vy.drt.config.DrtTheme.color("control.disabled", 0xFF10121E) : dev.vy.drt.config.DrtTheme.color("input.background", PANEL_ALT));
+		g.fill(x + side, y, x + w - side, y + 1, disabled ? dev.vy.drt.config.DrtTheme.color("control.borderDisabled", 0xFF252842) : dev.vy.drt.config.DrtTheme.color("control.border", BORDER));
+		g.fill(x + side, y + h - 1, x + w - side, y + h, disabled ? dev.vy.drt.config.DrtTheme.color("control.borderDisabled", 0xFF252842) : dev.vy.drt.config.DrtTheme.color("control.border", BORDER));
+		g.text(font, value, x + side + (w - side * 2 - font.width(value)) / 2, DrtUiText.centeredTextY(font, y, h), disabled ? dev.vy.drt.config.DrtTheme.color("control.textDisabled", DIM) : dev.vy.drt.config.DrtTheme.color("input.text", TEXT));
 		drawSmallButton(g, x + w - side, y, side, h, "+", disabled, inc, tooltip);
 	}
 
@@ -583,14 +622,35 @@ public final class DrtOnboardingScreen extends Screen {
 
 	private void drawTooltip(GuiGraphicsExtractor g, String text, int mouseX, int mouseY) {
 		int pad = 4;
-		int tw = font.width(text);
+		List<String> lines = wrapTooltip(text, Math.max(120, Math.min(260, width - 24)));
+		int tw = 0;
+		for (String line : lines) tw = Math.max(tw, font.width(line));
+		int th = lines.size() * (font.lineHeight + 1) - 1;
 		int tx = mouseX + 8;
-		int ty = mouseY - font.lineHeight - pad * 2;
+		int ty = mouseY - th - pad * 2;
 		if (tx + tw + pad * 2 > width) tx = width - tw - pad * 2;
 		if (ty < 0) ty = mouseY + 12;
-		g.fill(tx - pad, ty - pad, tx + tw + pad, ty + font.lineHeight + pad, 0xDD000000);
-		border(g, tx - pad, ty - pad, tw + pad * 2, font.lineHeight + pad * 2, BORDER_ACTIVE);
-		g.text(font, text, tx, ty, 0xFFCCCCFF, true);
+		g.fill(tx - pad, ty - pad, tx + tw + pad, ty + th + pad, dev.vy.drt.config.DrtTheme.color("tooltip.background", 0xDD000000));
+		border(g, tx - pad, ty - pad, tw + pad * 2, th + pad * 2, dev.vy.drt.config.DrtTheme.color("tooltip.border", BORDER_ACTIVE));
+		for (int i = 0; i < lines.size(); i++) {
+			g.text(font, lines.get(i), tx, ty + i * (font.lineHeight + 1), dev.vy.drt.config.DrtTheme.color("tooltip.text", 0xFFCCCCFF), true);
+		}
+	}
+
+	private List<String> wrapTooltip(String text, int maxWidth) {
+		List<String> lines = new ArrayList<>();
+		StringBuilder line = new StringBuilder();
+		for (String word : text.split(" ")) {
+			String candidate = line.isEmpty() ? word : line + " " + word;
+			if (!line.isEmpty() && font.width(candidate) > maxWidth) {
+				lines.add(line.toString());
+				line = new StringBuilder(word);
+			} else {
+				line = new StringBuilder(candidate);
+			}
+		}
+		if (!line.isEmpty()) lines.add(line.toString());
+		return lines;
 	}
 
 	private void drawCroesusOverlayTooltip(GuiGraphicsExtractor g, int mouseX, int mouseY) {
@@ -609,10 +669,10 @@ public final class DrtOnboardingScreen extends Screen {
 		if (ty < 4) ty = mouseY + 14;
 		if (ty + boxH > height - 4) ty = Math.max(4, height - boxH - 4);
 
-		g.fill(tx, ty, tx + boxW, ty + boxH, 0xEE000000);
-		border(g, tx, ty, boxW, boxH, BORDER_ACTIVE);
-		g.text(font, line1, tx + pad, ty + pad, 0xFFCCCCFF, true);
-		g.text(font, line2, tx + pad, ty + pad + font.lineHeight + 1, 0xFFCCCCFF, true);
+		g.fill(tx, ty, tx + boxW, ty + boxH, dev.vy.drt.config.DrtTheme.color("tooltip.background", 0xEE000000));
+		border(g, tx, ty, boxW, boxH, dev.vy.drt.config.DrtTheme.color("tooltip.border", BORDER_ACTIVE));
+		g.text(font, line1, tx + pad, ty + pad, dev.vy.drt.config.DrtTheme.color("tooltip.text", 0xFFCCCCFF), true);
+		g.text(font, line2, tx + pad, ty + pad + font.lineHeight + 1, dev.vy.drt.config.DrtTheme.color("tooltip.text", 0xFFCCCCFF), true);
 
 		int previewX = tx + (boxW - previewW) / 2;
 		int previewY = ty + pad + font.lineHeight * 2 + 2 + gap;
@@ -620,13 +680,13 @@ public final class DrtOnboardingScreen extends Screen {
 	}
 
 	private void drawCroesusOverlayPreview(GuiGraphicsExtractor g, int x, int y, int w, int h) {
-		g.fill(x, y, x + w, y + h, 0xFF0B0C14);
-		border(g, x, y, w, h, 0xFF3A3F66);
+		g.fill(x, y, x + w, y + h, dev.vy.drt.config.DrtTheme.color("panel.background", 0xFF0B0C14));
+		border(g, x, y, w, h, dev.vy.drt.config.DrtTheme.color("panel.border", 0xFF3A3F66));
 
 		int contentX = x + 6;
 		int valueRight = x + w - 6;
 		int rowY = y + 5;
-		g.text(font, "Chests", contentX, rowY, TEXT, true);
+		g.text(font, "Chests", contentX, rowY, dev.vy.drt.config.DrtTheme.color("text.sectionTitle", TEXT), true);
 		rowY += font.lineHeight + 3;
 
 		drawPreviewChestRow(g, contentX, rowY, valueRight, new ItemStack(Items.BEDROCK), "Bedrock", 0xFFFF74D4, "+12.4M", GREEN);
@@ -636,7 +696,7 @@ public final class DrtOnboardingScreen extends Screen {
 		drawPreviewChestRow(g, contentX, rowY, valueRight, new ItemStack(Items.EMERALD_BLOCK), "Emerald", 0xFF55FF88, "+3.2M", GREEN);
 		rowY += 14;
 
-		g.text(font, "Open", contentX, rowY, TEXT, true);
+		g.text(font, "Open", contentX, rowY, dev.vy.drt.config.DrtTheme.color("text.sectionTitle", TEXT), true);
 		rowY += font.lineHeight + 2;
 		drawPreviewOpenRow(g, contentX, rowY, valueRight, 1, ItemStack.EMPTY, new ItemStack(Items.BEDROCK), "Bedrock", 0xFFFF74D4, "+12.4M");
 		rowY += 13;
@@ -650,7 +710,7 @@ public final class DrtOnboardingScreen extends Screen {
 	}
 
 	private void drawPreviewOpenRow(GuiGraphicsExtractor g, int x, int y, int valueRight, int rank, ItemStack modifier, ItemStack icon, String name, int nameColor, String value) {
-		g.text(font, rank + ".", x, y, MUTED, true);
+		g.text(font, rank + ".", x, y, dev.vy.drt.config.DrtTheme.color("text.secondary", MUTED), true);
 		int iconX = x + 14;
 		if (!modifier.isEmpty()) {
 			g.item(modifier, iconX, y - 4);

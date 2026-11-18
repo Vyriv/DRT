@@ -12,7 +12,11 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 /**
  * Skip vanilla container slot/item/tooltip extract when Fancy Menu is active.
  * Applied on ACS so subclasses (including ContainerScreen) inherit the cancel.
- * The underlying menu stays open for DRT scanning; Fancy draws in afterExtract.
+ * The underlying menu stays open for DRT scanning.
+ *
+ * Fancy itself must be drawn here: cancelling {@code extractRenderState} also
+ * skips {@code extractContents}, which is where {@link AbstractContainerScreenCroesusHighlightMixin}
+ * would otherwise paint the Fancy panel.
  */
 @Mixin(AbstractContainerScreen.class)
 public abstract class AbstractContainerScreenFancyMenuMixin {
@@ -29,8 +33,9 @@ public abstract class AbstractContainerScreenFancyMenuMixin {
 		CallbackInfo ci
 	) {
 		Minecraft client = Minecraft.getInstance();
-		if (DrtClient.shouldSuppressVanillaContainerPresentation(client)) {
-			ci.cancel();
-		}
+		if (!DrtClient.shouldSuppressVanillaContainerPresentation(client)) return;
+		// Draw Fancy before cancel. extractContents will not run after this returns.
+		DrtClient.extractChestOverlay(client, graphics, mouseX, mouseY);
+		ci.cancel();
 	}
 }

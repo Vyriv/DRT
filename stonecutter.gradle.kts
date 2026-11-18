@@ -8,25 +8,49 @@ stonecutter active "26.1.2"
 
 stonecutter parameters {
 	replacements {
+		// SDL input and RenderPearl replaced the GLFW/Blaze3D APIs in 26.3.
+		string(current.parsed >= "26.3") {
+			replace("extends Screen {", "extends dev.vy.drt.client.compat.SdlScreen {")
+			replace("org.lwjgl.glfw.GLFW", "dev.vy.drt.client.compat.GLFW")
+			replace("event.button()", "dev.vy.drt.client.compat.SdlCompat.mouseButton(event.button())")
+			replace("Util.getPlatform().openUri(", "dev.vy.drt.client.compat.SdlCompat.openUri(")
+			replace("com.mojang.blaze3d.opengl.", "com.mojang.renderpearl.backend.opengl.")
+		}
 		string(current.parsed < "26.1") {
 			replace("ClientCommands", "ClientCommandManager")
 			replace("GuiGraphicsExtractor", "GuiGraphics")
 			replace("extractBackground", "renderBackground")
 			replace(".centeredText(", ".drawCenteredString(")
-			replace(".text(", ".drawString(")
-			replace(".item(", ".renderItem(")
+		}
+
+		// Restrict rendering replacements to GuiGraphics receivers. A broad
+		// replacement also rewrites domain methods such as ContentLine.text()
+		// and FloorMenu.item(), which breaks the older version source set.
+		regex(current.parsed < "26.1") {
+			replace(
+				"\\bg\\.text\\(" to "g.drawString(",
+				"\\bg\\.drawString\\(" to "g.text("
+			)
+			replace(
+				"\\bguiGraphics\\.text\\(" to "guiGraphics.drawString(",
+				"\\bguiGraphics\\.drawString\\(" to "guiGraphics.text("
+			)
+			replace(
+				"\\bg\\.item\\(" to "g.renderItem(",
+				"\\bg\\.renderItem\\(" to "g.item("
+			)
 		}
 
 		// Word-bounded regex, not plain string(): "render" as a bare string()
 		// match corrupts "renderer"/"rendering" packages (they contain "render"
 		// as a substring) on every version where the direction is false and
-		// generation actually runs — i.e. any non-vcsVersion version other than
+		// generation actually runs, meaning any non-vcsVersion version other than
 		// 1.21.11. Harmless with only 2 versions (26.1.2 skipped generation as
 		// vcsVersion) but breaks the 3rd+ version added via Stonecutter.
 		regex(current.parsed < "26.1") {
 			replace(
 				"\\bextractRenderState\\b" to "render",
-				"\\brender\\b" to "extractRenderState"
+				"(?<!\\.)\\brender\\b(?!\\.)" to "extractRenderState"
 			)
 		}
 

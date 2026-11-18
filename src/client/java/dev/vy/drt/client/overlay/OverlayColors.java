@@ -4,6 +4,8 @@ public final class OverlayColors {
 	public static final int TITLE = 0xFF7A7A8A;
 	public static final int BRACKET = 0xFF555555;
 	public static final int FLOOR = 0xFFFFAA00;
+	/** HUD Auto floor mode: follows the last run. */
+	public static final int FLOOR_AUTO = 0xFFFF55AA;
 	public static final int LABEL = 0xFFAAAAAA;
 	public static final int VALUE = 0xFFFFFFFF;
 	public static final int SEP = 0xFF555555;
@@ -29,6 +31,7 @@ public final class OverlayColors {
 
 	public static int floorTagColor(String tag) {
 		if (tag == null) return FLOOR;
+		if (tag.equalsIgnoreCase("Auto")) return FLOOR_AUTO;
 		if (tag.startsWith("F")) return 0xFF55CC66;
 		if (tag.startsWith("M")) return 0xFFFF5555;
 		if (tag.startsWith("K")) return 0xFFAA0000;

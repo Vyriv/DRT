@@ -16,10 +16,6 @@ public final class DungeonTrackerPositionScreen extends Screen {
 	private int dragOffsetX;
 	private int dragOffsetY;
 
-	public DungeonTrackerPositionScreen(DungeonRunTrackerFeature trackerFeature) {
-		this(trackerFeature, null);
-	}
-
 	public DungeonTrackerPositionScreen(DungeonRunTrackerFeature trackerFeature, Screen parent) {
 		super(Component.literal("Move DRT Tracker"));
 		this.trackerFeature = trackerFeature;
@@ -119,7 +115,7 @@ public final class DungeonTrackerPositionScreen extends Screen {
 	public void onClose() {
 		trackerFeature.setHudPosition(Minecraft.getInstance(), trackerFeature.getHudX(), trackerFeature.getHudY(), true);
 		if (minecraft != null && parent != null) {
-			minecraft.setScreen(parent);
+			minecraft.gui.setScreen(parent);
 			return;
 		}
 		super.onClose();
@@ -127,6 +123,10 @@ public final class DungeonTrackerPositionScreen extends Screen {
 
 	private void closeFully() {
 		trackerFeature.setHudPosition(Minecraft.getInstance(), trackerFeature.getHudX(), trackerFeature.getHudY(), true);
+		if (parent instanceof DrtScreen && minecraft != null) {
+			minecraft.gui.setScreen(parent);
+			return;
+		}
 		if (parent instanceof DrtOverlayEditorScreen overlay) {
 			overlay.closeFully();
 			return;
@@ -136,7 +136,7 @@ public final class DungeonTrackerPositionScreen extends Screen {
 			return;
 		}
 		if (minecraft != null) {
-			minecraft.setScreen(null);
+			minecraft.gui.setScreen(null);
 			return;
 		}
 		super.onClose();

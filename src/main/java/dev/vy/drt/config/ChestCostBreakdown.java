@@ -2,6 +2,8 @@ package dev.vy.drt.config;
 
 public final class ChestCostBreakdown {
 	public long baseChestCostCoins;
+	/** True when the base cost was observed, including a confirmed free cost of zero. */
+	public boolean baseChestCostKnown;
 	public long dungeonChestKeyCostCoins;
 	public long kismetFeatherCostCoins;
 	public long wheelOfFateCostCoins;
@@ -17,12 +19,14 @@ public final class ChestCostBreakdown {
 
 	public ChestCostBreakdown(long baseChestCostCoins) {
 		this.baseChestCostCoins = Math.max(0L, baseChestCostCoins);
+		this.baseChestCostKnown = true;
 		normalize();
 	}
 
 	public ChestCostBreakdown copy() {
 		ChestCostBreakdown copy = new ChestCostBreakdown();
 		copy.baseChestCostCoins = baseChestCostCoins;
+		copy.baseChestCostKnown = baseChestCostKnown;
 		copy.dungeonChestKeyCostCoins = dungeonChestKeyCostCoins;
 		copy.kismetFeatherCostCoins = kismetFeatherCostCoins;
 		copy.wheelOfFateCostCoins = wheelOfFateCostCoins;
@@ -58,7 +62,8 @@ public final class ChestCostBreakdown {
 	}
 
 	public boolean hasAnyCostOrModifier() {
-		return totalCostCoins() > 0L
+		return baseChestCostKnown
+			|| totalCostCoins() > 0L
 			|| usedDungeonChestKey
 			|| usedKismetFeather
 			|| usedWheelOfFate

@@ -1,5 +1,6 @@
 package dev.vy.drt.client.screen;
 
+import dev.vy.drt.client.render.DrtUiText;
 import dev.vy.drt.client.overlay.OverlayLayout;
 import dev.vy.drt.client.overlay.OverlayLayouts;
 import dev.vy.drt.client.overlay.OverlayLine;
@@ -9,6 +10,7 @@ import dev.vy.drt.client.tracker.DungeonRunTrackerFeature;
 import java.util.ArrayList;
 import java.util.List;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.KeyEvent;
@@ -153,7 +155,7 @@ public final class DrtOverlayEditorScreen extends Screen {
 
 			String mark = isActive ? "✓ " : "  ";
 			int nameColor = isPreviewed || isActive ? TEXT : MUTED;
-			g.text(font, mark + preset.displayName(), x + LIST_INNER_PAD + 6, rowY + (LIST_ROW_H - font.lineHeight) / 2, nameColor);
+			g.text(font, mark + preset.displayName(), x + LIST_INNER_PAD + 6, DrtUiText.centeredTextY(font, rowY, LIST_ROW_H), nameColor);
 
 			clickTargets.add(new ClickTarget(x + LIST_INNER_PAD, rowY, rowW, LIST_ROW_H, 0, () -> previewedPreset = preset,
 				"Preview " + preset.displayName()));
@@ -181,10 +183,10 @@ public final class DrtOverlayEditorScreen extends Screen {
 
 		Minecraft client = Minecraft.getInstance();
 		OverlayLayout layout = trackerFeature.buildPreviewLayout(client, previewedPreset, null);
-		renderCenteredPreview(g, layout, areaX, areaY, areaW, areaH);
+		renderCenteredPreview(g, font, layout, areaX, areaY, areaW, areaH);
 	}
 
-	private void renderCenteredPreview(GuiGraphicsExtractor g, OverlayLayout layout, int areaX, int areaY, int areaW, int areaH) {
+	static void renderCenteredPreview(GuiGraphicsExtractor g, Font font, OverlayLayout layout, int areaX, int areaY, int areaW, int areaH) {
 		int boundsW = Math.max(1, layout.width + OverlayLayouts.SHADOW_PAD);
 		int boundsH = Math.max(1, layout.height + OverlayLayouts.SHADOW_PAD);
 
@@ -193,12 +195,28 @@ public final class DrtOverlayEditorScreen extends Screen {
 			Math.min((float) areaW / boundsW, (float) areaH / boundsH)
 		);
 		if (!Float.isFinite(scale) || scale <= 0F) scale = 0.5F;
+		renderPreviewAt(g, font, layout, areaX, areaY, areaW, areaH, scale);
+	}
 
-		int drawnW = Math.round(boundsW * scale);
-		int drawnH = Math.round(boundsH * scale);
-		int drawX = areaX + Math.max(0, (areaW - drawnW) / 2);
-		int drawY = areaY + Math.max(0, (areaH - drawnH) / 2);
+	/**
+	 * Draws the layout at a fixed scale (the HUD's own scale shows its real size). It is centred
+	 * when it fits; a larger layout keeps its top left corner visible and is clipped to the area.
+	 */
+	static void renderPreviewAt(GuiGraphicsExtractor g, Font font, OverlayLayout layout, int areaX, int areaY, int areaW, int areaH, float scale) {
+		renderPreviewAt(g, font, layout, areaX, areaY, areaW, areaH, scale, true);
+	}
 
+	/** Draws the HUD at its real scale, centred in the area or anchored top left; overflow is clipped, never shrunk. */
+	static void renderPreviewAt(GuiGraphicsExtractor g, Font font, OverlayLayout layout, int areaX, int areaY, int areaW, int areaH, float scale,
+		boolean centred) {
+		if (!Float.isFinite(scale) || scale <= 0F) scale = 1.0F;
+		int drawnW = Math.round(Math.max(1, layout.width + OverlayLayouts.SHADOW_PAD) * scale);
+		int drawnH = Math.round(Math.max(1, layout.height + OverlayLayouts.SHADOW_PAD) * scale);
+		int drawX = centred ? areaX + Math.max(0, (areaW - drawnW) / 2) : areaX;
+		int drawY = centred ? areaY + Math.max(0, (areaH - drawnH) / 2) : areaY;
+		boolean clip = drawnW > areaW || drawnH > areaH;
+
+		if (clip) g.enableScissor(areaX, areaY, areaX + areaW, areaY + areaH);
 		var pose = g.pose();
 		pose.pushMatrix();
 		try {
@@ -214,6 +232,7 @@ public final class DrtOverlayEditorScreen extends Screen {
 			}
 		} finally {
 			pose.popMatrix();
+			if (clip) g.disableScissor();
 		}
 	}
 
@@ -234,12 +253,12 @@ public final class DrtOverlayEditorScreen extends Screen {
 		x += backW + gap;
 		drawButton(g, x, y, moveW, BTN_H, "Move Overlay", false, () -> {
 			Minecraft client = Minecraft.getInstance();
-			client.setScreen(new DungeonTrackerPositionScreen(trackerFeature, this));
+			client.gui.setScreen(new DungeonTrackerPositionScreen(trackerFeature, this));
 		}, "Move the active overlay on screen");
 		x += moveW + gap;
 		drawButton(g, x, y, customW, BTN_H, "Custom Layout", trackerFeature.getOverlayPreset() == OverlayPreset.CUSTOM, () -> {
 			Minecraft client = Minecraft.getInstance();
-			client.setScreen(new DrtCustomOverlayEditorScreen(trackerFeature, this));
+			client.gui.setScreen(new DrtCustomOverlayEditorScreen(trackerFeature, this));
 		}, "Open the custom overlay text editor");
 
 		int applyX = ox + winW - PAD - applyW;
@@ -273,7 +292,7 @@ public final class DrtOverlayEditorScreen extends Screen {
 		g.text(font, sb + ellipsis, x, y, DIM);
 	}
 
-	private static String descriptionFor(OverlayPreset preset) {
+	static String descriptionFor(OverlayPreset preset) {
 		return switch (preset) {
 			case LEGACY -> "Original DRT layout.";
 			case MODERN -> "Clean layout focused on the current session.";
@@ -291,7 +310,7 @@ public final class DrtOverlayEditorScreen extends Screen {
 	private void drawButton(GuiGraphicsExtractor g, int x, int y, int w, int h, String label, boolean active, Runnable onClick, String tooltip, int textColor) {
 		g.fill(x, y, x + w, y + h, active ? 0xFF23375B : onClick == null ? 0xFF10121E : 0xFF171B30);
 		border(g, x, y, w, h, active ? BORDER_ACTIVE : onClick == null ? 0xFF252842 : BORDER);
-		g.text(font, label, x + (w - font.width(label)) / 2, y + (h - font.lineHeight) / 2, textColor);
+		g.text(font, label, x + (w - font.width(label)) / 2, DrtUiText.centeredTextY(font, y, h), textColor);
 		if (onClick != null) {
 			clickTargets.add(new ClickTarget(x, y, w, h, 0, onClick, tooltip));
 		} else if (tooltip != null && !tooltip.isBlank()) {
@@ -311,7 +330,7 @@ public final class DrtOverlayEditorScreen extends Screen {
 
 	private void goBack() {
 		if (minecraft != null && parent != null) {
-			minecraft.setScreen(parent);
+			minecraft.gui.setScreen(parent);
 			return;
 		}
 		super.onClose();
@@ -319,12 +338,16 @@ public final class DrtOverlayEditorScreen extends Screen {
 
 	/** Closes the whole onboarding/editor stack instead of stepping back one screen. */
 	void closeFully() {
+		if (parent instanceof DrtScreen && minecraft != null) {
+			minecraft.gui.setScreen(parent);
+			return;
+		}
 		if (parent instanceof DrtOnboardingScreen onboarding) {
 			onboarding.onClose();
 			return;
 		}
 		if (minecraft != null) {
-			minecraft.setScreen(null);
+			minecraft.gui.setScreen(null);
 			return;
 		}
 		super.onClose();

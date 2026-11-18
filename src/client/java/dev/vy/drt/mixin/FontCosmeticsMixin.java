@@ -55,75 +55,30 @@ public abstract class FontCosmeticsMixin {
 	@ModifyVariable(method = "prepareText(Ljava/lang/String;FFIZI)Lnet/minecraft/client/gui/Font$PreparedText;", at = @At("HEAD"), argsOnly = true)
 	private String drt$decoratePreparedString(String text) {
 		if (!drt$shouldDecorateRenderedText()) return text;
-		return drt$decorateSafely(() -> {
-			String styled = text;
-			if (NameStyler.hasChatHeaderStyles()) {
-				styled = NameStyler.applyChatHeaderToString(styled);
-			}
-			if (NameStyler.hasGradientStyles()) {
-				styled = NameStyler.applyGradientToString(styled);
-			}
-			return styled;
-		});
+		return drt$decorateSafely(() -> NameStyler.decorateFontText(text));
 	}
 
 	@ModifyVariable(method = "prepareText(Lnet/minecraft/util/FormattedCharSequence;FFIZZI)Lnet/minecraft/client/gui/Font$PreparedText;", at = @At("HEAD"), argsOnly = true)
 	private FormattedCharSequence drt$decoratePreparedOrderedText(FormattedCharSequence text) {
 		if (text == null || !drt$shouldDecorateRenderedText()) return text;
-		return drt$decorateSafely(() -> {
-			FormattedCharSequence styled = text;
-			if (NameStyler.hasChatHeaderStyles()) {
-				styled = NameStyler.applyChatHeaderToOrderedText(styled);
-			}
-			if (NameStyler.hasGradientStyles()) {
-				styled = NameStyler.applyGradientToOrderedText(styled);
-			}
-			return styled;
-		});
+		return drt$decorateSafely(() -> NameStyler.decorateFontText(text));
 	}
 
 	@ModifyVariable(method = "width(Ljava/lang/String;)I", at = @At("HEAD"), argsOnly = true)
 	private String drt$decorateMeasuredString(String text) {
 		if (!drt$shouldDecorateMeasuredText()) return text;
-		return drt$decorateSafely(() -> {
-			String styled = text;
-			if (NameStyler.hasChatHeaderStyles()) {
-				styled = NameStyler.applyChatHeaderToString(styled);
-			}
-			if (NameStyler.hasGradientStyles()) {
-				styled = NameStyler.applyGradientToString(styled);
-			}
-			return styled;
-		});
+		return drt$decorateSafely(() -> NameStyler.decorateFontText(text));
 	}
 
 	@ModifyVariable(method = "width(Lnet/minecraft/network/chat/FormattedText;)I", at = @At("HEAD"), argsOnly = true)
 	private FormattedText drt$decorateMeasuredText(FormattedText text) {
 		if (text == null || !drt$shouldDecorateMeasuredText()) return text;
-		return drt$decorateSafely(() -> {
-			FormattedText styled = text;
-			if (NameStyler.hasChatHeaderStyles()) {
-				styled = NameStyler.applyChatHeaderToFormattedText(styled);
-			}
-			if (NameStyler.hasGradientStyles()) {
-				styled = NameStyler.applyGradientToFormattedText(styled);
-			}
-			return styled;
-		});
+		return drt$decorateSafely(() -> NameStyler.decorateFontText(text));
 	}
 
 	@ModifyVariable(method = "width(Lnet/minecraft/util/FormattedCharSequence;)I", at = @At("HEAD"), argsOnly = true)
 	private FormattedCharSequence drt$decorateMeasuredOrderedText(FormattedCharSequence text) {
 		if (text == null || !drt$shouldDecorateMeasuredText()) return text;
-		return drt$decorateSafely(() -> {
-			FormattedCharSequence styled = text;
-			if (NameStyler.hasChatHeaderStyles()) {
-				styled = NameStyler.applyChatHeaderToOrderedText(styled);
-			}
-			if (NameStyler.hasGradientStyles()) {
-				styled = NameStyler.applyGradientToOrderedText(styled);
-			}
-			return styled;
-		});
+		return drt$decorateSafely(() -> NameStyler.decorateFontText(text));
 	}
 }

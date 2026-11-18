@@ -19,21 +19,23 @@ public final class NameStyler {
 	private static final int STRING_CACHE_LIMIT = 2048;
 	private static final int MATCH_CACHE_LIMIT = 4096;
 	private static final int IDENTITY_CACHE_SIZE = 2048;
+	private static final int MAX_CACHEABLE_TEXT_LENGTH = 4096;
 	private static final int ANIMATED_GRADIENT_STEPS = 120;
 	private static final float ANIMATED_GRADIENT_SPEED = 0.04F;
 	private static final int LARGE_LOBBY_ANIMATION_THRESHOLD = 40;
 	private static final float THROTTLED_ANIMATION_FPS = 15.0F;
 	private static final long UNCACHED_FRAME = Long.MAX_VALUE;
 	private static final Pattern TRAILING_BRACKET_PREFIX = Pattern.compile("(\\[[^\\]]+])(\\s*)$");
-	/** SkyBlock tab/chat level tags like [435] or [1,234] — never treat these as Hypixel ranks. */
+	/** SkyBlock tab/chat level tags like [435] or [1,234] - never treat these as Hypixel ranks. */
 	private static final Pattern SKYBLOCK_LEVEL_INNER = Pattern.compile("^\\d[\\d,]*$");
-	/** Dungeon class tags like [M]/[T]/[H]/[B]/[A] — keep next to the name. */
+	/** Dungeon class tags like [M]/[T]/[H]/[B]/[A] - keep next to the name. */
 	private static final Pattern DUNGEON_CLASS_INNER = Pattern.compile("^[MTHBA]$", Pattern.CASE_INSENSITIVE);
 
 	private static final NameStylerLruCache<ColorizedCacheKey, Component> COLORIZED_TEXT_CACHE = new NameStylerLruCache<>(TEXT_CACHE_LIMIT);
 	private static final NameStylerLruCache<AnimatedGradientCacheKey, AnimatedGradientStyle> ANIMATED_GRADIENT_CACHE = new NameStylerLruCache<>(512);
 	private static final NameStylerLruCache<TextCacheKey, Component> TEXT_TRANSFORM_CACHE = new NameStylerLruCache<>(TEXT_CACHE_LIMIT);
 	private static final NameStylerLruCache<StringCacheKey, String> STRING_TRANSFORM_CACHE = new NameStylerLruCache<>(STRING_CACHE_LIMIT);
+	private static final NameStylerLruCache<StringPlanCacheKey, StringTransformPlan> STRING_PLAN_CACHE = new NameStylerLruCache<>(MATCH_CACHE_LIMIT);
 	private static final NameStylerLruCache<OrderedTextPlanCacheKey, OrderedTextTransformPlan> ORDERED_TEXT_PLAN_CACHE = new NameStylerLruCache<>(MATCH_CACHE_LIMIT);
 	private static final NameStylerLruCache<OrderedTextResultCacheKey, FormattedCharSequence> ORDERED_TEXT_STATIC_RESULT_CACHE = new NameStylerLruCache<>(TEXT_CACHE_LIMIT);
 	private static final NameStylerLruCache<OrderedTextAnimatedFrameCacheKey, FormattedCharSequence> ORDERED_TEXT_ANIMATED_FRAME_CACHE = new NameStylerLruCache<>(MATCH_CACHE_LIMIT);
@@ -58,6 +60,7 @@ public final class NameStyler {
 		ANIMATED_GRADIENT_CACHE.clearCache();
 		TEXT_TRANSFORM_CACHE.clearCache();
 		STRING_TRANSFORM_CACHE.clearCache();
+		STRING_PLAN_CACHE.clearCache();
 		ORDERED_TEXT_PLAN_CACHE.clearCache();
 		ORDERED_TEXT_STATIC_RESULT_CACHE.clearCache();
 		ORDERED_TEXT_ANIMATED_FRAME_CACHE.clearCache();
@@ -173,6 +176,49 @@ public final class NameStyler {
 		return applyDecorationsToString(raw, TransformKind.GRADIENT_TEXT);
 	}
 
+	public static String decorateFontText(String raw) {
+		if (raw == null || raw.isEmpty()) return raw;
+		checkRegistryVersion();
+		NameStyleMatcher.Index matcher = fontMatcher();
+		if (matcher.isEmpty() || !NameStyleMatcher.containsCandidate(raw, matcher)) return raw;
+
+		String styled = raw;
+		if (hasChatHeaderStyles()) styled = applyChatHeaderToString(styled);
+		if (hasGradientStyles()) styled = applyGradientToString(styled);
+		return styled;
+	}
+
+	public static FormattedText decorateFontText(FormattedText text) {
+		if (text == null) return null;
+		checkRegistryVersion();
+		NameStyleMatcher.Index matcher = fontMatcher();
+		if (matcher.isEmpty()) return text;
+
+		Component component = text instanceof Component existing ? existing : rebuildFormattedText(text);
+		List<StyledRun> runs = collectRuns(component);
+		if (!NameStyleMatcher.containsCandidate(runsToPlain(runs), matcher)) return text;
+
+		FormattedText styled = component;
+		if (hasChatHeaderStyles()) styled = applyChatHeaderToFormattedText(styled);
+		if (hasGradientStyles()) styled = applyGradientToFormattedText(styled);
+		return styled;
+	}
+
+	public static FormattedCharSequence decorateFontText(FormattedCharSequence text) {
+		if (text == null) return null;
+		checkRegistryVersion();
+		NameStyleMatcher.Index matcher = fontMatcher();
+		if (matcher.isEmpty()) return text;
+
+		OrderedTextSourceData source = orderedTextSource(text);
+		if (!NameStyleMatcher.containsCandidate(source.plain, matcher)) return text;
+
+		FormattedCharSequence styled = text;
+		if (hasChatHeaderStyles()) styled = applyChatHeaderToOrderedText(styled);
+		if (hasGradientStyles()) styled = applyGradientToOrderedText(styled);
+		return styled;
+	}
+
 	public static boolean hasAnimatedGradientInOrderedText(FormattedCharSequence text) {
 		if (text == null || !hasGradientStyles()) return false;
 		OrderedTextSourceData source = orderedTextSource(text);
@@ -187,7 +233,7 @@ public final class NameStyler {
 	private static Component applyCachedTextTransform(Component message, TransformKind kind, NameStylerIdentityCache<Component, Component> identityCache) {
 		if (message == null) return null;
 		checkRegistryVersion();
-		if (candidatesForKind(kind).isEmpty()) return message;
+		if (matcherForKind(kind).isEmpty()) return message;
 
 		Component identityCached = identityCache.get(message);
 		if (identityCached != null) return identityCached;
@@ -199,21 +245,28 @@ public final class NameStyler {
 			return message;
 		}
 
+		OrderedTextSourceData source = new OrderedTextSourceData(plain, runs, styleHash(runs));
+		OrderedTextTransformPlan plan = buildOrderedTextPlan(source, kind);
+		if (plan == null) {
+			identityCache.put(message, message);
+			return message;
+		}
+
 		// Animated results must never be identity-cached: chat and tab reuse the same Component,
 		// which would freeze the gradient until the line is rebuilt and then make it jump.
-		boolean animated = hasAnimatedGradientMatch(plain, candidatesForKind(kind));
-		long frame = animated ? currentAnimationFrameIndex(currentAnimationTime()) : Long.MIN_VALUE;
-		TextCacheKey key = new TextCacheKey(PlayerCustomizationRegistry.version(), kind, plain, styleHash(runs), frame);
-		Component cached = frame == UNCACHED_FRAME ? null : TEXT_TRANSFORM_CACHE.getCached(key);
+		double animationTime = plan.hasAnimatedGradient ? currentAnimationTime() : 0.0D;
+		long frame = plan.hasAnimatedGradient ? currentAnimationFrameIndex(animationTime) : Long.MIN_VALUE;
+		boolean cacheable = cacheable(plain);
+		TextCacheKey key = cacheable ? new TextCacheKey(PlayerCustomizationRegistry.version(), kind, plain, source.styleHash, frame) : null;
+		Component cached = key == null || frame == UNCACHED_FRAME ? null : TEXT_TRANSFORM_CACHE.getCached(key);
 		if (cached != null) {
-			if (!animated) identityCache.put(message, cached);
+			if (!plan.hasAnimatedGradient) identityCache.put(message, cached);
 			return cached;
 		}
 
-		OrderedTextTransformPlan plan = buildTransformPlan(runs, plain, kind);
-		Component transformed = plan == null ? message : rebuildComponentFromPlan(new OrderedTextSourceData(plain, runs, styleHash(runs)), plan, currentAnimationTime(), kind);
-		if (frame != UNCACHED_FRAME) TEXT_TRANSFORM_CACHE.putCached(key, transformed);
-		if (!animated) identityCache.put(message, transformed);
+		Component transformed = rebuildComponentFromPlan(source, plan, animationTime, kind);
+		if (key != null && frame != UNCACHED_FRAME) TEXT_TRANSFORM_CACHE.putCached(key, transformed);
+		if (!plan.hasAnimatedGradient) identityCache.put(message, transformed);
 		return transformed;
 	}
 
@@ -221,7 +274,7 @@ public final class NameStyler {
 	                                                                     NameStylerIdentityCache<FormattedCharSequence, FormattedCharSequence> identityCache) {
 		if (text == null) return null;
 		checkRegistryVersion();
-		if (candidatesForKind(kind).isEmpty()) return text;
+		if (matcherForKind(kind).isEmpty()) return text;
 
 		FormattedCharSequence identityCached = identityCache.get(text);
 		if (identityCached != null) return identityCached;
@@ -245,22 +298,25 @@ public final class NameStyler {
 			if (frame == UNCACHED_FRAME) {
 				return rebuildComponentFromPlan(source, plan, animationTime, kind).getVisualOrderText();
 			}
-			OrderedTextAnimatedFrameCacheKey key = new OrderedTextAnimatedFrameCacheKey(PlayerCustomizationRegistry.version(), kind, source.plain,
-					source.styleHash, frame);
-			transformed = ORDERED_TEXT_ANIMATED_FRAME_CACHE.getCached(key);
+			OrderedTextAnimatedFrameCacheKey key = cacheable(source.plain)
+				? new OrderedTextAnimatedFrameCacheKey(PlayerCustomizationRegistry.version(), kind, source.plain, source.styleHash, frame)
+				: null;
+			transformed = key == null ? null : ORDERED_TEXT_ANIMATED_FRAME_CACHE.getCached(key);
 			if (transformed == null) {
 				transformed = rebuildComponentFromPlan(source, plan, animationTime, kind).getVisualOrderText();
-				ORDERED_TEXT_ANIMATED_FRAME_CACHE.putCached(key, transformed);
+				if (key != null) ORDERED_TEXT_ANIMATED_FRAME_CACHE.putCached(key, transformed);
 			}
 			// Same freeze issue as the Component path: never identity-cache animated frames.
 			return transformed;
 		}
 
-		OrderedTextResultCacheKey key = new OrderedTextResultCacheKey(PlayerCustomizationRegistry.version(), kind, source.plain, source.styleHash);
-		transformed = ORDERED_TEXT_STATIC_RESULT_CACHE.getCached(key);
+		OrderedTextResultCacheKey key = cacheable(source.plain)
+			? new OrderedTextResultCacheKey(PlayerCustomizationRegistry.version(), kind, source.plain, source.styleHash)
+			: null;
+		transformed = key == null ? null : ORDERED_TEXT_STATIC_RESULT_CACHE.getCached(key);
 		if (transformed == null) {
 			transformed = rebuildComponentFromPlan(source, plan, 0.0D, kind).getVisualOrderText();
-			ORDERED_TEXT_STATIC_RESULT_CACHE.putCached(key, transformed);
+			if (key != null) ORDERED_TEXT_STATIC_RESULT_CACHE.putCached(key, transformed);
 		}
 
 		identityCache.put(text, transformed);
@@ -270,29 +326,51 @@ public final class NameStyler {
 	private static String applyDecorationsToString(String raw, TransformKind kind) {
 		if (raw == null || raw.isEmpty()) return raw;
 		checkRegistryVersion();
-		List<PlayerCustomizationRegistry.NameCandidate> candidates = candidatesForKind(kind);
-		if (candidates.isEmpty()) return raw;
+		NameStyleMatcher.Index matcher = matcherForKind(kind);
+		if (matcher.isEmpty()) return raw;
 
-		long frame = hasAnimatedGradientMatch(raw, candidates) ? currentAnimationFrameIndex(currentAnimationTime()) : Long.MIN_VALUE;
-		if (frame == UNCACHED_FRAME) return applyDecorationsToStringUncached(raw, kind, candidates);
-		StringCacheKey key = new StringCacheKey(PlayerCustomizationRegistry.version(), kind, raw, frame);
-		String cached = STRING_TRANSFORM_CACHE.getCached(key);
+		StringTransformPlan plan = buildStringTransformPlan(raw, kind, matcher);
+		if (plan == null) return raw;
+		long frame = plan.hasAnimatedGradient ? currentAnimationFrameIndex(currentAnimationTime()) : Long.MIN_VALUE;
+		if (frame == UNCACHED_FRAME) return applyDecorationsToStringUncached(raw, kind, plan.matches);
+		StringCacheKey key = cacheable(raw) ? new StringCacheKey(PlayerCustomizationRegistry.version(), kind, raw, frame) : null;
+		String cached = key == null ? null : STRING_TRANSFORM_CACHE.getCached(key);
 		if (cached != null) return cached;
 
-		String transformed = applyDecorationsToStringUncached(raw, kind, candidates);
-		STRING_TRANSFORM_CACHE.putCached(key, transformed);
+		String transformed = applyDecorationsToStringUncached(raw, kind, plan.matches);
+		if (key != null) STRING_TRANSFORM_CACHE.putCached(key, transformed);
 		return transformed;
 	}
 
-	private static String applyDecorationsToStringUncached(String raw, TransformKind kind, List<PlayerCustomizationRegistry.NameCandidate> candidates) {
+	private static StringTransformPlan buildStringTransformPlan(String raw, TransformKind kind, NameStyleMatcher.Index matcher) {
+		StringPlanCacheKey key = cacheable(raw) ? new StringPlanCacheKey(PlayerCustomizationRegistry.version(), kind, raw) : null;
+		StringTransformPlan cached = key == null ? null : STRING_PLAN_CACHE.getCached(key);
+		if (cached != null) return cached == StringTransformPlan.EMPTY ? null : cached;
+
+		int matchBoundary = kind == TransformKind.CHAT_HEADER_TEXT ? chatHeaderBoundary(raw) : raw.length();
+		List<NameStyleMatcher.MatchedCustomization> matches = new ArrayList<>();
+		boolean hasAnimatedGradient = false;
+		int searchIndex = 0;
+		while (searchIndex < matchBoundary) {
+			NameStyleMatcher.MatchedCustomization match = NameStyleMatcher.findFirstNameMatch(raw, matcher, searchIndex);
+			if (match == null || match.index() >= matchBoundary) break;
+			int end = match.index() + match.matchedName().length();
+			if (end > matchBoundary) break;
+			matches.add(match);
+			hasAnimatedGradient |= match.customization().animatedGradient();
+			searchIndex = end;
+		}
+
+		StringTransformPlan plan = matches.isEmpty() ? null : new StringTransformPlan(List.copyOf(matches), hasAnimatedGradient);
+		if (key != null) STRING_PLAN_CACHE.putCached(key, plan == null ? StringTransformPlan.EMPTY : plan);
+		return plan;
+	}
+
+	private static String applyDecorationsToStringUncached(String raw, TransformKind kind,
+	                                                       List<NameStyleMatcher.MatchedCustomization> matches) {
 		StringBuilder output = new StringBuilder(raw.length() + 32);
 		int index = 0;
-		boolean changed = false;
-		int matchBoundary = kind == TransformKind.CHAT_HEADER_TEXT ? chatHeaderBoundary(raw) : raw.length();
-		while (index < matchBoundary) {
-			NameStyleMatcher.MatchedCustomization match = NameStyleMatcher.findFirstNameMatch(raw, candidates, index);
-			if (match == null || match.index() >= matchBoundary) break;
-
+		for (NameStyleMatcher.MatchedCustomization match : matches) {
 			PlayerCustomizationRegistry.PlayerCustomization customization = match.customization();
 			String matchedText = raw.substring(match.index(), match.index() + match.matchedName().length());
 			String displayText = kind.replaceMatchedName ? customization.displayName(matchedText) : matchedText;
@@ -306,11 +384,9 @@ public final class NameStyler {
 					output.append(toLegacyStyledRank(rankReplacement.replacement(), customization));
 					output.append(toLegacyStyledName(displayText, customization));
 				}
-				changed = true;
 			} else {
 				if (match.index() > index) output.append(raw, index, match.index());
 				output.append(toLegacyStyledName(displayText, customization));
-				changed = true;
 			}
 
 			if (kind.includeBadges && customization.hasBadge()
@@ -324,7 +400,6 @@ public final class NameStyler {
 			index = match.index() + match.matchedName().length();
 		}
 
-		if (!changed) return raw;
 		output.append(raw.substring(index));
 		return output.toString();
 	}
@@ -340,25 +415,27 @@ public final class NameStyler {
 	}
 
 	private static OrderedTextTransformPlan buildOrderedTextPlan(OrderedTextSourceData source, TransformKind kind) {
-		OrderedTextPlanCacheKey key = new OrderedTextPlanCacheKey(PlayerCustomizationRegistry.version(), kind, source.plain, source.styleHash);
-		OrderedTextTransformPlan cached = ORDERED_TEXT_PLAN_CACHE.getCached(key);
+		OrderedTextPlanCacheKey key = cacheable(source.plain)
+			? new OrderedTextPlanCacheKey(PlayerCustomizationRegistry.version(), kind, source.plain, source.styleHash)
+			: null;
+		OrderedTextTransformPlan cached = key == null ? null : ORDERED_TEXT_PLAN_CACHE.getCached(key);
 		if (cached != null) return cached == OrderedTextTransformPlan.EMPTY ? null : cached;
 
 		OrderedTextTransformPlan plan = buildTransformPlan(source.runs, source.plain, kind);
-		ORDERED_TEXT_PLAN_CACHE.putCached(key, plan == null ? OrderedTextTransformPlan.EMPTY : plan);
+		if (key != null) ORDERED_TEXT_PLAN_CACHE.putCached(key, plan == null ? OrderedTextTransformPlan.EMPTY : plan);
 		return plan;
 	}
 
 	private static OrderedTextTransformPlan buildTransformPlan(List<StyledRun> runs, String plain, TransformKind kind) {
-		List<PlayerCustomizationRegistry.NameCandidate> candidates = candidatesForKind(kind);
-		if (plain.isEmpty() || candidates.isEmpty()) return null;
+		NameStyleMatcher.Index matcher = matcherForKind(kind);
+		if (plain.isEmpty() || matcher.isEmpty()) return null;
 
 		int matchBoundary = kind == TransformKind.CHAT_HEADER_TEXT ? chatHeaderBoundary(plain) : plain.length();
 		List<ResolvedOrderedMatch> matches = new ArrayList<>();
 		boolean hasAnimatedGradient = false;
 		int searchIndex = 0;
 		while (searchIndex < matchBoundary) {
-			NameStyleMatcher.MatchedCustomization match = NameStyleMatcher.findFirstNameMatch(plain, candidates, searchIndex);
+			NameStyleMatcher.MatchedCustomization match = NameStyleMatcher.findFirstNameMatch(plain, matcher, searchIndex);
 			if (match == null) break;
 			int start = match.index();
 			int end = start + match.matchedName().length();
@@ -472,11 +549,13 @@ public final class NameStyler {
 		}
 
 		if (!customization.nameLetterColors().isEmpty()) {
-			ColorizedCacheKey key = new ColorizedCacheKey(content.toLowerCase(Locale.ROOT), "multicolor", customization.nameLetterColors());
-			Component cached = COLORIZED_TEXT_CACHE.getCached(key);
+			ColorizedCacheKey key = cacheable(content)
+				? new ColorizedCacheKey(content, "multicolor", customization.nameLetterColors())
+				: null;
+			Component cached = key == null ? null : COLORIZED_TEXT_CACHE.getCached(key);
 			if (cached == null) {
 				cached = multiColorText(content, customization.nameLetterColors(), Style.EMPTY);
-				COLORIZED_TEXT_CACHE.putCached(key, cached);
+				if (key != null) COLORIZED_TEXT_CACHE.putCached(key, cached);
 			}
 			return withParent(cached, effectiveBaseStyle);
 		}
@@ -485,9 +564,11 @@ public final class NameStyler {
 	}
 
 	private static Component staticGradientText(String content, PlayerCustomizationRegistry.NameColors colors, Style baseStyle) {
-		ColorizedCacheKey key = new ColorizedCacheKey(content.toLowerCase(Locale.ROOT),
-				"gradient:" + colors.left() + ':' + colors.right() + ':' + colors.spacing(), List.of(colors.left(), colors.right()));
-		Component cached = COLORIZED_TEXT_CACHE.getCached(key);
+		ColorizedCacheKey key = cacheable(content)
+			? new ColorizedCacheKey(content,
+				"gradient:" + colors.left() + ':' + colors.right() + ':' + colors.spacing(), List.of(colors.left(), colors.right()))
+			: null;
+		Component cached = key == null ? null : COLORIZED_TEXT_CACHE.getCached(key);
 		if (cached == null) {
 			MutableComponent gradientText = Component.empty();
 			float spacing = clamp(colors.spacing(), 1.0F, 10.0F);
@@ -497,7 +578,7 @@ public final class NameStyler {
 				gradientText.append(Component.literal(new String(Character.toChars(codePoints[i]))).setStyle(Style.EMPTY.withColor(color)));
 			}
 			cached = gradientText;
-			COLORIZED_TEXT_CACHE.putCached(key, cached);
+			if (key != null) COLORIZED_TEXT_CACHE.putCached(key, cached);
 		}
 		return withParent(cached, baseStyle);
 	}
@@ -569,7 +650,7 @@ public final class NameStyler {
 				rankPrefix.copyName());
 		}
 
-		// No Hypixel rank tag — leave level/class tags alone; do not insert a custom prefix.
+		// No Hypixel rank tag - leave level/class tags alone; do not insert a custom prefix.
 		return null;
 	}
 
@@ -697,28 +778,26 @@ public final class NameStyler {
 		return (long) Math.floor(animationTime * THROTTLED_ANIMATION_FPS);
 	}
 
-	private static boolean hasAnimatedGradientMatch(String text, List<PlayerCustomizationRegistry.NameCandidate> candidates) {
-		if (text == null || text.isEmpty() || candidates.isEmpty()) return false;
-		int index = 0;
-		while (index < text.length()) {
-			NameStyleMatcher.MatchedCustomization match = NameStyleMatcher.findFirstNameMatch(text, candidates, index);
-			if (match == null) return false;
-			if (match.customization().animatedGradient()) return true;
-			index = match.index() + match.matchedName().length();
-		}
-		return false;
+	private static NameStyleMatcher.Index matcherForKind(TransformKind kind) {
+		// Every transform bails out on an empty list, so a non-owner never touches a name.
+		if (!CosmeticRenderer.active()) return NameStyleMatcher.compile(List.of());
+		return switch (kind) {
+			case GRADIENT_TEXT -> PlayerCustomizationRegistry.gradientNameMatcher();
+			case CHAT_HEADER_TEXT -> PlayerCustomizationRegistry.chatHeaderNameMatcher();
+			case NAMEPLATE_TEXT, NAMEPLATE_DISPLAY_TEXT -> PlayerCustomizationRegistry.nameplateDisplayMatcher();
+			case SCOREBOARD_TEXT -> PlayerCustomizationRegistry.scoreboardStyledNameMatcher();
+			case SCOREBOARD_DISPLAY_TEXT -> PlayerCustomizationRegistry.scoreboardDisplayNameMatcher();
+		};
 	}
 
-	private static List<PlayerCustomizationRegistry.NameCandidate> candidatesForKind(TransformKind kind) {
-		// Every transform bails out on an empty list, so a non-owner never touches a name.
-		if (!CosmeticRenderer.active()) return List.of();
-		return switch (kind) {
-			case GRADIENT_TEXT -> PlayerCustomizationRegistry.gradientNameCandidates();
-			case CHAT_HEADER_TEXT -> PlayerCustomizationRegistry.chatHeaderNameCandidates();
-			case NAMEPLATE_TEXT, NAMEPLATE_DISPLAY_TEXT -> PlayerCustomizationRegistry.nameplateDisplayCandidates();
-			case SCOREBOARD_TEXT -> PlayerCustomizationRegistry.scoreboardStyledNameCandidates();
-			case SCOREBOARD_DISPLAY_TEXT -> PlayerCustomizationRegistry.scoreboardDisplayNameCandidates();
-		};
+	private static NameStyleMatcher.Index fontMatcher() {
+		if (!CosmeticRenderer.active()) return NameStyleMatcher.compile(List.of());
+		NameStyleMatcher.Index chatHeader = PlayerCustomizationRegistry.chatHeaderNameMatcher();
+		return chatHeader.isEmpty() ? PlayerCustomizationRegistry.gradientNameMatcher() : chatHeader;
+	}
+
+	static boolean cacheable(String text) {
+		return text.length() <= MAX_CACHEABLE_TEXT_LENGTH;
 	}
 
 	private static List<StyledRun> collectRuns(Component message) {
@@ -823,7 +902,7 @@ public final class NameStyler {
 		int delimiter = plain.indexOf(": ");
 		if (delimiter == -1) return Integer.MAX_VALUE;
 		// Party/guild roster lines use labels like "Party Moderators: [MVP+] Name".
-		// That colon is not a chat-message delimiter — style the whole line so ranks replace.
+		// That colon is not a chat-message delimiter - style the whole line so ranks replace.
 		if (isRosterOrListLabel(plain.substring(0, delimiter))) return Integer.MAX_VALUE;
 		return delimiter;
 	}
@@ -984,6 +1063,10 @@ public final class NameStyler {
 		static final OrderedTextTransformPlan EMPTY = new OrderedTextTransformPlan(List.of(), false);
 	}
 
+	private record StringTransformPlan(List<NameStyleMatcher.MatchedCustomization> matches, boolean hasAnimatedGradient) {
+		static final StringTransformPlan EMPTY = new StringTransformPlan(List.of(), false);
+	}
+
 	private record ResolvedOrderedMatch(int start, int end, String content, Style baseStyle,
 	                                    PlayerCustomizationRegistry.PlayerCustomization customization, boolean isAnimatedGradient,
 	                                    boolean hasBadge, boolean hasDecorations, boolean hasExplicitNameColors, boolean hasBadgeAlready,
@@ -997,6 +1080,9 @@ public final class NameStyler {
 	}
 
 	private record StringCacheKey(long version, TransformKind kind, String raw, long frame) {
+	}
+
+	private record StringPlanCacheKey(long version, TransformKind kind, String raw) {
 	}
 
 	private record OrderedTextPlanCacheKey(long version, TransformKind kind, String plain, int styleHash) {

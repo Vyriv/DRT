@@ -154,6 +154,44 @@ class RunRecordDeduplicatorTest {
 		assertEquals(RunRecordCommitDecision.ADD_INCOMING, decision.action());
 	}
 
+	@Test
+	void identicalCroesusChestsOfDifferentRunsInOneVisitAreBothKept() {
+		DungeonRunRecord first = record(1_000L, "M1", "Emerald Chest", List.of(
+			new DungeonLootEntry("Bonzo Shard", "SHARD_BONZO", 1),
+			new DungeonLootEntry("Wither Essence", "ESSENCE_WITHER", 34),
+			new DungeonLootEntry("Undead Essence", "ESSENCE_UNDEAD", 52)
+		));
+		first.runSessionId = "live-c2abd08f";
+		first.runNumber = 30;
+		first.chestSessionId = "live-c2abd08f-chest-12";
+		first.runLinkSource = DungeonRunRecord.LINK_CROESUS_UNIQUE;
+		first.linkedRunId = "live-c2abd08f-run-23";
+
+		DungeonRunRecord second = first.copy();
+		second.chestSessionId = "live-c2abd08f-chest-17";
+		second.linkedRunId = "live-c2abd08f-run-17";
+
+		RunRecordDeduplicator.DuplicateDecision decision = RunRecordDeduplicator.decide(new ArrayList<>(List.of(first)), second);
+
+		assertEquals(RunRecordCommitDecision.ADD_INCOMING, decision.action());
+	}
+
+	@Test
+	void sameOpenRecordedTwiceForOneRunIsStillADuplicate() {
+		DungeonRunRecord first = record(1_000L, "M1", "Emerald Chest", List.of(
+			new DungeonLootEntry("Bonzo Shard", "SHARD_BONZO", 1)
+		));
+		first.chestSessionId = "live-c2abd08f-chest-12";
+		first.linkedRunId = "live-c2abd08f-run-23";
+
+		DungeonRunRecord duplicate = first.copy();
+		duplicate.chestSessionId = "live-c2abd08f-chest-13";
+
+		RunRecordDeduplicator.DuplicateDecision decision = RunRecordDeduplicator.decide(new ArrayList<>(List.of(first)), duplicate);
+
+		assertEquals(RunRecordCommitDecision.KEEP_EXISTING, decision.action());
+	}
+
 	private static DungeonRunRecord record(long timestamp, String floor, String chest, List<DungeonLootEntry> loot) {
 		DungeonRunRecord record = new DungeonRunRecord(timestamp, 1, floor, "S+", chest, 0L, 1L, 1L, loot);
 		record.normalizeCostBreakdown();

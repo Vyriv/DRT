@@ -3,6 +3,8 @@ package dev.vy.drt.config;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
+import java.util.List;
+
 import com.google.gson.Gson;
 import java.util.ArrayList;
 import org.junit.jupiter.api.Test;
@@ -42,5 +44,25 @@ class RunLinkFieldsTest {
 		DungeonRunCompletionRecord legacy = GSON.fromJson("{\"runTimeMs\":250000,\"completionFingerprint\":\"s1|F5|S+|0\"}", DungeonRunCompletionRecord.class);
 		assertNull(legacy.runTimeSource);
 		assertEquals(DungeonRunCompletionRecord.RUN_TIME_MEASURED, legacy.effectiveRunTimeSource());
+	}
+
+	@Test
+	void observedChestOffersSurviveCopyJsonAndLegacyLoad() {
+		DungeonRunCompletionRecord completion = new DungeonRunCompletionRecord(1L, "DUNGEON", "F7", "S+", 220_000L, "s1", "s1|F7|S+|220000");
+		DungeonChestOffer offer = new DungeonChestOffer("Bedrock Chest", new ChestCostBreakdown(10_000_000L), 12_000_000L,
+			List.of(new DungeonLootEntry("Recombobulator 3000", "RECOMBOBULATOR_3000", 2)));
+		offer.observedAtEpochMillis = 123L;
+		completion.chestOffers.add(offer);
+
+		DungeonRunCompletionRecord copy = completion.copy();
+		assertEquals("RECOMBOBULATOR_3000", copy.chestOffers.get(0).lootEntries.get(0).itemId);
+		assertEquals(2, copy.chestOffers.get(0).lootEntries.get(0).quantity);
+		DungeonRunCompletionRecord loaded = GSON.fromJson(GSON.toJson(completion), DungeonRunCompletionRecord.class);
+		loaded.normalize();
+		assertEquals(123L, loaded.chestOffers.get(0).observedAtEpochMillis);
+
+		DungeonRunCompletionRecord legacy = GSON.fromJson("{\"runSessionId\":\"old\"}", DungeonRunCompletionRecord.class);
+		legacy.normalize();
+		assertEquals(0, legacy.chestOffers.size());
 	}
 }

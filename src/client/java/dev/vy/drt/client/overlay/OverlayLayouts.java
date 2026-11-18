@@ -156,7 +156,7 @@ public final class OverlayLayouts {
 
 		if (stats.sessionRuns <= 0) {
 			b.add(new OverlayLine.Builder()
-				.add("No active session", OverlayColors.DIM)
+				.add("No dungeon runs in this session yet", OverlayColors.DIM)
 				.hover(OverlayLineHover.RUNS));
 			return b.build();
 		}

@@ -3,7 +3,9 @@ plugins {
 	`maven-publish`
 }
 
-version = project.property("mod_version") as String
+val baseVersion = rootProject.property("mod_version") as String
+val minecraftVersion = project.property("minecraft_version").toString()
+version = "$baseVersion+$minecraftVersion"
 group = project.property("maven_group") as String
 
 base {
@@ -26,13 +28,27 @@ loom {
 	}
 }
 
+val nanoVgVersion = if (project.property("minecraft_version") == "26.3") "3.4.3" else "3.4.1"
+
 dependencies {
 	minecraft("com.mojang:minecraft:${project.property("minecraft_version")}")
 	implementation("net.fabricmc:fabric-loader:${project.property("loader_version")}")
 	implementation("net.fabricmc.fabric-api:fabric-api:${project.property("fabric_api_version")}")
 	compileOnly("com.terraformersmc:modmenu:${project.property("modmenu_version")}")
+	implementation(include("org.lwjgl:lwjgl-nanovg:$nanoVgVersion")!!)
+	runtimeOnly(include("org.lwjgl:lwjgl-nanovg:$nanoVgVersion:natives-windows")!!)
+	runtimeOnly(include("org.lwjgl:lwjgl-nanovg:$nanoVgVersion:natives-linux")!!)
+	runtimeOnly(include("org.lwjgl:lwjgl-nanovg:$nanoVgVersion:natives-macos")!!)
+	runtimeOnly(include("org.lwjgl:lwjgl-nanovg:$nanoVgVersion:natives-macos-arm64")!!)
 	testImplementation("org.junit.jupiter:junit-jupiter:5.10.3")
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+}
+
+sourceSets {
+	named("test") {
+		compileClasspath += sourceSets["client"].output
+		runtimeClasspath += sourceSets["client"].output
+	}
 }
 
 tasks.withType<JavaCompile>().configureEach {
@@ -41,6 +57,14 @@ tasks.withType<JavaCompile>().configureEach {
 
 tasks.withType<Test>().configureEach {
 	useJUnitPlatform()
+}
+
+tasks.register<JavaExec>("benchmarkNameStyleMatcher") {
+	group = "verification"
+	description = "Runs the cosmetic name matcher microbenchmark."
+	dependsOn("testClasses")
+	classpath = sourceSets["test"].runtimeClasspath
+	mainClass.set("dev.vy.drt.client.cosmetics.NameStyleMatcherBenchmark")
 }
 
 java {
@@ -71,22 +95,13 @@ tasks {
 
 	register<Copy>("buildAndCollect") {
 		group = "build"
-		description = "Builds this version and copies jars to dist (release) or dist/beta (beta, no sources)."
+		description = "Builds this version and copies release jars to dist/."
 		dependsOn("build")
-		val versionString = project.version.toString()
-		val betaBuild = versionString.contains("-beta", ignoreCase = true)
-		if (betaBuild) {
-			from(named("jar"))
-			into(rootProject.layout.projectDirectory.dir("dist/beta"))
-		} else {
-			from(named("jar"), named("sourcesJar"))
-			into(rootProject.layout.projectDirectory.dir("dist"))
-		}
+		from(named("jar"), named("sourcesJar"))
+		into(rootProject.layout.projectDirectory.dir("dist"))
 		exclude { details ->
 			val name = details.file.name
-			if (betaBuild && name.contains("-sources", ignoreCase = true)) return@exclude true
-			if (!betaBuild && name.contains("-beta", ignoreCase = true)) return@exclude true
-			false
+			name.contains("-beta", ignoreCase = true) || name.startsWith("DRT_BETA-", ignoreCase = true)
 		}
 	}
 }

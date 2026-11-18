@@ -4,12 +4,17 @@ import java.util.ArrayList;
 import java.util.List;
 
 public final class DungeonChestOffer {
+	public static final String SOURCE_API_RECOVERED = "HYPIXEL_API";
 	public String chestTitle = "";
 	public DungeonFloor contextFloor = DungeonFloor.UNKNOWN;
 	public ChestCostBreakdown costBreakdown = new ChestCostBreakdown();
 	public long valueCoins;
 	public long profitCoins;
 	public boolean alreadyOpened;
+	public long observedAtEpochMillis;
+	public boolean purchased;
+	/** Blank for legacy/local captures, or {@link #SOURCE_API_RECOVERED} for supplemental recovery. */
+	public String captureSource = "";
 	public List<DungeonLootEntry> lootEntries = new ArrayList<>();
 
 	public DungeonChestOffer() {
@@ -31,6 +36,9 @@ public final class DungeonChestOffer {
 		DungeonChestOffer copy = new DungeonChestOffer(chestTitle, costBreakdown, valueCoins, lootEntries);
 		copy.contextFloor = contextFloor;
 		copy.alreadyOpened = alreadyOpened;
+		copy.observedAtEpochMillis = observedAtEpochMillis;
+		copy.purchased = purchased;
+		copy.captureSource = captureSource == null ? "" : captureSource;
 		copy.normalize();
 		return copy;
 	}
@@ -41,7 +49,9 @@ public final class DungeonChestOffer {
 		if (costBreakdown == null) costBreakdown = new ChestCostBreakdown();
 		costBreakdown.normalize();
 		valueCoins = Math.max(0L, valueCoins);
+		observedAtEpochMillis = Math.max(0L, observedAtEpochMillis);
 		profitCoins = valueCoins - costBreakdown.totalCostCoins();
+		if (captureSource == null) captureSource = "";
 		if (lootEntries == null) lootEntries = new ArrayList<>();
 	}
 }

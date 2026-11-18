@@ -1,6 +1,8 @@
 package dev.vy.drt.client.screen;
 
 import dev.vy.drt.client.DrtClient;
+import dev.vy.drt.client.render.DrtUiText;
+import dev.vy.drt.client.render.RoundedUiRenderer;
 import dev.vy.drt.config.DrtConfigManager;
 import dev.vy.drt.config.DungeonFloor;
 import dev.vy.drt.config.DungeonLootEntry;
@@ -23,7 +25,7 @@ import net.minecraft.world.item.ItemStack;
 import org.lwjgl.glfw.GLFW;
 
 public final class ManualRunEntryScreen extends Screen {
-	private static final int WIN_W = 460;
+	private static final int MAX_WIN_W = 460;
 	private static final int SEARCH_POPUP_W = 272;
 	private static final int MARGIN = 12;
 	private static final int FIELD_H = 18;
@@ -59,7 +61,7 @@ public final class ManualRunEntryScreen extends Screen {
 
 	private final Screen parent;
 	private final DungeonRunRecord editingOriginal;
-	private int ox, oy;
+	private int ox, oy, winW;
 	private int winH;
 	private int btnY;
 	private int searchPopupX, searchPopupY, searchPopupW, searchPopupH;
@@ -92,6 +94,8 @@ public final class ManualRunEntryScreen extends Screen {
 	private int witherFieldX, witherFieldY, witherFieldW;
 	private int undeadFieldX, undeadFieldY, undeadFieldW;
 	private int lootRowY;
+	private int lootColumns;
+	private int saveButtonX, cancelButtonX;
 
 	public ManualRunEntryScreen(Screen parent) {
 		this(parent, null);
@@ -203,7 +207,7 @@ public final class ManualRunEntryScreen extends Screen {
 			selectedSlot = -1;
 			activeInput = 0;
 		}
-		layoutFields();
+		refreshWindowLayout();
 	}
 
 	private void clearLootSlot(int index) {
@@ -217,24 +221,33 @@ public final class ManualRunEntryScreen extends Screen {
 
 	@Override
 	protected void init() {
-		winH = computeWinH();
-		ox = (width - WIN_W) / 2;
+		refreshWindowLayout();
+	}
+
+	private void refreshWindowLayout() {
+		winW = Math.max(240, Math.min(MAX_WIN_W, width - 24));
+		winH = Math.min(computeWinH(), Math.max(170, height - 24));
+		ox = (width - winW) / 2;
 		oy = (height - winH) / 2;
 		layoutFields();
 	}
 
 	private int computeWinH() {
 		int fieldRows = floor.isKuudra() ? 2 : 3;
-		int yAfterFields = TITLE_H + fieldRows * ROW_H;
-		int lootRowOffset = (floor.isKuudra() ? yAfterFields - ROW_H : yAfterFields) + ROW_H + 2;
-		int dropdownH = SEARCH_HEADER_H + SEARCH_VISIBLE_ROWS * SEARCH_ROW_H + SEARCH_POPUP_PAD;
-		return lootRowOffset + FIELD_H + SEARCH_POPUP_GAP + dropdownH + FOOTER_GAP + BTN_H + MARGIN;
+		int lootRowOffset = TITLE_H + fieldRows * ROW_H + 2;
+		int maxColumns = winW - MARGIN * 2 >= 360 ? 4 : 2;
+		int columns = Math.min(Math.max(1, lootSlots.size()), maxColumns);
+		int rows = Math.max(1, (lootSlots.size() + columns - 1) / columns);
+		int base = lootRowOffset + rows * FIELD_H + Math.max(0, rows - 1) * LOOT_GAP + FOOTER_GAP + BTN_H + MARGIN;
+		if (selectedSlot == -1) return base;
+		return base + SEARCH_POPUP_GAP + SEARCH_HEADER_H + SEARCH_VISIBLE_ROWS * SEARCH_ROW_H + SEARCH_POPUP_PAD;
 	}
 
 	private void layoutFields() {
-		contentW = WIN_W - MARGIN * 2;
+		contentW = winW - MARGIN * 2;
 		int slotCount = Math.max(1, lootSlots.size());
-		lootSlotW = (contentW - LOOT_GAP * Math.max(0, slotCount - 1)) / slotCount;
+		lootColumns = Math.min(slotCount, contentW >= 360 ? 4 : 2);
+		lootSlotW = (contentW - LOOT_GAP * Math.max(0, lootColumns - 1)) / lootColumns;
 
 		int left = ox + MARGIN;
 		int y = oy + TITLE_H;
@@ -256,10 +269,10 @@ public final class ManualRunEntryScreen extends Screen {
 		y += ROW_H;
 		timeFieldX = left;
 		timeFieldY = y;
-		timeFieldW = 84;
+		timeFieldW = (contentW - COL_GAP) / 2;
 		costFieldX = left + timeFieldW + COL_GAP;
 		costFieldY = y;
-		costFieldW = 108;
+		costFieldW = contentW - timeFieldW - COL_GAP;
 
 		y += ROW_H;
 		witherFieldX = left;
@@ -271,13 +284,26 @@ public final class ManualRunEntryScreen extends Screen {
 
 		lootRowY = (floor.isKuudra() ? y - ROW_H : y) + ROW_H + 2;
 		btnY = oy + winH - MARGIN - BTN_H;
+		int buttonsW = 152;
+		cancelButtonX = ox + (winW - buttonsW) / 2;
+		saveButtonX = cancelButtonX + 82;
 
-		searchPopupX = ox + MARGIN;
-		searchPopupY = lootRowY + FIELD_H + SEARCH_POPUP_GAP;
-		searchPopupW = SEARCH_POPUP_W;
+		searchPopupW = Math.min(SEARCH_POPUP_W, contentW);
+		searchPopupX = ox + (winW - searchPopupW) / 2;
+		int lootRows = Math.max(1, (lootSlots.size() + lootColumns - 1) / lootColumns);
+		int lootBottom = lootRowY + lootRows * FIELD_H + Math.max(0, lootRows - 1) * LOOT_GAP;
+		searchPopupY = lootBottom + SEARCH_POPUP_GAP;
 		int desiredH = SEARCH_HEADER_H + SEARCH_VISIBLE_ROWS * SEARCH_ROW_H + SEARCH_POPUP_PAD;
-		int maxH = btnY - FOOTER_GAP - searchPopupY;
-		searchPopupH = Math.min(desiredH, Math.max(SEARCH_HEADER_H + SEARCH_ROW_H + SEARCH_POPUP_PAD, maxH));
+		int availableH = Math.max(SEARCH_HEADER_H + SEARCH_ROW_H + 4, btnY - 6 - searchPopupY);
+		searchPopupH = Math.min(desiredH, availableH);
+	}
+
+	private int lootSlotX(int index) {
+		return ox + MARGIN + (index % lootColumns) * (lootSlotW + LOOT_GAP);
+	}
+
+	private int lootSlotY(int index) {
+		return lootRowY + (index / lootColumns) * (FIELD_H + LOOT_GAP);
 	}
 
 	private boolean isEditing() {
@@ -286,26 +312,30 @@ public final class ManualRunEntryScreen extends Screen {
 
 	@Override
 	public void extractRenderState(GuiGraphicsExtractor g, int mouseX, int mouseY, float partialTick) {
+		dev.vy.drt.config.DrtTheme.ensureLoaded();
+		int desiredHeight = Math.min(computeWinH(), Math.max(170, height - 24));
+		if (selectedSlot == -1 && winH != desiredHeight) refreshWindowLayout();
 		if (parent != null) {
 			parent.extractRenderState(g, mouseX, mouseY, partialTick);
 		}
-		g.fill(0, 0, width, height, 0xAA000000);
+		g.fill(0, 0, width, height, dev.vy.drt.config.DrtTheme.color("scrim", 0xAA000000));
+		RoundedUiRenderer.beginFrame(g, width, height, 1.0F);
 
-		g.fill(ox, oy, ox + WIN_W, oy + winH, PANEL_BG);
-		border(g, ox, oy, WIN_W, winH, PANEL_BORDER);
+		roundedPanel(g, ox, oy, winW, winH, 7, dev.vy.drt.config.DrtTheme.color("window.background", PANEL_BG), dev.vy.drt.config.DrtTheme.color("window.border", PANEL_BORDER));
 
-		g.text(font, isEditing() ? "Edit Run" : "Manual Run Entry", ox + MARGIN, oy + 11, TEXT_PRIMARY);
+		g.text(font, isEditing() ? "Edit Run" : "Manual Run Entry", ox + MARGIN, oy + 11, dev.vy.drt.config.DrtTheme.color("text.pageTitle", TEXT_PRIMARY));
+		RoundedUiRenderer.line(ox + MARGIN, oy + TITLE_H - 5, ox + winW - MARGIN, oy + TITLE_H - 5, 1.0F, dev.vy.drt.config.DrtTheme.color("separator", 0xFF292943));
 
 		drawFieldLabel(g, "Floor", floorFieldX, floorFieldY - LABEL_H);
 		drawDropdownField(g, floorFieldX, floorFieldY, floorFieldW, floor.name(),
-			floor.isKuudra() ? 0xFFAA0000 : TEXT_PRIMARY, null, mouseX, mouseY,
+			floor.isKuudra() ? 0xFFAA0000 : dev.vy.drt.config.DrtTheme.color("text.primary", TEXT_PRIMARY), null, mouseX, mouseY,
 			openDropdown == OpenDropdown.FLOOR);
 
 		drawFieldLabel(g, "Chest", chestFieldX, chestFieldY - LABEL_H);
 		drawChestDropdownField(g, chestFieldX, chestFieldY, chestFieldW, mouseX, mouseY);
 
 		drawFieldLabel(g, "Score", scoreFieldX, scoreFieldY - LABEL_H);
-		drawDropdownField(g, scoreFieldX, scoreFieldY, scoreFieldW, score, TEXT_PRIMARY, null, mouseX, mouseY, false);
+		drawDropdownField(g, scoreFieldX, scoreFieldY, scoreFieldW, score, dev.vy.drt.config.DrtTheme.color("text.primary", TEXT_PRIMARY), null, mouseX, mouseY, false);
 
 		drawFieldLabel(g, isEditing() ? "Time (optional)" : "Time", timeFieldX, timeFieldY - LABEL_H);
 		drawTextField(g, timeFieldX, timeFieldY, timeFieldW, timeStr, activeInput == 1, mouseX, mouseY);
@@ -320,10 +350,9 @@ public final class ManualRunEntryScreen extends Screen {
 			drawTextField(g, undeadFieldX, undeadFieldY, undeadFieldW, undeadEssenceStr, activeInput == 5, mouseX, mouseY);
 		}
 
-		g.text(font, "Loot (scroll qty · click × to remove)", ox + MARGIN, lootRowY - LABEL_H, TEXT_SECONDARY);
+		g.text(font, "Loot (scroll qty · click × to remove)", ox + MARGIN, lootRowY - LABEL_H, dev.vy.drt.config.DrtTheme.color("text.sectionTitle", TEXT_SECONDARY));
 		for (int i = 0; i < lootSlots.size(); i++) {
-			int sx = ox + MARGIN + i * (lootSlotW + LOOT_GAP);
-			drawLootSlot(g, sx, lootRowY, lootSlots.get(i), i == selectedSlot, mouseX, mouseY);
+			drawLootSlot(g, lootSlotX(i), lootSlotY(i), lootSlots.get(i), i == selectedSlot, mouseX, mouseY);
 		}
 
 		if (openDropdown == OpenDropdown.FLOOR) {
@@ -332,29 +361,31 @@ public final class ManualRunEntryScreen extends Screen {
 			drawChestDropdown(g, mouseX, mouseY);
 		}
 
-		drawButton(g, ox + WIN_W - MARGIN - 70, btnY, 70, BTN_H, "Save", mouseX, mouseY);
-		drawButton(g, ox + WIN_W - MARGIN - 152, btnY, 70, BTN_H, "Cancel", mouseX, mouseY);
+		RoundedUiRenderer.line(ox + MARGIN, btnY - 5, ox + winW - MARGIN, btnY - 5, 1.0F, dev.vy.drt.config.DrtTheme.color("separator", 0xFF292943));
+		drawButton(g, saveButtonX, btnY, 70, BTN_H, "Save", mouseX, mouseY);
+		drawButton(g, cancelButtonX, btnY, 70, BTN_H, "Cancel", mouseX, mouseY);
 
 		if (selectedSlot != -1) {
 			drawSearchOverlay(g, mouseX, mouseY);
 		}
+		RoundedUiRenderer.endFrame();
 	}
 
 	private void drawFieldLabel(GuiGraphicsExtractor g, String label, int x, int y) {
-		g.text(font, label, x, y, TEXT_MUTED);
+		g.text(font, label, x, y, dev.vy.drt.config.DrtTheme.color("text.muted", TEXT_MUTED));
 	}
 
 	private void drawDropdownField(GuiGraphicsExtractor g, int x, int y, int w, String value, int valueColor, ItemStack icon,
 		int mx, int my, boolean open) {
 		boolean hov = contains(x, y, w, FIELD_H, mx, my);
-		g.fill(x, y, x + w, y + FIELD_H, open ? 0xFF202A52 : hov ? 0xFF17172A : FIELD_BG);
-		border(g, x, y, w, FIELD_H, open ? 0xFF6A6AB0 : hov ? FIELD_BORDER_HOVER : FIELD_BORDER);
+		roundedPanel(g, x, y, w, FIELD_H, 4, open ? dev.vy.drt.config.DrtTheme.color("control.active", 0xFF202A52) : hov ? dev.vy.drt.config.DrtTheme.color("control.hover", 0xFF17172A) : dev.vy.drt.config.DrtTheme.color("input.background", FIELD_BG),
+			open ? dev.vy.drt.config.DrtTheme.color("control.borderActive", 0xFF6A6AB0) : hov ? dev.vy.drt.config.DrtTheme.color("control.borderHover", FIELD_BORDER_HOVER) : dev.vy.drt.config.DrtTheme.color("control.border", FIELD_BORDER));
 		int textX = x + 6;
 		if (icon != null && !icon.isEmpty()) {
 			g.item(icon, x + 4, y + 1);
 			textX = x + 22;
 		}
-		g.text(font, font.plainSubstrByWidth(value, w - (textX - x) - 8), textX, y + 5, valueColor);
+		g.text(font, font.plainSubstrByWidth(value, w - (textX - x) - 8), textX, DrtUiText.centeredTextY(font, y, FIELD_H), valueColor);
 	}
 
 	private void drawChestDropdownField(GuiGraphicsExtractor g, int x, int y, int w, int mx, int my) {
@@ -366,18 +397,18 @@ public final class ManualRunEntryScreen extends Screen {
 
 	private void drawTextField(GuiGraphicsExtractor g, int x, int y, int w, String value, boolean active, int mx, int my) {
 		boolean hov = contains(x, y, w, FIELD_H, mx, my);
-		g.fill(x, y, x + w, y + FIELD_H, active ? 0xFF101830 : hov ? 0xFF17172A : FIELD_BG);
-		border(g, x, y, w, FIELD_H, active ? 0xFF6A6AB0 : hov ? FIELD_BORDER_HOVER : FIELD_BORDER);
+		roundedPanel(g, x, y, w, FIELD_H, 4, active ? dev.vy.drt.config.DrtTheme.color("input.focus", 0xFF101830) : hov ? dev.vy.drt.config.DrtTheme.color("input.hover", 0xFF17172A) : dev.vy.drt.config.DrtTheme.color("input.background", FIELD_BG),
+			active ? dev.vy.drt.config.DrtTheme.color("control.borderActive", 0xFF6A6AB0) : hov ? dev.vy.drt.config.DrtTheme.color("control.borderHover", FIELD_BORDER_HOVER) : dev.vy.drt.config.DrtTheme.color("control.border", FIELD_BORDER));
 		String disp = value + (active && (System.currentTimeMillis() / 500 % 2 == 0) ? "_" : "");
-		g.text(font, font.plainSubstrByWidth(disp, w - 8), x + 4, y + 5, TEXT_PRIMARY);
+		g.text(font, font.plainSubstrByWidth(disp, w - 8), x + 4, DrtUiText.centeredTextY(font, y, FIELD_H), dev.vy.drt.config.DrtTheme.color("input.text", TEXT_PRIMARY));
 	}
 
 	private void drawLootSlot(GuiGraphicsExtractor g, int x, int y, ManualLootSlot slot, boolean selected, int mx, int my) {
 		boolean hov = contains(x, y, lootSlotW, FIELD_H, mx, my);
-		g.fill(x, y, x + lootSlotW, y + FIELD_H, selected ? 0x771F315D : hov ? 0x441A1A31 : FIELD_BG);
-		border(g, x, y, lootSlotW, FIELD_H, selected ? 0xFF6A6AB0 : hov ? FIELD_BORDER_HOVER : FIELD_BORDER);
+		roundedPanel(g, x, y, lootSlotW, FIELD_H, 4, selected ? dev.vy.drt.config.DrtTheme.color("row.selected", 0x771F315D) : hov ? dev.vy.drt.config.DrtTheme.color("row.hover", 0x441A1A31) : dev.vy.drt.config.DrtTheme.color("panel.alternate", FIELD_BG),
+			selected ? dev.vy.drt.config.DrtTheme.color("control.borderActive", 0xFF6A6AB0) : hov ? dev.vy.drt.config.DrtTheme.color("control.borderHover", FIELD_BORDER_HOVER) : dev.vy.drt.config.DrtTheme.color("control.border", FIELD_BORDER));
 		if (slot.itemId.isEmpty()) {
-			g.text(font, "(Add)", x + 6, y + 5, TEXT_MUTED);
+			g.text(font, "(Add)", x + 6, y + 5, dev.vy.drt.config.DrtTheme.color("text.muted", TEXT_MUTED));
 			return;
 		}
 		ItemStack icon = DungeonLootScreen.lootItemIcon(slot.itemId);
@@ -391,7 +422,7 @@ public final class ManualRunEntryScreen extends Screen {
 		String qty = "x" + Math.max(1, slot.quantity);
 		int qtyW = font.width(qty);
 		int qtyX = removeX - qtyW - 4;
-		g.text(font, qty, qtyX, y + 5, TEXT_SECONDARY);
+		g.text(font, qty, qtyX, y + 5, dev.vy.drt.config.DrtTheme.color("text.secondary", TEXT_SECONDARY));
 		String label = slot.displayName.isEmpty() ? formatItemId(slot.itemId) : slot.displayName;
 		int maxLabelW = Math.max(0, qtyX - (x + 20) - 2);
 		if (isUltimateItem(slot.itemId)) {
@@ -404,21 +435,25 @@ public final class ManualRunEntryScreen extends Screen {
 	}
 
 	private void drawFloorDropdown(GuiGraphicsExtractor g, int mx, int my) {
-		int rowH = 16;
-		int h = FLOOR_OPTIONS.length * rowH + 4;
-		int x = floorFieldX;
+		int rowH = 18;
+		int columns = Math.min(5, FLOOR_OPTIONS.length);
+		int rows = (FLOOR_OPTIONS.length + columns - 1) / columns;
+		int h = rows * rowH + 4;
+		int x = ox + MARGIN;
 		int y = floorFieldY + FIELD_H + 2;
-		g.fill(x, y, x + floorFieldW, y + h, 0xFF111120);
-		border(g, x, y, floorFieldW, h, 0xFF6A6AB0);
+		int popupW = contentW;
+		int cellW = popupW / columns;
+		roundedPanel(g, x, y, popupW, h, 4, dev.vy.drt.config.DrtTheme.color("popup.background", 0xFF111120), dev.vy.drt.config.DrtTheme.color("popup.border", 0xFF6A6AB0));
 		for (int i = 0; i < FLOOR_OPTIONS.length; i++) {
 			DungeonFloor option = FLOOR_OPTIONS[i];
-			int ry = y + 2 + i * rowH;
-			boolean hov = contains(x + 1, ry, floorFieldW - 2, rowH, mx, my);
+			int rx = x + (i % columns) * cellW;
+			int ry = y + 2 + (i / columns) * rowH;
+			boolean hov = contains(rx + 1, ry, cellW - 2, rowH, mx, my);
 			if (hov || option == floor) {
-				g.fill(x + 1, ry, x + floorFieldW - 1, ry + rowH, option == floor ? 0x771F315D : 0x441A1A31);
+				RoundedUiRenderer.fill(g, rx + 1, ry, cellW - 2, rowH, 3, option == floor ? dev.vy.drt.config.DrtTheme.color("row.selected", 0x771F315D) : dev.vy.drt.config.DrtTheme.color("row.hover", 0x441A1A31));
 			}
-			int color = option.isKuudra() ? 0xFFAA0000 : TEXT_PRIMARY;
-			g.text(font, option.name(), x + 6, ry + 4, color);
+			int color = option.isKuudra() ? 0xFFAA0000 : dev.vy.drt.config.DrtTheme.color("text.primary", TEXT_PRIMARY);
+			g.text(font, option.name(), rx + (cellW - font.width(option.name())) / 2, DrtUiText.centeredTextY(font, ry, rowH), color);
 		}
 	}
 
@@ -428,14 +463,13 @@ public final class ManualRunEntryScreen extends Screen {
 		int h = options.length * rowH + 4;
 		int x = chestFieldX;
 		int y = chestFieldY + FIELD_H + 2;
-		g.fill(x, y, x + chestFieldW, y + h, 0xFF111120);
-		border(g, x, y, chestFieldW, h, 0xFF6A6AB0);
+		roundedPanel(g, x, y, chestFieldW, h, 4, dev.vy.drt.config.DrtTheme.color("popup.background", 0xFF111120), dev.vy.drt.config.DrtTheme.color("popup.border", 0xFF6A6AB0));
 		for (int i = 0; i < options.length; i++) {
 			String option = options[i];
 			int ry = y + 2 + i * rowH;
 			boolean hov = contains(x + 1, ry, chestFieldW - 2, rowH, mx, my);
 			if (hov || option.equals(chestType)) {
-				g.fill(x + 1, ry, x + chestFieldW - 1, ry + rowH, option.equals(chestType) ? 0x771F315D : 0x441A1A31);
+				g.fill(x + 1, ry, x + chestFieldW - 1, ry + rowH, option.equals(chestType) ? dev.vy.drt.config.DrtTheme.color("row.selected", 0x771F315D) : dev.vy.drt.config.DrtTheme.color("row.hover", 0x441A1A31));
 			}
 			String title = option + " Chest";
 			ItemStack icon = DungeonLootScreen.lootChestIcon(title);
@@ -451,12 +485,11 @@ public final class ManualRunEntryScreen extends Screen {
 		int sy = searchPopupY;
 		int sw = searchPopupW;
 		int sh = searchPopupH;
-		g.fill(sx, sy, sx + sw, sy + sh, 0xFF111120);
-		border(g, sx, sy, sw, sh, 0xFF6A6AB0);
+		roundedPanel(g, sx, sy, sw, sh, 5, dev.vy.drt.config.DrtTheme.color("popup.background", 0xFF111120), dev.vy.drt.config.DrtTheme.color("popup.border", 0xFF6A6AB0));
 
-		g.text(font, "Search", sx + 8, sy + 8, TEXT_MUTED);
+		g.text(font, "Search", sx + 8, sy + 8, dev.vy.drt.config.DrtTheme.color("text.muted", TEXT_MUTED));
 		drawTextField(g, sx + 52, sy + 4, sw - 160, itemSearchQuery, activeInput == 3, mx, my);
-		g.text(font, "Qty", sx + sw - 102, sy + 8, TEXT_MUTED);
+		g.text(font, "Qty", sx + sw - 102, sy + 8, dev.vy.drt.config.DrtTheme.color("text.muted", TEXT_MUTED));
 		drawTextField(g, sx + sw - 82, sy + 4, 28, slotQtyStr, activeInput == 6, mx, my);
 		boolean canRemove = selectedSlot >= 0 && selectedSlot < lootSlots.size() && !lootSlots.get(selectedSlot).itemId.isEmpty();
 		if (canRemove) {
@@ -473,28 +506,24 @@ public final class ManualRunEntryScreen extends Screen {
 			PriceCache.SearchResult option = searchResults.get(idx);
 			int ry = listY + i * SEARCH_ROW_H;
 			boolean hov = contains(sx + 4, ry, sw - 8, SEARCH_ROW_H - 1, mx, my);
-			if (hov) g.fill(sx + 4, ry, sx + sw - 4, ry + SEARCH_ROW_H - 1, 0x441A1A31);
+			if (hov) g.fill(sx + 4, ry, sx + sw - 4, ry + SEARCH_ROW_H - 1, dev.vy.drt.config.DrtTheme.color("row.hover", 0x441A1A31));
 			ItemStack icon = DungeonLootScreen.lootItemIcon(option.itemId());
 			if (!icon.isEmpty()) {
 				g.item(icon, sx + 8, ry - 1);
 			}
 			int color = DungeonLootScreen.lootItemColor(option.itemId());
-			g.text(font, font.plainSubstrByWidth(option.displayName(), sw - 40), sx + 26, ry + 2, hov ? TEXT_PRIMARY : color);
+			g.text(font, font.plainSubstrByWidth(option.displayName(), sw - 40), sx + 26, ry + 2, hov ? dev.vy.drt.config.DrtTheme.color("text.primary", TEXT_PRIMARY) : color);
 		}
 	}
 
 	private void drawButton(GuiGraphicsExtractor g, int x, int y, int w, int h, String label, int mx, int my) {
 		boolean hov = contains(x, y, w, h, mx, my);
-		g.fill(x, y, x + w, y + h, hov ? 0xFF232846 : 0xFF171A2E);
-		border(g, x, y, w, h, hov ? 0xFF5B5F92 : 0xFF3F426D);
-		g.centeredText(font, label, x + w / 2, y + (h - 8) / 2, TEXT_PRIMARY);
+		roundedPanel(g, x, y, w, h, 4, hov ? dev.vy.drt.config.DrtTheme.color("control.hover", 0xFF232846) : dev.vy.drt.config.DrtTheme.color("control.background", 0xFF171A2E), hov ? 0xFF5B5F92 : dev.vy.drt.config.DrtTheme.color("control.border", 0xFF3F426D));
+		g.centeredText(font, label, x + w / 2, DrtUiText.centeredTextY(font, y, h), hov ? dev.vy.drt.config.DrtTheme.color("control.textHover", TEXT_PRIMARY) : dev.vy.drt.config.DrtTheme.color("control.text", TEXT_PRIMARY));
 	}
 
-	private void border(GuiGraphicsExtractor g, int x, int y, int w, int h, int color) {
-		g.fill(x, y, x + w, y + 1, color);
-		g.fill(x, y + h - 1, x + w, y + h, color);
-		g.fill(x, y, x + 1, y + h, color);
-		g.fill(x + w - 1, y, x + w, y + h, color);
+	private void roundedPanel(GuiGraphicsExtractor g, int x, int y, int w, int h, int radius, int fill, int outline) {
+		RoundedUiRenderer.fillBordered(g, x, y, w, h, radius, outline, fill);
 	}
 
 	@Override
@@ -505,8 +534,9 @@ public final class ManualRunEntryScreen extends Screen {
 
 		if (button == GLFW.GLFW_MOUSE_BUTTON_RIGHT || button == 1) {
 			for (int i = 0; i < lootSlots.size(); i++) {
-				int sx = ox + MARGIN + i * (lootSlotW + LOOT_GAP);
-				if (contains(sx, lootRowY, lootSlotW, FIELD_H, mx, my)) {
+				int sx = lootSlotX(i);
+				int sy = lootSlotY(i);
+				if (contains(sx, sy, lootSlotW, FIELD_H, mx, my)) {
 					clearLootSlot(i);
 					return true;
 				}
@@ -541,22 +571,15 @@ public final class ManualRunEntryScreen extends Screen {
 				if (idx >= searchResults.size()) break;
 				int ry = listY + i * SEARCH_ROW_H;
 				if (contains(sx + 4, ry, sw - 8, SEARCH_ROW_H - 1, mx, my)) {
-					PriceCache.SearchResult res = searchResults.get(idx);
-					ManualLootSlot slot = lootSlots.get(selectedSlot);
-					slot.itemId = res.itemId();
-					slot.displayName = res.displayName();
-					slot.quantity = Math.max(1, (int) parseLong(slotQtyStr));
-					maybeGrowSlots();
-					selectedSlot = -1;
-					activeInput = 0;
-					return true;
+					return applySearchResult(idx);
 				}
 			}
 			if (!contains(sx, sy, sw, sh, mx, my)) {
 				selectedSlot = -1;
 				activeInput = 0;
+			} else {
+				return true;
 			}
-			return true;
 		}
 
 		if (openDropdown == OpenDropdown.FLOOR) {
@@ -574,11 +597,11 @@ public final class ManualRunEntryScreen extends Screen {
 			return true;
 		}
 
-		if (contains(ox + WIN_W - MARGIN - 70, btnY, 70, BTN_H, mx, my)) {
+		if (contains(saveButtonX, btnY, 70, BTN_H, mx, my)) {
 			save();
 			return true;
 		}
-		if (contains(ox + WIN_W - MARGIN - 152, btnY, 70, BTN_H, mx, my)) {
+		if (contains(cancelButtonX, btnY, 70, BTN_H, mx, my)) {
 			onClose();
 			return true;
 		}
@@ -617,13 +640,14 @@ public final class ManualRunEntryScreen extends Screen {
 		}
 
 		for (int i = 0; i < lootSlots.size(); i++) {
-			int sx = ox + MARGIN + i * (lootSlotW + LOOT_GAP);
-			if (!contains(sx, lootRowY, lootSlotW, FIELD_H, mx, my)) continue;
+			int sx = lootSlotX(i);
+			int sy = lootSlotY(i);
+			if (!contains(sx, sy, lootSlotW, FIELD_H, mx, my)) continue;
 			ManualLootSlot slot = lootSlots.get(i);
 			if (!slot.itemId.isEmpty()) {
 				int removeW = font.width("×") + 6;
 				int removeX = sx + lootSlotW - removeW - 2;
-				if (contains(removeX, lootRowY, removeW, FIELD_H, mx, my)) {
+				if (contains(removeX, sy, removeW, FIELD_H, mx, my)) {
 					clearLootSlot(i);
 					return true;
 				}
@@ -635,6 +659,7 @@ public final class ManualRunEntryScreen extends Screen {
 			searchScroll = 0;
 			refreshSearchResults();
 			openDropdown = OpenDropdown.NONE;
+			refreshWindowLayout();
 			return true;
 		}
 
@@ -646,20 +671,42 @@ public final class ManualRunEntryScreen extends Screen {
 		compactLootSlots();
 	}
 
+	private boolean applySearchResult(int resultIndex) {
+		if (selectedSlot < 0 || selectedSlot >= lootSlots.size()) return false;
+		if (resultIndex < 0 || resultIndex >= searchResults.size()) return false;
+		PriceCache.SearchResult result = searchResults.get(resultIndex);
+		ManualLootSlot slot = lootSlots.get(selectedSlot);
+		if (!applySelection(slot, result, slotQtyStr)) return false;
+		selectedSlot = -1;
+		activeInput = 0;
+		itemSearchQuery = "";
+		maybeGrowSlots();
+		return true;
+	}
+
+	static boolean applySelection(ManualLootSlot slot, PriceCache.SearchResult result, String quantityText) {
+		if (slot == null || result == null || result.itemId() == null || result.itemId().isBlank()) return false;
+		slot.itemId = result.itemId();
+		slot.displayName = result.displayName() == null ? "" : result.displayName();
+		slot.quantity = Math.max(1, (int) parseLong(quantityText));
+		return true;
+	}
+
 	private boolean handleFloorDropdownClick(int mx, int my) {
+		int columns = Math.min(5, FLOOR_OPTIONS.length);
+		int cellW = contentW / columns;
+		int x = ox + MARGIN;
 		int y = floorFieldY + FIELD_H + 2;
 		for (int i = 0; i < FLOOR_OPTIONS.length; i++) {
-			int ry = y + 2 + i * 16;
-			if (contains(floorFieldX + 1, ry, floorFieldW - 2, 16, mx, my)) {
+			int rx = x + (i % columns) * cellW;
+			int ry = y + 2 + (i / columns) * 18;
+			if (contains(rx + 1, ry, cellW - 2, 18, mx, my)) {
 				DungeonFloor next = FLOOR_OPTIONS[i];
 				if (next.isKuudra() != floor.isKuudra()) {
 					chestType = next.isKuudra() ? "Free" : "Bedrock";
 				}
 				floor = next;
-				winH = computeWinH();
-				ox = (width - WIN_W) / 2;
-				oy = (height - winH) / 2;
-				layoutFields();
+				refreshWindowLayout();
 				openDropdown = OpenDropdown.NONE;
 				if (selectedSlot != -1) {
 					searchScroll = 0;
@@ -785,8 +832,12 @@ public final class ManualRunEntryScreen extends Screen {
 			if (selectedSlot != -1) {
 				selectedSlot = -1;
 				activeInput = 0;
+				refreshWindowLayout();
 				return true;
 			}
+		}
+		if (event.key() == GLFW.GLFW_KEY_ENTER && selectedSlot != -1 && !searchResults.isEmpty()) {
+			return applySearchResult(searchScroll);
 		}
 		return super.keyPressed(event);
 	}
@@ -794,8 +845,9 @@ public final class ManualRunEntryScreen extends Screen {
 	@Override
 	public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
 		for (int i = 0; i < lootSlots.size(); i++) {
-			int sx = ox + MARGIN + i * (lootSlotW + LOOT_GAP);
-			if (contains(sx, lootRowY, lootSlotW, FIELD_H, (int) mouseX, (int) mouseY)) {
+			int sx = lootSlotX(i);
+			int sy = lootSlotY(i);
+			if (contains(sx, sy, lootSlotW, FIELD_H, (int) mouseX, (int) mouseY)) {
 				ManualLootSlot slot = lootSlots.get(i);
 				if (slot.itemId.isEmpty()) return true;
 				int delta = scrollY > 0 ? 1 : scrollY < 0 ? -1 : 0;
@@ -837,12 +889,13 @@ public final class ManualRunEntryScreen extends Screen {
 			updated.chestTitle = chestDisplayTitle();
 			updated.chestCostCoins = cost;
 			updated.baseChestCostCoins = cost;
+			updated.chestCostKnown = true;
 			updated.chestValueCoins = value;
 			updated.chestProfitCoins = profit;
 			updated.lootEntries = new ArrayList<>();
 			for (DungeonLootEntry entry : entries) updated.lootEntries.add(entry.copy());
 			updated.normalizeCostBreakdown();
-			if (DrtConfigManager.updateRunRecord(editingOriginal, updated)) {
+			if (DrtConfigManager.editRunRecordManually(editingOriginal, updated)) {
 				DrtClient.getTracker().notifyRunUpdated(editingOriginal, updated);
 			}
 			onClose();
@@ -860,6 +913,7 @@ public final class ManualRunEntryScreen extends Screen {
 			profit,
 			entries
 		);
+		record.chestCostKnown = true;
 
 		DrtClient.getTracker().recordManualRun(record, parseRunTimeMillis(timeStr));
 		onClose();
@@ -924,7 +978,7 @@ public final class ManualRunEntryScreen extends Screen {
 	@Override
 	public void onClose() {
 		if (minecraft != null) {
-			minecraft.setScreen(parent);
+			minecraft.gui.setScreen(parent);
 		}
 	}
 
@@ -932,7 +986,7 @@ public final class ManualRunEntryScreen extends Screen {
 		NONE, FLOOR, CHEST
 	}
 
-	private static class ManualLootSlot {
+	static final class ManualLootSlot {
 		String itemId = "";
 		String displayName = "";
 		int quantity = 1;

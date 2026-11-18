@@ -41,6 +41,13 @@ public final class RunRecordDeduplicator {
 
 	private static DuplicateKind duplicateKind(DungeonRunRecord left, DungeonRunRecord right) {
 		if (left == null || right == null) return DuplicateKind.NONE;
+		// Every chest opened in one Croesus visit shares the visit's timestamp, and low-variety
+		// chests often roll identical loot, so separate opens are told apart by the run they belong to.
+		if (linkedToDifferentRuns(left, right)
+			&& !sameStableId(left.commitFingerprint, right.commitFingerprint)
+			&& !sameStableId(left.chestSessionId, right.chestSessionId)) {
+			return DuplicateKind.NONE;
+		}
 		if (!sameStableId(left.commitFingerprint, right.commitFingerprint)
 			&& !sameStableId(left.chestSessionId, right.chestSessionId)
 			&& !sameRunChestLootDuplicate(left, right)
@@ -67,6 +74,12 @@ public final class RunRecordDeduplicator {
 		}
 		if (sameStableId(left.runSessionId, right.runSessionId)) return true;
 		return left.runNumber > 0 && left.runNumber == right.runNumber;
+	}
+
+	private static boolean linkedToDifferentRuns(DungeonRunRecord left, DungeonRunRecord right) {
+		String leftRun = left.linkedRunId == null ? "" : left.linkedRunId;
+		String rightRun = right.linkedRunId == null ? "" : right.linkedRunId;
+		return !leftRun.isBlank() && !rightRun.isBlank() && !leftRun.equals(rightRun);
 	}
 
 	private static boolean hasStableChestSessionId(DungeonRunRecord record) {

@@ -1,5 +1,6 @@
 package dev.vy.drt.price;
 
+import dev.vy.drt.config.ChestCostBreakdown;
 import dev.vy.drt.config.DrtConfig;
 import dev.vy.drt.config.DungeonFloor;
 import dev.vy.drt.config.DungeonLootEntry;
@@ -21,18 +22,40 @@ public final class DungeonProfitPricing {
 	}
 
 	public static long calculateLootValue(List<DungeonLootEntry> entries, DrtConfig config) {
-		if (entries == null || entries.isEmpty()) return 0L;
-		long total = 0L;
+		return summarizeLootValue(entries, config).knownValueCoins();
+	}
+
+	/**
+	 * Calculates the value that can be supported by current price evidence without
+	 * silently treating unavailable entries as zero-valued loot.
+	 */
+	public static ValueSummary summarizeLootValue(List<DungeonLootEntry> entries, DrtConfig config) {
+		if (entries == null || entries.isEmpty()) return new ValueSummary(0L, 0, 0);
+		double exactKnownValue = 0.0D;
+		int pricedEntries = 0;
+		int unpricedEntries = 0;
 		for (DungeonLootEntry entry : entries) {
 			if (entry == null) continue;
-			total += resolveTotalPrice(entry, config);
+			if (hasKnownUnitPrice(entry, config)) {
+				exactKnownValue += resolveTotalPriceExact(entry, config);
+				pricedEntries++;
+			} else {
+				unpricedEntries++;
+			}
 		}
-		return total;
+		return new ValueSummary(Math.round(exactKnownValue), pricedEntries, unpricedEntries, exactKnownValue);
 	}
 
 	public static long resolveTotalPrice(DungeonLootEntry entry, DrtConfig config) {
 		if (entry == null) return 0L;
-		long unitPrice = resolveUnitPrice(entry, config);
+		return Math.round(resolveTotalPriceExact(entry, config));
+	}
+
+	/** Exact market value retained for fractional provider quotes. Unknown values return NaN. */
+	public static double resolveTotalPriceExact(DungeonLootEntry entry, DrtConfig config) {
+		if (entry == null) return Double.NaN;
+		double unitPrice = resolveUnitPriceExact(entry, config);
+		if (!Double.isFinite(unitPrice)) return Double.NaN;
 		int quantity = Math.max(1, entry.quantity);
 		if (isCrimsonEssenceEntry(entry)) {
 			quantity = adjustedCrimsonEssenceAmount(quantity, config);
@@ -41,12 +64,18 @@ public final class DungeonProfitPricing {
 	}
 
 	public static long resolveUnitPrice(DungeonLootEntry entry, DrtConfig config) {
-		if (entry == null) return 0L;
+		double exact = resolveUnitPriceExact(entry, config);
+		return Double.isFinite(exact) ? Math.round(exact) : 0L;
+	}
+
+	/** Exact unit quote. A valid zero is returned as 0.0; an unresolved quote returns NaN. */
+	public static double resolveUnitPriceExact(DungeonLootEntry entry, DrtConfig config) {
+		if (entry == null) return Double.NaN;
 
 		String rawUpper = entry.rawName == null ? "" : entry.rawName.trim().toUpperCase(Locale.ROOT);
 		String itemIdUpper = entry.itemId == null ? "" : entry.itemId.trim().toUpperCase(Locale.ROOT);
 		if (config != null && !config.essenceCountsTowardProfit && isEssenceItem(rawUpper, itemIdUpper)) {
-			return 0L;
+			return 0.0D;
 		}
 		if (rawUpper.contains("WITHER ESSENCE") || itemIdUpper.equals("ESSENCE_WITHER")) {
 			return Math.max(0, config.witherEssenceValuePer);
@@ -57,8 +86,8 @@ public final class DungeonProfitPricing {
 		// Crimson has no config default (bazaar-priced). Resolve by name/id so blank or
 		// alternate ids (CRIMSON_ESSENCE) still get ESSENCE_CRIMSON bazaar value.
 		if (isCrimsonEssenceEntry(entry)) {
-			long crimsonPrice = resolveSellValue(ITEM_CRIMSON_ESSENCE, config);
-			if (crimsonPrice > 0L) return crimsonPrice;
+			double crimsonPrice = resolveSellValueExact(ITEM_CRIMSON_ESSENCE, config);
+			if (Double.isFinite(crimsonPrice)) return crimsonPrice;
 		}
 
 		if (itemIdUpper.isBlank()) {
@@ -67,26 +96,53 @@ public final class DungeonProfitPricing {
 		if (!itemIdUpper.isBlank()) {
 			String resolvedItemId = normalizePriceItemId(itemIdUpper);
 			Long forcedSalvageValue = resolveForcedKuudraSalvageValue(resolvedItemId, rawUpper, config);
-			if (forcedSalvageValue != null) return forcedSalvageValue;
+			if (forcedSalvageValue != null) return forcedSalvageValue.doubleValue();
 
 			PriceCache.AuctionPriceData auctionData = PriceCache.getAuctionHouse(resolvedItemId);
 			if (auctionData != null) {
-				Double p3d = auctionData.p3d();
-				if (p3d != null && p3d > 0.0D) return roundPositive(p3d);
-				Double lbin = auctionData.lbin();
-				if (lbin != null && lbin > 0.0D) return roundPositive(lbin);
-				Double p7d = auctionData.p7d();
-				if (p7d != null && p7d > 0.0D) return roundPositive(p7d);
+				Double selected = firstPresent(auctionData.p3d(), auctionData.lbin(), auctionData.p7d());
+				if (selected != null) return selected;
 			}
 			PriceCache.BazaarPriceData bazaarData = PriceCache.getBazaar(resolvedItemId);
 			if (bazaarData != null) {
 				Double selected = selectedBazaarPrice(bazaarData, config);
-				if (selected != null && selected > 0.0D) return roundPositive(selected);
+				if (selected != null) return selected;
+				return Double.NaN;
 			}
 			PriceCache.PriceLookup lookup = PriceCache.get(resolvedItemId);
-			if (lookup != null) return roundPositive(lookup.price());
+			if (lookup != null) return lookup.price();
 		}
-		return 0L;
+		return Double.NaN;
+	}
+
+	/** Returns whether zero means a real configured exclusion/value rather than an unavailable market price. */
+	public static boolean hasKnownUnitPrice(DungeonLootEntry entry, DrtConfig config) {
+		if (entry == null) return false;
+		String rawUpper = entry.rawName == null ? "" : entry.rawName.trim().toUpperCase(Locale.ROOT);
+		String itemIdUpper = entry.itemId == null ? "" : entry.itemId.trim().toUpperCase(Locale.ROOT);
+		if (config != null && !config.essenceCountsTowardProfit && isEssenceItem(rawUpper, itemIdUpper)) return true;
+		if (rawUpper.contains("WITHER ESSENCE") || itemIdUpper.equals("ESSENCE_WITHER")) return config != null;
+		if (rawUpper.contains("UNDEAD ESSENCE") || itemIdUpper.equals("ESSENCE_UNDEAD")) return config != null;
+		if (isCrimsonEssenceEntry(entry) && Double.isFinite(resolveSellValueExact(ITEM_CRIMSON_ESSENCE, config))) return true;
+
+		if (itemIdUpper.isBlank()) itemIdUpper = inferPriceItemIdFromRawName(rawUpper);
+		if (itemIdUpper.isBlank()) return false;
+		String resolvedItemId = normalizePriceItemId(itemIdUpper);
+		if (resolveForcedKuudraSalvageValue(resolvedItemId, rawUpper, config) != null) return true;
+		PriceCache.AuctionPriceData auctionData = PriceCache.getAuctionHouse(resolvedItemId);
+		if (auctionData != null && (present(auctionData.p3d()) || present(auctionData.lbin()) || present(auctionData.p7d()))) return true;
+		PriceCache.BazaarPriceData bazaarData = PriceCache.getBazaar(resolvedItemId);
+		if (bazaarData != null) return selectedBazaarPrice(bazaarData, config) != null;
+		PriceCache.PriceLookup lookup = PriceCache.get(resolvedItemId);
+		return lookup != null && Double.isFinite(lookup.price()) && lookup.price() >= 0.0D;
+	}
+
+	public static boolean hasUnknownUnitPrice(List<DungeonLootEntry> entries, DrtConfig config) {
+		if (entries == null) return false;
+		for (DungeonLootEntry entry : entries) {
+			if (entry != null && !hasKnownUnitPrice(entry, config)) return true;
+		}
+		return false;
 	}
 
 	public static boolean isForcedSalvageValued(DungeonLootEntry entry, DrtConfig config) {
@@ -102,27 +158,79 @@ public final class DungeonProfitPricing {
 		};
 	}
 
-	public static long resolveKuudraKeyCost(DungeonFloor floor, DrtConfig config) {
-		KuudraKeyShopCost shopCost = kuudraKeyShopCost(floor, config);
-		if (shopCost != null) {
-			long total = Math.max(0L, shopCost.coins);
-			if (shopCost.materials != null) {
-				for (Map.Entry<String, Integer> material : shopCost.materials.entrySet()) {
-					total += resolveMaterialCost(material.getKey(), material.getValue() == null ? 0 : material.getValue(), config);
-				}
-			}
-			return total;
+	/**
+	 * A priced Kuudra key. {@code known} is false when a required material has no price yet.
+	 * Callers must not store that case as a real cost of zero.
+	 */
+	public record KuudraKeyCostQuote(boolean known, long coins) {
+		public static KuudraKeyCostQuote unknown() {
+			return new KuudraKeyCostQuote(false, 0L);
 		}
 
+		public static KuudraKeyCostQuote known(long coins) {
+			return new KuudraKeyCostQuote(true, Math.max(0L, coins));
+		}
+	}
+
+	public static long resolveKuudraKeyCost(DungeonFloor floor, DrtConfig config) {
+		KuudraKeyCostQuote quote = quoteKuudraKeyCost(floor, config);
+		return quote.known() ? quote.coins() : 0L;
+	}
+
+	public static KuudraKeyCostQuote quoteKuudraKeyCost(DungeonFloor floor, DrtConfig config) {
+		KuudraKeyShopCost shopCost = kuudraKeyShopCost(floor, config);
 		KuudraKeyRecipe recipe = kuudraKeyRecipe(floor);
-		if (recipe == null) return 0L;
-		String factionMaterial = normalizedKuudraFaction(config).equals("BARBARIAN")
+		if (shopCost != null && shopCost.coins > 0L) {
+			long total = shopCost.coins;
+			boolean shopListedMaterials = shopCost.materials != null && !shopCost.materials.isEmpty();
+			if (!shopListedMaterials) {
+				if (recipe == null) return KuudraKeyCostQuote.unknown();
+				Long factionCost = pricedMaterial(factionMaterialId(config), recipe.factionMaterialCount, config);
+				Long starCost = pricedMaterial(ITEM_CORRUPTED_NETHER_STAR, 2, config);
+				if (factionCost == null || starCost == null) return KuudraKeyCostQuote.unknown();
+				return KuudraKeyCostQuote.known(total + factionCost + starCost);
+			}
+			for (Map.Entry<String, Integer> material : shopCost.materials.entrySet()) {
+				Long part = pricedMaterial(material.getKey(), material.getValue() == null ? 0 : material.getValue(), config);
+				if (part == null) return KuudraKeyCostQuote.unknown();
+				total += part;
+			}
+			return KuudraKeyCostQuote.known(total);
+		}
+
+		if (recipe == null) return KuudraKeyCostQuote.unknown();
+		Long factionCost = pricedMaterial(factionMaterialId(config), recipe.factionMaterialCount, config);
+		Long starCost = pricedMaterial(ITEM_CORRUPTED_NETHER_STAR, 2, config);
+		if (factionCost == null || starCost == null) return KuudraKeyCostQuote.unknown();
+		long coinCost = applyKuudraKeyCoinDiscount(recipe.coinCost, reputationForKeyDiscount(config));
+		return KuudraKeyCostQuote.known(coinCost + factionCost + starCost);
+	}
+
+	/**
+	 * The paid Kuudra chest costs the key. There is no second coin fee to add on top.
+	 * An unpriced key stays unknown instead of being stored as a free open.
+	 */
+	public static void applyPaidKuudraKey(ChestCostBreakdown breakdown, DungeonFloor floor, DrtConfig config) {
+		if (breakdown == null) return;
+		breakdown.usedKuudraKey = true;
+		KuudraKeyCostQuote quote = quoteKuudraKeyCost(floor, config);
+		if (!quote.known()) return;
+		breakdown.kuudraKeyCostCoins = quote.coins();
+		breakdown.baseChestCostKnown = true;
+	}
+
+	private static String factionMaterialId(DrtConfig config) {
+		return normalizedKuudraFaction(config).equals("BARBARIAN")
 			? ITEM_ENCHANTED_RED_SAND
 			: ITEM_ENCHANTED_MYCELIUM;
-		long materialCost = resolveMaterialCost(factionMaterial, recipe.factionMaterialCount, config);
-		long starCost = resolveMaterialCost(ITEM_CORRUPTED_NETHER_STAR, 2, config);
-		long coinCost = applyKuudraKeyCoinDiscount(recipe.coinCost, reputationForKeyDiscount(config));
-		return Math.max(0L, coinCost) + materialCost + starCost;
+	}
+
+	/** Null when the unit price is unavailable, so a missing price is not added as zero. */
+	private static Long pricedMaterial(String itemId, int quantity, DrtConfig config) {
+		if (quantity <= 0 || itemId == null || itemId.isBlank()) return null;
+		long unitCost = resolveModifierCost(itemId, config);
+		if (unitCost <= 0L) return null;
+		return unitCost * (long) quantity;
 	}
 
 	public static KuudraKeyShopCost kuudraKeyShopCost(DungeonFloor floor, DrtConfig config) {
@@ -190,18 +298,19 @@ public final class DungeonProfitPricing {
 
 	private static Double selectedBazaarPrice(PriceCache.BazaarPriceData data, DrtConfig config) {
 		String mode = normalizedBazaarMode(config);
+		// Vyriv returns explicit zeros as valid sell quotes (0 coins). Missing fields stay null.
 		if (mode.equals("ORDER")) {
-			return firstPositive(data.sellOffer(), data.instantSell(), data.instantBuy(), data.buyOrder());
+			return firstPresent(data.sellOffer(), data.instantSell());
 		}
-		return firstPositive(data.instantSell(), data.sellOffer(), data.instantBuy(), data.buyOrder());
+		return firstPresent(data.instantSell(), data.sellOffer());
 	}
 
 	private static Double selectedBazaarCostPrice(PriceCache.BazaarPriceData data, DrtConfig config) {
 		String mode = normalizedBazaarMode(config);
 		if (mode.equals("ORDER")) {
-			return firstPositive(data.buyOrder(), data.instantBuy(), data.sellOffer(), data.instantSell());
+			return firstPresent(data.buyOrder(), data.instantBuy());
 		}
-		return firstPositive(data.instantBuy(), data.buyOrder(), data.sellOffer(), data.instantSell());
+		return firstPresent(data.instantBuy(), data.buyOrder());
 	}
 
 	private static String normalizedBazaarMode(DrtConfig config) {
@@ -255,6 +364,8 @@ public final class DungeonProfitPricing {
 		String compact = rawUpper.replaceAll("[^A-Z0-9]+", " ").trim().replaceAll("\\s+", " ");
 		return switch (compact) {
 			case "SHADOW ASSASSIN CLOAK" -> "SHADOW_ASSASSIN_CLOAK";
+			case "WITHER SPECTRE SHARD" -> "SHARD_WITHER_SPECTER";
+			case "NECROMANCER BROOCH", "NECROMANCER S BROOCH", "NECROMANCERS BROOCH" -> "NECROMANCER_BROOCH";
 			case "CRIMSON ESSENCE", "ESSENCE CRIMSON" -> ITEM_CRIMSON_ESSENCE;
 			case "WITHER ESSENCE", "ESSENCE WITHER" -> "ESSENCE_WITHER";
 			case "UNDEAD ESSENCE", "ESSENCE UNDEAD" -> "ESSENCE_UNDEAD";
@@ -263,12 +374,31 @@ public final class DungeonProfitPricing {
 			case "ICE ESSENCE", "ESSENCE ICE" -> "ESSENCE_ICE";
 			case "DIAMOND ESSENCE", "ESSENCE DIAMOND" -> "ESSENCE_DIAMOND";
 			case "GOLD ESSENCE", "ESSENCE GOLD" -> "ESSENCE_GOLD";
-			default -> "";
+			default -> compact.endsWith(" SHARD")
+				? "SHARD_" + compact.substring(0, compact.length() - " SHARD".length()).replace(' ', '_')
+				: "";
 		};
 	}
 
-	private static int adjustedCrimsonEssenceAmount(int baseAmount, DrtConfig config) {
+	/** Applies the player-specific bonuses that Hypixel adds after the chest's base essence line. */
+	public static int adjustedCrimsonEssenceAmount(int baseAmount, DrtConfig config) {
 		return applyEssenceBonus(baseAmount, crimsonEssenceBonusPercent(config, false));
+	}
+
+	/** Smallest chest line whose rounded, bonus-adjusted amount reaches the requested reward floor. */
+	public static int minimumCrimsonEssenceBaseAmount(int adjustedMinimum, DrtConfig config) {
+		if (adjustedMinimum <= 0) return 0;
+		int low = 1;
+		int high = adjustedMinimum;
+		while (low < high) {
+			int mid = low + (high - low) / 2;
+			if (adjustedCrimsonEssenceAmount(mid, config) >= adjustedMinimum) {
+				high = mid;
+			} else {
+				low = mid + 1;
+			}
+		}
+		return low;
 	}
 
 	private static double crimsonEssenceBonusPercent(DrtConfig config, boolean includeCoolForged) {
@@ -324,30 +454,28 @@ public final class DungeonProfitPricing {
 		int cappedLevel = Math.max(1, Math.min(100, level));
 		String normalized = rarity == null ? "LEGENDARY" : rarity.trim().toUpperCase(Locale.ROOT);
 		double maxPercent = switch (normalized) {
-			case "COMMON" -> 10.0D;
-			case "UNCOMMON", "RARE" -> 15.0D;
+			case "RARE" -> 15.0D;
 			case "EPIC", "LEGENDARY" -> 20.0D;
-			default -> 20.0D;
+			default -> 0.0D;
 		};
 		return maxPercent * cappedLevel / 100.0D;
 	}
 
-	private static long resolveMaterialCost(String itemId, int quantity, DrtConfig config) {
-		if (quantity <= 0 || itemId == null || itemId.isBlank()) return 0L;
-		long unitCost = resolveModifierCost(itemId, config);
-		return unitCost * (long) quantity;
+	private static long resolveSellValue(String itemId, DrtConfig config) {
+		double exact = resolveSellValueExact(itemId, config);
+		return Double.isFinite(exact) ? Math.round(exact) : 0L;
 	}
 
-	private static long resolveSellValue(String itemId, DrtConfig config) {
-		if (itemId == null || itemId.isBlank()) return 0L;
+	private static double resolveSellValueExact(String itemId, DrtConfig config) {
+		if (itemId == null || itemId.isBlank()) return Double.NaN;
 		PriceCache.BazaarPriceData bazaarData = PriceCache.getBazaar(itemId);
 		if (bazaarData != null) {
 			Double selected = selectedBazaarPrice(bazaarData, config);
-			if (selected != null && selected > 0.0D) return roundPositive(selected);
+			if (selected != null) return selected;
 		}
 		PriceCache.PriceLookup lookup = PriceCache.get(itemId);
-		if (lookup != null) return roundPositive(lookup.price());
-		return 0L;
+		if (lookup != null) return lookup.price();
+		return Double.NaN;
 	}
 
 	private static KuudraKeyRecipe kuudraKeyRecipe(DungeonFloor floor) {
@@ -402,15 +530,17 @@ public final class DungeonProfitPricing {
 			|| id.endsWith("_BOOTS");
 	}
 
-	private static Double firstPositive(Double... values) {
+	private static Double firstPresent(Double... values) {
 		for (Double value : values) {
-			if (value != null && value > 0.0D) return value;
+			if (value != null && Double.isFinite(value) && value >= 0.0D) return value;
 		}
 		return null;
 	}
 
 	private static String normalizePriceItemId(String itemId) {
 		return switch (itemId) {
+			case "SHARD_WITHER_SPECTRE" -> "SHARD_WITHER_SPECTER";
+			case "NECROMANCERS_BROOCH", "NECROMANCER_S_BROOCH" -> "NECROMANCER_BROOCH";
 			case "NECRONS_HANDLE" -> "NECRON_HANDLE";
 			case "SCARFS_STUDIES" -> "SCARF_STUDIES";
 			case "SPIRIT_STONE" -> "SPIRIT_DECOY";
@@ -452,7 +582,21 @@ public final class DungeonProfitPricing {
 		return price > 0.0D ? Math.max(1L, Math.round(price)) : 0L;
 	}
 
+	private static boolean present(Double value) {
+		return value != null && Double.isFinite(value) && value >= 0.0D;
+	}
+
 	private record KuudraKeyRecipe(long coinCost, int factionMaterialCount) {
+	}
+
+	public record ValueSummary(long knownValueCoins, int pricedEntries, int unpricedEntries, double exactKnownValueCoins) {
+		public ValueSummary(long knownValueCoins, int pricedEntries, int unpricedEntries) {
+			this(knownValueCoins, pricedEntries, unpricedEntries, knownValueCoins);
+		}
+
+		public boolean complete() {
+			return unpricedEntries == 0;
+		}
 	}
 
 	private enum KuudraSalvageCategory {

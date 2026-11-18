@@ -2,7 +2,9 @@
 
 # DungeonRunTracker [DRT]
 
-A Hypixel SkyBlock mod that tracks dungeon runs and loot.
+A Hypixel SkyBlock Fabric mod that tracks Catacombs and Kuudra runs, chest loot, and profit.
+
+**Current stable release:** `1.1.0` (`1.1.0+26.2` / `1.1.0+26.3`)
 
 ## Screenshots
 
@@ -10,43 +12,63 @@ A Hypixel SkyBlock mod that tracks dungeon runs and loot.
 
 ## Features
 
-- **Run tracker HUD** - displays run count, current floor, and cumulative profit directly on your screen
-- **Loot logging** - automatically records every dungeon chest opening, including cost, items, and profit
-- **Loot history screen** - browse all past runs filtered by floor, sort by item value, and search loot entries
-- **Live pricing** - item prices fetched from the auction house in real time, with fallback to BIN data
-- **Skull textures** - item icons resolved from the NEU-repo for accurate in-game appearance
-- **Moveable and resizable HUD** - use `/drt move` to drag the tracker, resize it with the scroll wheel, or use `+`, `-`, and `0`
-- **HUD visibility toggle** - use `/drt toggle` to hide or show the tracker UI while loot tracking keeps running
-- **Clickable HUD mode selector** - click `DRT` on the HUD to cycle visibility modes:
-  - `Default` - show in Dungeon Hub and during runs
-  - `Global` - show everywhere
-  - `DHub` - show only in Dungeon Hub
-- **Cleaner reset control** - reset text only appears while your inventory is open
-- **Compatibility fixes** - supports Odin Extra Stats end-of-run messages
+- **Unified DRT window** with Overview, Runs, Loot, Overlay, and Settings tabs
+- **Run tracking** for Catacombs floors and Kuudra tiers, including timing and completions
+- **Loot logging** for reward chests, with cost, items, profit, and run association
+- **Croesus support** for run linking, profit overlay, and reward-chest browsing in the Dungeon Hub
+- **Fancy Menu** (optional) replaces reward-chest inventories with DRT's reward panel
+- **Live pricing** from the Vyriv price API, with Coflnet as fallback when needed
+- **HUD overlays** with presets, custom layouts, scale, visibility modes, and moveable positioning
+- **Themes** for the DRT window, with discovery of user-added theme files
+- **Statistics Sharing** uploads DRT-captured runs and chests to Vyriv services when enabled
+- **First-run setup** covers faction, profit options, Fancy Menu, Croesus overlay, and sharing preferences
+- **Bug reports** from chat links via `/drt debug` helpers
 
 ## Commands
 
-| Command | Description |
+| Command | Opens |
 |---|---|
-| `/drt move` | Open the position screen to drag and resize the HUD |
-| `/drt loot` | Open the loot history screen |
-| `/drt toggle` | Hide or show the tracker UI without disabling loot tracking |
+| `/drt` | Overview |
+| `/drt runs` | Runs |
+| `/drt loot` | Loot |
+| `/drt overlay` | Overlay settings |
+| `/drt config` / `/drt settings` | Settings |
 
-You can also click the HUD directly:
+When DRT reports a tracking issue in chat, its links use `/drt debug` commands to open or export the bug report.
 
-- Click `DRT` to cycle visibility modes.
-- Click `[floor]` to cycle the selected floor.
-- Click the profit line to open the loot history screen.
+HUD shortcuts still work while the overlay is visible: click `DRT` to cycle visibility modes, click the floor to cycle floors, and click profit to open Loot.
 
 ## Installation
 
-1. Install [Fabric Loader](https://fabricmc.net/use/installer/) for Minecraft 1.21.11 or 26.1.2
+1. Install [Fabric Loader](https://fabricmc.net/use/installer/) for Minecraft **26.2** or **26.3**
 2. Install [Fabric API](https://modrinth.com/mod/fabric-api)
-3. Drop the matching `DungeonRunTracker` jar into your `mods/` folder
+3. Drop the matching jar into your `mods/` folder:
+   - `DungeonRunTracker-1.1.0+26.2.jar`
+   - `DungeonRunTracker-1.1.0+26.3.jar`
+
+### Updating from beta
+
+Beta and stable builds share mod id `drt` and the same `config/drt/` data. Replace the old jar with the matching `1.1.0` jar. Do not keep both a `DRT_BETA-*` jar and a `DungeonRunTracker-*` jar in the same instance.
 
 ## Requirements
 
-- Minecraft 1.21.11 or 26.1.2
-- Fabric Loader 0.19.2+ for 1.21.11, or 0.19.3+ for 26.1.2
+- Minecraft 26.2 or 26.3
+- Fabric Loader 0.19.3+ (26.2) or 0.20.1+ (26.3)
 - Fabric API
-- Java 21+ for 1.21.11, or Java 25+ for 26.1.2
+- Java 25+
+
+## Privacy
+
+Statistics Sharing is on by default for new installs. It uploads DRT-captured run and chest records for the current account. Manual or edited records are not shared. You can turn sharing off in Settings / first-run setup. Privacy details: [vyriv.dev/privacy#drt](https://vyriv.dev/privacy#drt)
+
+## Release notes
+
+See:
+
+- [Public changelog](docs/release/CHANGELOG_1.1.0.md)
+- [Technical rewrite report](docs/release/REWRITE_TECHNICAL_REPORT.md)
+- [Discord announcement draft](docs/release/DISCORD_RELEASE_1.1.0.md)
+
+## Bug reports
+
+Report issues in Discord with the Minecraft version, DRT jar name, and the `/drt debug` export when DRT posts a tracking report link.

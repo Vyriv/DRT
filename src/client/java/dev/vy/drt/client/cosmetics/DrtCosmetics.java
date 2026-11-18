@@ -18,6 +18,13 @@ public final class DrtCosmetics {
 		return NameStyler.applyNameplateDisplayDecorations(current);
 	}
 
+	// Hypixel's tab grid uses placeholder profiles, so the owner's name only exists in the line text.
+	// Owner profiles are already styled by styleDisplayName and must not be decorated twice.
+	public static Component styleRenderedTabName(Component current, GameProfile profile) {
+		if (current == null || NameStyler.hasDisplayProfile(profile)) return current;
+		return NameStyler.applyNameplateDisplayDecorations(current);
+	}
+
 	public static Component styleMatchingNames(Component current) {
 		return NameStyler.applyNameplateDecorations(current);
 	}

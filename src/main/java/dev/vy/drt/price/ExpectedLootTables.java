@@ -5,8 +5,8 @@ import java.util.Locale;
 
 /**
  * Hardcoded post-run guaranteed loot expectations for soft detection guards.
- * Dungeon essence tables are wiki-confirmed for normal mode F1–F7.
- * Kuudra Free Chest Crimson and Kraken shard counts are June 2025 update-confirmed.
+ * Dungeon essence tables are wiki-confirmed for normal mode F1-F7.
+ * Kuudra Free Chest Crimson counts are June 2025 update-confirmed.
  * Kuudra Paid Chest Crimson/Teeth defaults are community estimates and intentionally
  * exposed as tunable constants (not permanent sacred values).
  */
@@ -23,12 +23,15 @@ public final class ExpectedLootTables {
 	 */
 	public static final int ESSENCE_FILLER_HEADROOM = 120;
 
-	/** Absolute soft ceiling for any single essence line. */
+	/** Absolute soft ceiling for any single Catacombs essence line. */
 	public static final int ESSENCE_ABSOLUTE_SOFT_CEILING = 1000;
 
-	// Paid Chest Crimson Essence defaults (community page; rework-warned — tunable).
+	/** Crimson ceiling: an Infernal Paid Chest alone holds 2000 before Kuudra pet and perk bonuses. */
+	public static final int CRIMSON_ESSENCE_SOFT_CEILING = 6000;
+
+	// Paid Chest Crimson Essence defaults (community page; rework-warned - tunable).
 	public static final int[] KUUDRA_PAID_CRIMSON_DEFAULT = {0, 80, 200, 400, 1000, 2000};
-	// Paid Chest Kuudra Teeth defaults (Infernal listed as 3–4; use 3 as baseline).
+	// Paid Chest Kuudra Teeth defaults (Infernal listed as 3-4; use 3 as baseline).
 	public static final int[] KUUDRA_PAID_TEETH_DEFAULT = {0, 1, 1, 2, 2, 3};
 	public static final int KUUDRA_PAID_TEETH_INFERNAL_MAX = 4;
 
@@ -36,7 +39,7 @@ public final class ExpectedLootTables {
 	// F5 Wood corrected to 10 Undead (not 15).
 	private static final int[][] UNDEAD_GUARANTEED = {
 		{0, 0, 0, 0, 0, 0, 0},
-		{0, 3, 5, 8, 12, 15, 0},      // F1 — no Bedrock
+		{0, 3, 5, 8, 12, 15, 0},      // F1 - no Bedrock
 		{0, 5, 8, 12, 15, 20, 0},     // F2
 		{0, 5, 10, 15, 20, 25, 0},    // F3
 		{0, 10, 15, 20, 25, 30, 0},   // F4
@@ -56,10 +59,12 @@ public final class ExpectedLootTables {
 		{0, 15, 18, 21, 28, 35, 50}   // F7
 	};
 
-	// Free Chest Crimson Essence — June 10 2025 update
+	// Free Chest Crimson Essence - June 10 2025 update
 	private static final int[] KUUDRA_FREE_CRIMSON = {0, 10, 25, 50, 100, 200};
-	// Guaranteed Kraken Shards on Paid Chest
-	private static final int[] KUUDRA_KRAKEN_SHARDS = {0, 1, 1, 2, 2, 3};
+	// Kraken Shards on Paid Chest: at least 1 on every tier, the count rolls up to this per-tier max.
+	// Infernal Paid Chests observed with 1 and 2.
+	private static final int KUUDRA_KRAKEN_SHARDS_MIN = 1;
+	private static final int[] KUUDRA_KRAKEN_SHARDS_MAX = {0, 1, 1, 2, 2, 3};
 
 	private ExpectedLootTables() {
 	}
@@ -149,7 +154,20 @@ public final class ExpectedLootTables {
 		if (floor == null || !floor.isKuudra()) return -1;
 		int t = floor.floorNumber();
 		if (t < 1 || t > 5) return -1;
-		return KUUDRA_KRAKEN_SHARDS[t];
+		return KUUDRA_KRAKEN_SHARDS_MIN;
+	}
+
+	public static int maxKrakenShards(DungeonFloor floor) {
+		if (floor == null || !floor.isKuudra()) return -1;
+		int t = floor.floorNumber();
+		if (t < 1 || t > 5) return -1;
+		return KUUDRA_KRAKEN_SHARDS_MAX[t];
+	}
+
+	/** Soft max for a Paid Chest Crimson line, leaving room for essence bonus perks. */
+	public static int paidCrimsonSoftMax(int expected) {
+		if (expected < 0) return CRIMSON_ESSENCE_SOFT_CEILING;
+		return Math.min(CRIMSON_ESSENCE_SOFT_CEILING, expected * 2 + ESSENCE_FILLER_HEADROOM);
 	}
 
 	/** Soft max for a known guaranteed essence line (guaranteed + filler headroom). */

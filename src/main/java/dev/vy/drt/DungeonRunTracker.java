@@ -3,6 +3,7 @@ package dev.vy.drt;
 import dev.vy.drt.config.DrtConfigManager;
 import dev.vy.drt.price.PriceCache;
 import net.fabricmc.api.ModInitializer;
+import net.fabricmc.loader.api.FabricLoader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -14,6 +15,12 @@ public final class DungeonRunTracker implements ModInitializer {
 	public void onInitialize() {
 		DrtConfigManager.load();
 		PriceCache.start();
-		LOGGER.info("[DRT] DungeonRunTracker loaded");
+		LOGGER.info("[DRT] DungeonRunTracker {} loaded", version());
+	}
+
+	public static String version() {
+		return FabricLoader.getInstance().getModContainer(MOD_ID)
+			.map(container -> container.getMetadata().getVersion().getFriendlyString())
+			.orElse("unknown");
 	}
 }

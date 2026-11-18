@@ -42,6 +42,7 @@ public final class PriceCache {
 	private static volatile Map<String, String> itemIdToSource = Map.of();
 	private static volatile Map<String, AuctionPriceData> itemIdToAuctionData = Map.of();
 	private static volatile Map<String, BazaarPriceData> itemIdToBazaarData = Map.of();
+	private static volatile long revision;
 	private static volatile List<SearchResult> searchIndex = List.of();
 	private static volatile int searchIndexSourceSize = -1;
 
@@ -62,6 +63,11 @@ public final class PriceCache {
 
 	public static boolean hasAuctionAndBazaarPrices() {
 		return !itemIdToAuctionData.isEmpty() && !itemIdToBazaarData.isEmpty();
+	}
+
+	/** Changes whenever a complete price snapshot is replaced. UI caches use this instead of polling. */
+	public static long revision() {
+		return revision;
 	}
 
 	public static boolean containsItemId(String itemId) {
@@ -179,6 +185,7 @@ public final class PriceCache {
 			itemIdToSource = Map.copyOf(nextSources);
 			itemIdToAuctionData = Map.copyOf(nextAuctionData);
 			itemIdToBazaarData = Map.copyOf(nextBazaarData);
+			revision++;
 			invalidateSearchIndex();
 			DungeonRunTracker.LOGGER.info("[DRT] Loaded {} Vyriv price entries", nextPrices.size());
 		}
@@ -219,18 +226,18 @@ public final class PriceCache {
 		for (Map.Entry<String, JsonElement> entry : section.entrySet()) {
 			if (!entry.getValue().isJsonObject()) continue;
 			JsonObject priceObject = entry.getValue().getAsJsonObject();
-			Double lbin = positiveNumber(priceObject, "lbin");
-			Double p3d = positiveNumber(priceObject, "p3d");
-			Double p7d = positiveNumber(priceObject, "p7d");
+			Double lbin = number(priceObject, "lbin");
+			Double p3d = number(priceObject, "p3d");
+			Double p7d = number(priceObject, "p7d");
 			Double price = firstNumber(lbin, p3d, p7d);
-			if (price == null || price <= 0.0D) continue;
+			if (price == null) continue;
 			prices.put(entry.getKey(), price);
 			sources.put(entry.getKey(), "auction_house");
 			auctionData.put(entry.getKey(), new AuctionPriceData(entry.getKey(), lbin, p3d, p7d));
 		}
 	}
 
-	private static void loadBazaar(
+	static void loadBazaar(
 		JsonObject section,
 		Map<String, Double> prices,
 		Map<String, String> sources,
@@ -240,17 +247,17 @@ public final class PriceCache {
 		for (Map.Entry<String, JsonElement> entry : section.entrySet()) {
 			if (!entry.getValue().isJsonObject()) continue;
 			JsonObject priceObject = entry.getValue().getAsJsonObject();
-			Double instantSell = positiveNumber(priceObject, "is");
-			Double sellOffer = positiveNumber(priceObject, "ts");
-			Double instantBuy = positiveNumber(priceObject, "ib");
-			Double buyOrder = positiveNumber(priceObject, "tb");
+			Double instantSell = number(priceObject, "is");
+			Double sellOffer = number(priceObject, "ts");
+			Double instantBuy = number(priceObject, "ib");
+			Double buyOrder = number(priceObject, "tb");
 			Double price = firstNumber(
 				instantSell,
 				sellOffer,
 				instantBuy,
 				buyOrder
 			);
-			if (price == null || price <= 0.0D) continue;
+			if (price == null) continue;
 			bazaarData.put(entry.getKey(), new BazaarPriceData(entry.getKey(), instantSell, sellOffer, instantBuy, buyOrder));
 			if (!prices.containsKey(entry.getKey())) {
 				prices.put(entry.getKey(), price);
@@ -259,7 +266,8 @@ public final class PriceCache {
 		}
 	}
 
-	private static Double positiveNumber(JsonObject object, String key) {
+	/** Reads a provider quote without treating zero or fractional coins as missing. */
+	private static Double number(JsonObject object, String key) {
 		JsonElement element = object.get(key);
 		if (element == null || element.isJsonNull() || !element.isJsonPrimitive()) return null;
 		try {
@@ -273,7 +281,7 @@ public final class PriceCache {
 			} else {
 				return null;
 			}
-			if (value > 0.0D) return value;
+			if (Double.isFinite(value) && value >= 0.0D) return value;
 		} catch (NumberFormatException ignored) {
 			return null;
 		}
@@ -282,7 +290,7 @@ public final class PriceCache {
 
 	private static Double firstNumber(Double... values) {
 		for (Double value : values) {
-			if (value != null && value > 0.0D) return value;
+			if (value != null) return value;
 		}
 		return null;
 	}

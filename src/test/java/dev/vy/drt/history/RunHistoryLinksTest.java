@@ -141,13 +141,49 @@ class RunHistoryLinksTest {
 	}
 
 	@Test
-	void moreThanTwoChestsPointingAtOneRunAreAllRejected() {
+	void replacementRuntimeSessionLinksToUniqueRecentCompletion() {
+		DungeonRunCompletionRecord completion = completion("live-feedc188-run-1", T, 178_000L, 178_000L);
+		DungeonRunRecord chest = chest("live-feedc188-run-3", T + 13_008L, "Emerald Chest");
+		chest.runLinkSource = DungeonRunRecord.LINK_NONE;
+		RunHistoryLinks.Link link = RunHistoryLinks.resolve(List.of(chest), List.of(completion)).get(chest);
+		assertTrue(link.linked());
+		assertSame(completion, link.completion());
+		assertEquals(178_000L, RunHistoryLinks.runTime(link.completion()).millis());
+	}
+
+	@Test
+	void replacementRuntimeSessionStaysUnlinkedWhenRecentCompletionIsAmbiguous() {
+		DungeonRunCompletionRecord first = completion("live-feedc188-run-1", T, 178_000L, 178_000L);
+		DungeonRunCompletionRecord second = completion("live-feedc188-run-2", T + 60_000L, 190_000L, 190_000L);
+		DungeonRunRecord chest = chest("live-feedc188-run-3", T + 70_000L, "Emerald Chest");
+		chest.runLinkSource = DungeonRunRecord.LINK_NONE;
+		assertFalse(RunHistoryLinks.resolve(List.of(chest), List.of(first, second)).get(chest).linked());
+	}
+
+	@Test
+	void croesusStoredLinksKeepMultiplePurchasedTiersOnOneRun() {
 		DungeonRunCompletionRecord run = completion("s1", T, 220_000L, 220_000L);
 		List<DungeonRunRecord> history = new ArrayList<>();
 		for (String title : List.of("Bedrock Chest", "Obsidian Chest", "Emerald Chest")) {
 			DungeonRunRecord record = chest("x", T, title);
 			record.runLinkSource = DungeonRunRecord.LINK_CROESUS_UNIQUE;
 			record.linkedRunId = "s1";
+			history.add(record);
+		}
+		Map<DungeonRunRecord, RunHistoryLinks.Link> links = RunHistoryLinks.resolve(history, List.of(run));
+		for (DungeonRunRecord record : history) {
+			assertTrue(links.get(record).linked());
+			assertEquals("s1", links.get(record).runId());
+		}
+	}
+
+	@Test
+	void legacyOverfullRunsAreStillRejected() {
+		DungeonRunCompletionRecord run = completion("s1", T, 220_000L, 220_000L);
+		List<DungeonRunRecord> history = new ArrayList<>();
+		for (String title : List.of("Bedrock Chest", "Obsidian Chest", "Emerald Chest")) {
+			DungeonRunRecord record = chest("s1", T, title);
+			record.runLinkSource = null;
 			history.add(record);
 		}
 		Map<DungeonRunRecord, RunHistoryLinks.Link> links = RunHistoryLinks.resolve(history, List.of(run));
@@ -192,6 +228,19 @@ class RunHistoryLinksTest {
 		assertNull(RunHistoryLinks.runTime(stored));
 		stored.runTimeSource = DungeonRunCompletionRecord.RUN_TIME_MEASURED;
 		assertEquals(RunHistoryLinks.TimeSource.MEASURED, RunHistoryLinks.runTime(stored).source());
+	}
+
+	@Test
+	void implausibleTimesAreNeverShownOrCounted() {
+		DungeonRunCompletionRecord kuudra = new DungeonRunCompletionRecord(T, "KUUDRA", "K5", "100%", 1L, "live-1", "live-1|K5|100%|0");
+		kuudra.runTimeSource = DungeonRunCompletionRecord.RUN_TIME_MEASURED;
+		assertNull(kuudra.effectiveRunTimeSource());
+		assertNull(RunHistoryLinks.runTime(kuudra), "the 1 ms K5 record keeps its data but has no time");
+		assertNull(RunHistoryLinks.runTime(completion("s", T, 2L, 0L)), "legacy fingerprint-sourced records too");
+		assertNull(RunHistoryLinks.runTime(completion("s", T, 4L * 60L * 60L * 1000L, 0L)));
+		assertEquals(20_000L, RunHistoryLinks.runTime(completion("s", T, 20_000L, 0L)).millis());
+		assertFalse(DungeonRunCompletionRecord.plausibleRunTime(19_999L));
+		assertTrue(DungeonRunCompletionRecord.plausibleRunTime(DungeonRunCompletionRecord.MAX_PLAUSIBLE_RUN_TIME_MS));
 	}
 
 	@Test

@@ -239,7 +239,7 @@ public final class CustomOverlayParser {
 				}
 			}
 
-			// Unrecognized '<' / '{' must advance — searching from i would loop forever.
+			// Unrecognized '<' / '{' must advance - searching from i would loop forever.
 			int next = nextSpecialIndex(text, i + 1);
 			appendContent(line, colourStack, gradientPieces, text.substring(i, next), OverlaySegmentRole.TEXT);
 			i = next;

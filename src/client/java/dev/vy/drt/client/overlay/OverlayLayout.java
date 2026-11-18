@@ -56,7 +56,7 @@ public final class OverlayLayout {
 		int x = 0;
 		for (OverlaySegment segment : line.segments) {
 			int segW = Math.max(0, measureApprox(segment.text));
-			// width already baked into line; remeasure not available — use cumulative from plain? 
+			// width already baked into line; remeasure not available - use cumulative from plain?
 			// Caller should use hitTest with font. See hitTest(font,...).
 			x += segW;
 		}

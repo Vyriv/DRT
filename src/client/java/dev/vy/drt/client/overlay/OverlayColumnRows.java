@@ -107,7 +107,7 @@ public final class OverlayColumnRows {
 	}
 
 	/**
-	 * Detailed-style: left label, left value, separator, right label, right value —
+	 * Detailed-style: left label, left value, separator, right label, right value -
 	 * each field column shares an x across every row.
 	 */
 	public static void addLabelValuePairRows(

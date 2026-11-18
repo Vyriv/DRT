@@ -1,55 +1,55 @@
 package dev.vy.drt.client.cosmetics;
 
+import java.lang.ref.WeakReference;
 import java.util.Arrays;
 
 final class NameStylerIdentityCache<K, V> {
 	private final int mask;
-	private final Object[] primaryKeys;
-	private final Object[] primaryValues;
-	private final Object[] secondaryKeys;
-	private final Object[] secondaryValues;
+	private final Entry<K, V>[] primary;
+	private final Entry<K, V>[] secondary;
 
+	@SuppressWarnings("unchecked")
 	NameStylerIdentityCache(int requestedSize) {
 		int size = nextPowerOfTwo(Math.max(2, requestedSize));
 		this.mask = size - 1;
-		this.primaryKeys = new Object[size];
-		this.primaryValues = new Object[size];
-		this.secondaryKeys = new Object[size];
-		this.secondaryValues = new Object[size];
+		this.primary = (Entry<K, V>[]) new Entry<?, ?>[size];
+		this.secondary = (Entry<K, V>[]) new Entry<?, ?>[size];
 	}
 
-	@SuppressWarnings("unchecked")
-	V get(K key) {
+	synchronized V get(K key) {
 		int primary = primaryIndex(key);
-		if (primaryKeys[primary] == key) {
-			return (V) primaryValues[primary];
-		}
+		V primaryValue = valueFor(primary, key, this.primary);
+		if (primaryValue != null) return primaryValue;
 
 		int secondary = secondaryIndex(key);
-		if (secondaryKeys[secondary] == key) {
-			return (V) secondaryValues[secondary];
-		}
-		return null;
+		return valueFor(secondary, key, this.secondary);
 	}
 
-	void put(K key, V value) {
+	synchronized void put(K key, V value) {
 		int primary = primaryIndex(key);
-		if (primaryKeys[primary] == key || primaryKeys[primary] == null) {
-			primaryKeys[primary] = key;
-			primaryValues[primary] = value;
+		Entry<K, V> primaryEntry = this.primary[primary];
+		if (primaryEntry == null || primaryEntry.key.get() == null || primaryEntry.key.get() == key) {
+			this.primary[primary] = new Entry<>(key, value);
 			return;
 		}
 
 		int secondary = secondaryIndex(key);
-		secondaryKeys[secondary] = key;
-		secondaryValues[secondary] = value;
+		this.secondary[secondary] = new Entry<>(key, value);
 	}
 
-	void clear() {
-		Arrays.fill(primaryKeys, null);
-		Arrays.fill(primaryValues, null);
-		Arrays.fill(secondaryKeys, null);
-		Arrays.fill(secondaryValues, null);
+	synchronized void clear() {
+		Arrays.fill(primary, null);
+		Arrays.fill(secondary, null);
+	}
+
+	private V valueFor(int index, K requestedKey, Entry<K, V>[] entries) {
+		Entry<K, V> entry = entries[index];
+		if (entry == null) return null;
+		K cachedKey = entry.key.get();
+		V cachedValue = entry.value.get();
+		if (cachedKey == requestedKey && cachedValue != null) return cachedValue;
+		if (cachedKey == null || cachedValue == null) entries[index] = null;
+		return null;
 	}
 
 	private int primaryIndex(K key) {
@@ -69,5 +69,15 @@ final class NameStylerIdentityCache<K, V> {
 		value |= value >>> 8;
 		value |= value >>> 16;
 		return value + 1;
+	}
+
+	private static final class Entry<K, V> {
+		private final WeakReference<K> key;
+		private final WeakReference<V> value;
+
+		private Entry(K key, V value) {
+			this.key = new WeakReference<>(key);
+			this.value = new WeakReference<>(value);
+		}
 	}
 }

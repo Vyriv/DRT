@@ -179,7 +179,7 @@ public final class ManualLootSuggestions {
 		for (DungeonFloor floor : DungeonFloor.values()) {
 			if (floor == DungeonFloor.UNKNOWN || floor == currentFloor) continue;
 			if (floor.isKuudra() != currentFloor.isKuudra()) continue;
-			// F5 and M5 share the same unique pool — do not treat that as "elsewhere".
+			// F5 and M5 share the same unique pool - do not treat that as "elsewhere".
 			if (floor.isCatacombs() && currentFloor.isCatacombs()
 				&& floor.floorNumber() == currentFloor.floorNumber()) {
 				continue;
@@ -394,7 +394,8 @@ public final class ManualLootSuggestions {
 		aliases.put("CLOWN DISC", "CLOWN_DISC");
 		aliases.put("WATCHER DISC", "WATCHER_DISC");
 		aliases.put("NECRON DISC", "NECRON_DISC");
-		aliases.put("NECROMANCER'S BROOCH", "NECROMANCERS_BROOCH");
+		aliases.put("NECROMANCER'S BROOCH", "NECROMANCER_BROOCH");
+		aliases.put("NECROMANCERS BROOCH", "NECROMANCER_BROOCH");
 		aliases.put("HOT POTATO BOOK", "HOT_POTATO_BOOK");
 		aliases.put("FIRST MASTER STAR", "FIRST_MASTER_STAR");
 		aliases.put("SECOND MASTER STAR", "SECOND_MASTER_STAR");

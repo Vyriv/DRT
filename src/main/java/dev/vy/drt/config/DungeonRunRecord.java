@@ -8,6 +8,8 @@ public final class DungeonRunRecord {
 	public static final String LINK_LIVE = "LIVE_INSTANCE";
 	/** Opened from a Croesus run view whose entry matched exactly one recorded run. */
 	public static final String LINK_CROESUS_UNIQUE = "CROESUS_UNIQUE";
+	/** Recovered from an exact persisted tracking-instance relationship after restart. */
+	public static final String LINK_RECOVERED = "RECOVERED_PERSISTED";
 	/** Recorded with no provable run, for example a Croesus chest from an ambiguous entry. */
 	public static final String LINK_NONE = "UNLINKED";
 
@@ -22,6 +24,10 @@ public final class DungeonRunRecord {
 	public String runLinkSource;
 	/** The completion's run session id when {@link #runLinkSource} names a link, else empty. */
 	public String linkedRunId = "";
+	/** Undashed Minecraft UUID of the account that opened the chest; null for records written before accounts were stored. */
+	public String playerUuid;
+	/** {@link ManualRecord#CREATED} or {@link ManualRecord#EDITED} once the player made or changed this chest; never cleared. */
+	public String manual;
 	public long timestampEpochMillis;
 	public int runNumber;
 	public int chestNumber;
@@ -29,6 +35,8 @@ public final class DungeonRunRecord {
 	public String grade = "S+";
 	public String chestTitle = "";
 	public long chestCostCoins;
+	/** Null for legacy records, true or false for records captured with explicit cost certainty. */
+	public Boolean chestCostKnown;
 	public long baseChestCostCoins;
 	public long dungeonChestKeyCostCoins;
 	public long kismetFeatherCostCoins;
@@ -41,6 +49,8 @@ public final class DungeonRunRecord {
 	public boolean usedKuudraKey;
 	public long chestValueCoins;
 	public long chestProfitCoins;
+	/** Null or true for ordinary records. False for supplemental records whose source omits prices. */
+	public Boolean financialsKnown;
 	public List<DungeonLootEntry> lootEntries = new ArrayList<>();
 
 	public DungeonRunRecord() {
@@ -79,6 +89,10 @@ public final class DungeonRunRecord {
 		copy.commitFingerprint = commitFingerprint == null ? "" : commitFingerprint;
 		copy.runLinkSource = runLinkSource;
 		copy.linkedRunId = linkedRunId == null ? "" : linkedRunId;
+		copy.playerUuid = playerUuid == null || playerUuid.isBlank() ? null : playerUuid;
+		copy.manual = ManualRecord.normalize(manual);
+		copy.financialsKnown = financialsKnown;
+		copy.chestCostKnown = chestCostKnown;
 		copy.applyCostBreakdown(toCostBreakdown());
 		copy.normalizeCostBreakdown();
 		return copy;
@@ -87,6 +101,7 @@ public final class DungeonRunRecord {
 	public ChestCostBreakdown toCostBreakdown() {
 		ChestCostBreakdown breakdown = new ChestCostBreakdown();
 		breakdown.baseChestCostCoins = baseChestCostCoins;
+		breakdown.baseChestCostKnown = hasKnownChestCost();
 		breakdown.dungeonChestKeyCostCoins = dungeonChestKeyCostCoins;
 		breakdown.kismetFeatherCostCoins = kismetFeatherCostCoins;
 		breakdown.wheelOfFateCostCoins = wheelOfFateCostCoins;
@@ -103,6 +118,7 @@ public final class DungeonRunRecord {
 	public void applyCostBreakdown(ChestCostBreakdown breakdown) {
 		ChestCostBreakdown normalized = breakdown == null ? new ChestCostBreakdown() : breakdown.copy();
 		baseChestCostCoins = normalized.baseChestCostCoins;
+		chestCostKnown = normalized.baseChestCostKnown;
 		dungeonChestKeyCostCoins = normalized.dungeonChestKeyCostCoins;
 		kismetFeatherCostCoins = normalized.kismetFeatherCostCoins;
 		wheelOfFateCostCoins = normalized.wheelOfFateCostCoins;
@@ -168,6 +184,23 @@ public final class DungeonRunRecord {
 			+ Math.max(0L, kismetFeatherCostCoins)
 			+ Math.max(0L, wheelOfFateCostCoins)
 			+ Math.max(0L, kuudraKeyCostCoins);
+	}
+
+	public boolean hasKnownFinancials() {
+		return financialsKnown == null || financialsKnown;
+	}
+
+	public boolean hasKnownChestCost() {
+		return chestCostKnown == null ? hasKnownFinancials() : chestCostKnown;
+	}
+
+	public boolean hasKnownProfit() {
+		return hasKnownFinancials() && hasKnownChestCost();
+	}
+
+	/** Known item values exist, but at least one loot price is still missing. */
+	public boolean hasIncompleteKnownValue() {
+		return !hasKnownFinancials() && chestValueCoins > 0L;
 	}
 
 	private boolean hasCostBreakdown() {
